@@ -49,6 +49,19 @@ router.add_api_route("/users/{user_id}/edit", views.users_edit_post, methods=["P
 router.add_api_route("/users/{user_id}/toggle", views.users_toggle, methods=["POST"])
 router.add_api_route("/users/{user_id}/delete", views.users_delete, methods=["POST"])
 router.add_api_route("/audit-logs", views.audit_logs, methods=["GET"], response_class=HTMLResponse)
+router.add_api_route("/payments", views.payments_list, methods=["GET"], response_class=HTMLResponse)
+router.add_api_route(
+    "/payments/{payment_id}",
+    views.payment_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/settings/payments",
+    views.payments_settings,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
 router.add_api_route(
     "/notifications",
     views.notifications_list,

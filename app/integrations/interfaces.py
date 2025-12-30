@@ -26,11 +26,15 @@ class CalendarProvider(ABC):
 
 class PaymentsProvider(ABC):
     @abstractmethod
-    async def create_payment_link(self, amount: int, description: str) -> str:
+    async def create_payment_preference(self, amount: float, currency: str, description: str) -> dict:
         raise NotImplementedError
 
     @abstractmethod
-    async def verify_payment(self, external_id: str) -> bool:
+    async def get_payment(self, external_id: str) -> dict:
+        raise NotImplementedError
+
+    @abstractmethod
+    def map_status(self, status: str | None) -> str:
         raise NotImplementedError
 
 

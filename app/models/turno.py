@@ -16,7 +16,9 @@ class TipoTurno(str, Enum):
 
 class EstadoTurno(str, Enum):
     PENDIENTE = "pendiente"
+    WAITING_PAYMENT = "waiting_payment"
     CONFIRMADO = "confirmado"
+    PAYMENT_FAILED = "payment_failed"
     CANCELADO = "cancelado"
 
 
@@ -38,3 +40,4 @@ class Turno(Base, SoftDeleteMixin):
 
     paciente = relationship("Paciente", back_populates="turnos")
     consultorio = relationship("Consultorio", back_populates="turnos")
+    payments = relationship("Payment", back_populates="appointment")

@@ -1,0 +1,79 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = "Pagos" %}
+{% set breadcrumb = "Admin / Pagos" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Pagos globales</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Pagos</h1>
+  </div>
+
+  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
+    <input class="input" type="text" name="q" placeholder="Buscar paciente" value="{{ q or '' }}" />
+    <select class="select" name="tenant_id">
+      <option value="">Tenant</option>
+      {% for tenant in tenants %}
+        <option value="{{ tenant.id }}" {% if tenant_id and tenant_id|int == tenant.id %}selected{% endif %}>{{ tenant.nombre }}</option>
+      {% endfor %}
+    </select>
+    <select class="select" name="status">
+      <option value="">Estado</option>
+      <option value="pending" {% if status_filter == 'pending' %}selected{% endif %}>Pendiente</option>
+      <option value="approved" {% if status_filter == 'approved' %}selected{% endif %}>Aprobado</option>
+      <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rechazado</option>
+      <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelado</option>
+      <option value="refunded" {% if status_filter == 'refunded' %}selected{% endif %}>Reintegrado</option>
+    </select>
+    <button class="btn btn-secondary" type="submit">Filtrar</button>
+  </form>
+
+  {% if rows %}
+    <div class="card overflow-hidden">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Pago</th>
+            <th class="px-4 py-3 text-left font-medium">Tenant</th>
+            <th class="px-4 py-3 text-left font-medium">Paciente</th>
+            <th class="px-4 py-3 text-left font-medium">Monto</th>
+            <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-right font-medium">Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% set payment = row[0] %}
+            {% set tenant = row[1] %}
+            {% set paciente = row[2] %}
+            {% set status = payment.status.value if payment.status.value is defined else payment.status %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">#{{ payment.id }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ tenant.nombre }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ paciente.nombre }} {{ paciente.apellido }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ payment.amount }} {{ payment.currency }}</td>
+              <td class="px-4 py-3">
+                {% if status == 'approved' %}
+                  {{ badge("Aprobado", "success") }}
+                {% elif status in ['rejected', 'cancelled'] %}
+                  {{ badge("Rechazado", "warning") }}
+                {% else %}
+                  {{ badge("Pendiente", "neutral") }}
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-right">
+                <a class="btn btn-secondary" href="/admin/payments/{{ payment.id }}">Ver</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card p-10 text-center">
+      <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
+      <p class="text-sm text-slate-600">No hay pagos registrados.</p>
+    </div>
+  {% endif %}
+{% endblock %}

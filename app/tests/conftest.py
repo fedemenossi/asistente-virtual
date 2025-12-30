@@ -40,9 +40,9 @@ async def _init_db(db_module: object) -> None:
     await db_module.engine.dispose()
 
 
-@pytest.fixture(scope="session")
-def app_and_db(tmp_path_factory: pytest.TempPathFactory):
-    db_path = tmp_path_factory.mktemp("data") / "test.db"
+@pytest.fixture()
+def app_and_db(tmp_path: Path):
+    db_path = tmp_path / "test.db"
     os.environ["APP_ENV"] = "test"
     os.environ["APP_NAME"] = "asistente-virtual"
     os.environ["SECRET_KEY"] = "test-secret"
@@ -140,6 +140,45 @@ async def create_paciente(db_session, tenant_id: int, telefono: str) -> int:
             session.add(paciente)
             await session.flush()
             return paciente.id
+
+
+async def create_turno(db_session, paciente_id: int, consultorio_id: int) -> int:
+    from datetime import datetime, timezone
+
+    from app.models.turno import Turno, TipoTurno, EstadoTurno
+
+    async with db_session() as session:
+        async with session.begin():
+            turno = Turno(
+                paciente_id=paciente_id,
+                consultorio_id=consultorio_id,
+                fecha_hora=datetime.now(timezone.utc),
+                tipo=TipoTurno.PRESENCIAL,
+                estado=EstadoTurno.PENDIENTE,
+            )
+            session.add(turno)
+            await session.flush()
+            return turno.id
+
+
+async def create_payment(db_session, tenant_id: int, paciente_id: int, turno_id: int | None) -> int:
+    from app.models.payment import Payment, PaymentStatus
+
+    async with db_session() as session:
+        async with session.begin():
+            payment = Payment(
+                tenant_id=tenant_id,
+                patient_id=paciente_id,
+                appointment_id=turno_id,
+                provider="mercadopago",
+                status=PaymentStatus.PENDING,
+                amount=100,
+                currency="ARS",
+                description="Pago test",
+            )
+            session.add(payment)
+            await session.flush()
+            return payment.id
 
 
 async def create_notification(db_session, tenant_id: int | None, title: str) -> int:

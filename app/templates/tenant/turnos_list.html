@@ -21,7 +21,9 @@
     <select class="select" name="estado">
       <option value="">Estado</option>
       <option value="pendiente" {% if estado == 'pendiente' %}selected{% endif %}>Pendiente</option>
+      <option value="waiting_payment" {% if estado == 'waiting_payment' %}selected{% endif %}>Esperando pago</option>
       <option value="confirmado" {% if estado == 'confirmado' %}selected{% endif %}>Confirmado</option>
+      <option value="payment_failed" {% if estado == 'payment_failed' %}selected{% endif %}>Pago fallido</option>
       <option value="cancelado" {% if estado == 'cancelado' %}selected{% endif %}>Cancelado</option>
     </select>
     <button class="btn btn-secondary" type="submit">Filtrar</button>
@@ -45,15 +47,20 @@
             {% set turno = row[0] %}
             {% set paciente = row[1] %}
             {% set consultorio = row[2] %}
+            {% set status = turno.estado.value if turno.estado.value is defined else turno.estado %}
             <tr class="border-t border-slate-200 hover:bg-slate-50">
               <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</td>
               <td class="px-4 py-3 text-slate-600">{{ consultorio.nombre }}</td>
               <td class="px-4 py-3 text-slate-600">{{ turno.fecha_hora.strftime('%Y-%m-%d %H:%M') if turno.fecha_hora else '' }}</td>
               <td class="px-4 py-3 text-slate-600">{{ turno.tipo }}</td>
               <td class="px-4 py-3">
-                {% if turno.estado == 'confirmado' %}
+                {% if status == 'confirmado' %}
                   {{ badge("Confirmado", "success") }}
-                {% elif turno.estado == 'cancelado' %}
+                {% elif status == 'waiting_payment' %}
+                  {{ badge("Esperando pago", "neutral") }}
+                {% elif status == 'payment_failed' %}
+                  {{ badge("Pago fallido", "warning") }}
+                {% elif status == 'cancelado' %}
                   {{ badge("Cancelado", "warning") }}
                 {% else %}
                   {{ badge("Pendiente", "neutral") }}

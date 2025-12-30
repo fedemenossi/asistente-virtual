@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,5 +75,5 @@ async def mark_notification_read(
     session: AsyncSession,
     notification: Notification,
 ) -> None:
-    notification.read_at = datetime.utcnow()
+    notification.read_at = datetime.now(timezone.utc)
     await session.flush()

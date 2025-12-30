@@ -54,6 +54,13 @@ router.add_api_route(
     methods=["GET"],
     response_class=HTMLResponse,
 )
+router.add_api_route("/payments", views.payments_list, methods=["GET"], response_class=HTMLResponse)
+router.add_api_route(
+    "/payments/{payment_id}",
+    views.payment_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
 
 router.add_api_route(
     "/conversation-states",
@@ -77,3 +84,10 @@ router.add_api_route(
     "/settings", views.settings_get, methods=["GET"], response_class=HTMLResponse
 )
 router.add_api_route("/settings", views.settings_post, methods=["POST"])
+router.add_api_route(
+    "/settings/payments",
+    views.payment_settings_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route("/settings/payments", views.payment_settings_post, methods=["POST"])

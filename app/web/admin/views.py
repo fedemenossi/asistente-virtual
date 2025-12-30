@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from fastapi import Depends, Form, HTTPException, Request
@@ -20,6 +20,8 @@ from app.models.audit_log import AuditLog
 from app.models.consultorio import Consultorio
 from app.models.conversacion import EstadoConversacion
 from app.models.paciente import Paciente
+from app.models.payment import Payment, PaymentStatus
+from app.models.payment_event import PaymentEvent
 from app.models.tenant import Tenant
 from app.models.turno import Turno
 from app.models.user import User, UserRole
@@ -29,7 +31,7 @@ from app.models.notification import Notification
 def _template(request: Request, name: str, context: dict) -> Response:
     base = base_context(request)
     base.update(context)
-    return templates.TemplateResponse(name, base)
+    return templates.TemplateResponse(request, name, base)
 
 
 async def dashboard(
@@ -37,7 +39,7 @@ async def dashboard(
     user: CurrentUser = Depends(require_permission("tenant:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     seven_days = now + timedelta(days=7)
     tenants_active = await session.scalar(
         select(func.count())
@@ -288,7 +290,7 @@ async def tenants_delete(
     validate_csrf(request, csrf_token)
     async with session.begin():
         tenant = await get_entity_or_404(session, Tenant, tenant_id)
-        tenant.deleted_at = datetime.utcnow()
+        tenant.deleted_at = datetime.now(timezone.utc)
         tenant.deleted_by = user.id
         await audit_log(
             session,
@@ -495,7 +497,7 @@ async def users_delete(
     validate_csrf(request, csrf_token)
     async with session.begin():
         user = await get_entity_or_404(session, User, user_id)
-        user.deleted_at = datetime.utcnow()
+        user.deleted_at = datetime.now(timezone.utc)
         user.deleted_by = current.id
         await audit_log(
             session,
@@ -596,4 +598,94 @@ async def notifications_mark_read(
     async with session.begin():
         await mark_notification_read(session, notification)
     return RedirectResponse("/admin/notifications", status_code=303)
+
+
+async def payments_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    tenant_id = request.query_params.get("tenant_id", "").strip()
+    status_filter = request.query_params.get("status", "").strip()
+    q = request.query_params.get("q", "").strip()
+
+    stmt = (
+        select(Payment, Tenant, Paciente, Turno)
+        .join(Tenant, Payment.tenant_id == Tenant.id)
+        .join(Paciente, Payment.patient_id == Paciente.id)
+        .outerjoin(Turno, Payment.appointment_id == Turno.id)
+    )
+    if tenant_id:
+        try:
+            stmt = stmt.where(Payment.tenant_id == int(tenant_id))
+        except ValueError:
+            tenant_id = ""
+    if status_filter:
+        try:
+            stmt = stmt.where(Payment.status == PaymentStatus(status_filter))
+        except ValueError:
+            status_filter = ""
+    if q:
+        stmt = stmt.where(
+            (Paciente.nombre.ilike(f"%{q}%"))
+            | (Paciente.apellido.ilike(f"%{q}%"))
+            | (Paciente.telefono.ilike(f"%{q}%"))
+        )
+    result = await session.execute(stmt.order_by(Payment.created_at.desc()))
+    rows = list(result.all())
+    tenants = list(
+        (await session.execute(select(Tenant).where(Tenant.deleted_at.is_(None)))).scalars().all()
+    )
+    return _template(
+        request,
+        "admin/payments_list.html",
+        {
+            "rows": rows,
+            "tenants": tenants,
+            "tenant_id": tenant_id,
+            "status_filter": status_filter,
+            "q": q,
+        },
+    )
+
+
+async def payment_detail(
+    request: Request,
+    payment_id: int,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    stmt = (
+        select(Payment, Tenant, Paciente, Turno)
+        .join(Tenant, Payment.tenant_id == Tenant.id)
+        .join(Paciente, Payment.patient_id == Paciente.id)
+        .outerjoin(Turno, Payment.appointment_id == Turno.id)
+        .where(Payment.id == payment_id)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    events_result = await session.execute(
+        select(PaymentEvent)
+        .where(PaymentEvent.payment_id == payment_id)
+        .order_by(desc(PaymentEvent.created_at))
+    )
+    events = list(events_result.scalars().all())
+    return _template(
+        request,
+        "admin/payment_detail.html",
+        {"row": row, "events": events},
+    )
+
+
+async def payments_settings(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+) -> Response:
+    return _template(
+        request,
+        "admin/settings_payments.html",
+        {},
+    )
 

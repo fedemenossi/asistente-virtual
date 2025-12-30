@@ -3,6 +3,9 @@ from app.models.conversacion import EstadoConversacion
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
 from app.models.paciente import Paciente
+from app.models.payment import Payment
+from app.models.payment_event import PaymentEvent
+from app.models.subscription import Subscription
 from app.models.tenant import Tenant
 from app.models.turno import Turno
 from app.models.user import User
@@ -13,6 +16,9 @@ __all__ = [
     "EstadoConversacion",
     "Notification",
     "Paciente",
+    "Payment",
+    "PaymentEvent",
+    "Subscription",
     "Tenant",
     "Turno",
     "User",

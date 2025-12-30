@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from fastapi import Depends, Form, HTTPException, Request
@@ -23,12 +23,14 @@ from app.models.paciente import Paciente
 from app.models.tenant import Tenant
 from app.models.turno import Turno
 from app.models.notification import Notification
+from app.models.payment import Payment, PaymentStatus
+from app.models.payment_event import PaymentEvent
 
 
 def _template(request: Request, name: str, context: dict) -> Response:
     base = base_context(request)
     base.update(context)
-    return templates.TemplateResponse(name, base)
+    return templates.TemplateResponse(request, name, base)
 
 
 async def dashboard(
@@ -193,7 +195,7 @@ async def consultorios_delete(
         consultorio = await get_tenant_entity_or_404(
             session, Consultorio, consultorio_id, user.tenant_id
         )
-        consultorio.deleted_at = datetime.utcnow()
+        consultorio.deleted_at = datetime.now(timezone.utc)
         consultorio.deleted_by = user.id
         await audit_log(
             session,
@@ -357,7 +359,7 @@ async def pacientes_delete(
         paciente = await get_tenant_entity_or_404(
             session, Paciente, paciente_id, user.tenant_id
         )
-        paciente.deleted_at = datetime.utcnow()
+        paciente.deleted_at = datetime.now(timezone.utc)
         paciente.deleted_by = user.id
         await audit_log(
             session,
@@ -507,6 +509,69 @@ async def settings_post(
     return RedirectResponse("/t/settings", status_code=303)
 
 
+def _parse_payment_settings(tenant: Tenant) -> dict:
+    settings = tenant.payment_settings or {}
+    return {
+        "enabled": bool(settings.get("enabled", False)),
+        "require_before_appointment": bool(settings.get("require_before_appointment", False)),
+        "amount": settings.get("amount", ""),
+        "currency": settings.get("currency", "ARS"),
+        "mp_access_token": settings.get("mp_access_token", ""),
+        "mp_webhook_secret": settings.get("mp_webhook_secret", ""),
+        "public_text": settings.get("public_text", ""),
+    }
+
+
+async def payment_settings_get(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("settings:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    return _template(
+        request,
+        "tenant/settings_payments.html",
+        {"tenant": tenant, "payment_settings": _parse_payment_settings(tenant)},
+    )
+
+
+async def payment_settings_post(
+    request: Request,
+    enabled: str | None = Form(None),
+    require_before_appointment: str | None = Form(None),
+    amount: str = Form(""),
+    currency: str = Form("ARS"),
+    mp_access_token: str = Form(""),
+    mp_webhook_secret: str = Form(""),
+    public_text: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("settings:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    async with session.begin():
+        tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+        tenant.payment_settings = {
+            "enabled": bool(enabled),
+            "require_before_appointment": bool(require_before_appointment),
+            "amount": amount.strip(),
+            "currency": currency.strip() or "ARS",
+            "mp_access_token": mp_access_token.strip(),
+            "mp_webhook_secret": mp_webhook_secret.strip(),
+            "public_text": public_text.strip(),
+        }
+        await audit_log(
+            session,
+            request,
+            user,
+            action="update",
+            entity="payment_settings",
+            entity_id=tenant.id,
+        )
+    add_flash(request, "success", "Configuracion de pagos actualizada")
+    return RedirectResponse("/t/settings/payments", status_code=303)
+
+
 async def audit_logs(
     request: Request,
     user: CurrentUser = Depends(require_permission("tenant:read")),
@@ -561,7 +626,70 @@ async def notifications_mark_read(
     notification = result.scalar_one_or_none()
     if notification is None:
         raise HTTPException(status_code=404, detail="Notificacion no encontrada")
-    async with session.begin():
-        await mark_notification_read(session, notification)
+    await mark_notification_read(session, notification)
+    await session.commit()
     return RedirectResponse("/t/notifications", status_code=303)
+
+
+async def payments_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("payment:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    status_filter = request.query_params.get("status", "").strip()
+    q = request.query_params.get("q", "").strip()
+
+    stmt = (
+        select(Payment, Paciente, Turno)
+        .join(Paciente, Payment.patient_id == Paciente.id)
+        .outerjoin(Turno, Payment.appointment_id == Turno.id)
+        .where(Payment.tenant_id == user.tenant_id)
+    )
+    if status_filter:
+        try:
+            stmt = stmt.where(Payment.status == PaymentStatus(status_filter))
+        except ValueError:
+            status_filter = ""
+    if q:
+        stmt = stmt.where(
+            (Paciente.nombre.ilike(f"%{q}%"))
+            | (Paciente.apellido.ilike(f"%{q}%"))
+            | (Paciente.telefono.ilike(f"%{q}%"))
+        )
+    result = await session.execute(stmt.order_by(Payment.created_at.desc()))
+    rows = list(result.all())
+    return _template(
+        request,
+        "tenant/payments_list.html",
+        {"rows": rows, "status_filter": status_filter, "q": q},
+    )
+
+
+async def payment_detail(
+    request: Request,
+    payment_id: int,
+    user: CurrentUser = Depends(require_permission("payment:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    stmt = (
+        select(Payment, Paciente, Turno)
+        .join(Paciente, Payment.patient_id == Paciente.id)
+        .outerjoin(Turno, Payment.appointment_id == Turno.id)
+        .where(Payment.id == payment_id, Payment.tenant_id == user.tenant_id)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Pago no encontrado")
+    events_result = await session.execute(
+        select(PaymentEvent)
+        .where(PaymentEvent.payment_id == payment_id)
+        .order_by(desc(PaymentEvent.created_at))
+    )
+    events = list(events_result.scalars().all())
+    return _template(
+        request,
+        "tenant/payment_detail.html",
+        {"row": row, "events": events},
+    )
 

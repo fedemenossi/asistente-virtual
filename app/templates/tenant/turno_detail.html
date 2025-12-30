@@ -7,6 +7,7 @@
   {% set turno = row[0] %}
   {% set paciente = row[1] %}
   {% set consultorio = row[2] %}
+  {% set status = turno.estado.value if turno.estado.value is defined else turno.estado %}
   <div class="mb-6">
     <h1 class="text-2xl font-semibold text-slate-900">Turno #{{ turno.id }}</h1>
     <p class="text-sm text-slate-600">Detalle del turno seleccionado.</p>
@@ -27,7 +28,7 @@
       </div>
       <div>
         <p class="text-xs text-slate-500">Estado</p>
-        <p class="text-sm font-medium text-slate-900">{{ turno.estado }}</p>
+        <p class="text-sm font-medium text-slate-900">{{ status }}</p>
       </div>
     </div>
     <a class="btn btn-secondary" href="/t/turnos">Volver</a>

@@ -1,0 +1,49 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Settings pagos" %}
+{% set breadcrumb = "Tenant / Settings / Pagos" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Configuracion de pagos</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Pagos</h1>
+  </div>
+
+  <form method="post" class="card p-6 space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="flex items-center gap-3">
+      <input class="h-4 w-4" type="checkbox" id="enabled" name="enabled" {% if payment_settings.enabled %}checked{% endif %} />
+      <label class="text-sm text-slate-700" for="enabled">Habilitar pagos</label>
+    </div>
+    <div class="flex items-center gap-3">
+      <input class="h-4 w-4" type="checkbox" id="require_before_appointment" name="require_before_appointment" {% if payment_settings.require_before_appointment %}checked{% endif %} />
+      <label class="text-sm text-slate-700" for="require_before_appointment">Requerir pago antes del turno</label>
+    </div>
+    <div class="grid gap-3 md:grid-cols-2">
+      <div>
+        <label class="text-xs text-slate-500">Monto consulta</label>
+        <input class="input" type="text" name="amount" value="{{ payment_settings.amount }}" />
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">Moneda</label>
+        <input class="input" type="text" name="currency" value="{{ payment_settings.currency }}" />
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">MP Access Token</label>
+        <input class="input" type="password" name="mp_access_token" value="{{ payment_settings.mp_access_token }}" />
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">MP Webhook Secret</label>
+        <input class="input" type="password" name="mp_webhook_secret" value="{{ payment_settings.mp_webhook_secret }}" />
+      </div>
+      <div class="md:col-span-2">
+        <label class="text-xs text-slate-500">Texto visible al paciente</label>
+        <textarea class="textarea" name="public_text" rows="3">{{ payment_settings.public_text }}</textarea>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <button class="btn btn-primary" type="submit">Guardar</button>
+      <a class="btn btn-secondary" href="/t/settings">Volver</a>
+    </div>
+  </form>
+{% endblock %}

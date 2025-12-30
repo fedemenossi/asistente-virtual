@@ -4,14 +4,20 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request, status
 from passlib.context import CryptContext
+from passlib.hash import pbkdf2_sha256
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.db import get_async_session
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_settings = get_settings()
+if _settings.app_env.lower() == "test":
+    pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+else:
+    pwd_context = CryptContext(schemes=["bcrypt", "pbkdf2_sha256"], deprecated="auto")
 
 
 @dataclass
@@ -23,11 +29,19 @@ class CurrentUser:
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    try:
+        return pwd_context.hash(password)
+    except Exception:
+        return pbkdf2_sha256.hash(password)
 
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
-    return pwd_context.verify(plain_password, password_hash)
+    try:
+        return pwd_context.verify(plain_password, password_hash)
+    except Exception:
+        if password_hash.startswith("$pbkdf2-sha256$"):
+            return pbkdf2_sha256.verify(plain_password, password_hash)
+        return False
 
 ROLE_PERMISSIONS: dict[UserRole, set[str]] = {
     UserRole.SUPER_ADMIN: {"*"},
@@ -40,6 +54,8 @@ ROLE_PERMISSIONS: dict[UserRole, set[str]] = {
         "consultorio:read",
         "consultorio:write",
         "conversation:read",
+        "payment:read",
+        "payment:write",
         "settings:write",
         "notification:read",
     },

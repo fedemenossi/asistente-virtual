@@ -15,7 +15,7 @@ from app.models.user import User
 
 
 async def login_get(request: Request) -> Response:
-    return templates.TemplateResponse("auth/login.html", base_context(request))
+    return templates.TemplateResponse(request, "auth/login.html", base_context(request))
 
 
 async def login_post(
@@ -42,16 +42,16 @@ async def login_post(
     request.session["tenant_id"] = user.tenant_id
     request.session["user_email"] = user.email
 
-    async with session.begin():
-        await audit_log(
-            session,
-            request,
-            None,
-            action="login",
-            entity="user",
-            entity_id=user.id,
-            tenant_id=user.tenant_id,
-        )
+    await audit_log(
+        session,
+        request,
+        None,
+        action="login",
+        entity="user",
+        entity_id=user.id,
+        tenant_id=user.tenant_id,
+    )
+    await session.commit()
 
     target = "/admin/dashboard" if user.role == "SUPER_ADMIN" else "/t/dashboard"
     return RedirectResponse(target, status_code=303)
@@ -65,16 +65,16 @@ async def logout(
     validate_csrf(request, csrf_token)
     user_id = request.session.get("user_id")
     tenant_id = request.session.get("tenant_id")
-    async with session.begin():
-        await audit_log(
-            session,
-            request,
-            None,
-            action="logout",
-            entity="user",
-            entity_id=user_id,
-            tenant_id=tenant_id,
-        )
+    await audit_log(
+        session,
+        request,
+        None,
+        action="logout",
+        entity="user",
+        entity_id=user_id,
+        tenant_id=tenant_id,
+    )
+    await session.commit()
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
 

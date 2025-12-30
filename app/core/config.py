@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     admin_password: str = Field(default="admin", alias="ADMIN_PASSWORD")
     admin_email: str = Field(default="admin@example.com", alias="ADMIN_EMAIL")
     admin_password_seed: str = Field(default="change_me", alias="ADMIN_PASSWORD_SEED")
+    mp_access_token: str | None = Field(default=None, alias="MP_ACCESS_TOKEN")
+    mp_webhook_secret: str | None = Field(default=None, alias="MP_WEBHOOK_SECRET")
+    public_base_url: str | None = Field(default=None, alias="PUBLIC_BASE_URL")
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 
