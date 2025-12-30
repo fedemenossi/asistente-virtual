@@ -1,0 +1,36 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Detalle turno" %}
+{% set breadcrumb = "Tenant / Turnos" %}
+
+{% block content %}
+  {% set turno = row[0] %}
+  {% set paciente = row[1] %}
+  {% set consultorio = row[2] %}
+  <div class="mb-6">
+    <h1 class="text-2xl font-semibold text-slate-900">Turno #{{ turno.id }}</h1>
+    <p class="text-sm text-slate-600">Detalle del turno seleccionado.</p>
+  </div>
+  <div class="card p-6 space-y-4">
+    <div class="grid gap-4 md:grid-cols-2">
+      <div>
+        <p class="text-xs text-slate-500">Paciente</p>
+        <p class="text-sm font-medium text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Consultorio</p>
+        <p class="text-sm font-medium text-slate-900">{{ consultorio.nombre }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Fecha</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.fecha_hora.strftime('%Y-%m-%d %H:%M') if turno.fecha_hora else '' }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Estado</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.estado }}</p>
+      </div>
+    </div>
+    <a class="btn btn-secondary" href="/t/turnos">Volver</a>
+  </div>
+{% endblock %}
+

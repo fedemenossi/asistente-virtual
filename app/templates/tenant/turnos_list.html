@@ -1,0 +1,80 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/pagination.html" import pagination %}
+
+{% set title = "Turnos" %}
+{% set breadcrumb = "Tenant / Turnos" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Agenda</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Turnos</h1>
+  </div>
+
+  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
+    <input class="input" type="date" name="date" value="{{ date or '' }}" />
+    <select class="select" name="tipo">
+      <option value="">Tipo</option>
+      <option value="presencial" {% if tipo == 'presencial' %}selected{% endif %}>Presencial</option>
+      <option value="virtual" {% if tipo == 'virtual' %}selected{% endif %}>Virtual</option>
+    </select>
+    <select class="select" name="estado">
+      <option value="">Estado</option>
+      <option value="pendiente" {% if estado == 'pendiente' %}selected{% endif %}>Pendiente</option>
+      <option value="confirmado" {% if estado == 'confirmado' %}selected{% endif %}>Confirmado</option>
+      <option value="cancelado" {% if estado == 'cancelado' %}selected{% endif %}>Cancelado</option>
+    </select>
+    <button class="btn btn-secondary" type="submit">Filtrar</button>
+  </form>
+
+  {% if rows %}
+    <div class="card overflow-hidden">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Paciente</th>
+            <th class="px-4 py-3 text-left font-medium">Consultorio</th>
+            <th class="px-4 py-3 text-left font-medium">Fecha</th>
+            <th class="px-4 py-3 text-left font-medium">Tipo</th>
+            <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-right font-medium">Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% set turno = row[0] %}
+            {% set paciente = row[1] %}
+            {% set consultorio = row[2] %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ consultorio.nombre }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ turno.fecha_hora.strftime('%Y-%m-%d %H:%M') if turno.fecha_hora else '' }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ turno.tipo }}</td>
+              <td class="px-4 py-3">
+                {% if turno.estado == 'confirmado' %}
+                  {{ badge("Confirmado", "success") }}
+                {% elif turno.estado == 'cancelado' %}
+                  {{ badge("Cancelado", "warning") }}
+                {% else %}
+                  {{ badge("Pendiente", "neutral") }}
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-right">
+                <a class="btn btn-secondary" href="/t/turnos/{{ turno.id }}">Ver</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if total_pages > 1 %}
+      {{ pagination(page, total_pages, "/t/turnos", query_string) }}
+    {% endif %}
+  {% else %}
+    <div class="card p-10 text-center">
+      <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
+      <p class="text-sm text-slate-600">No hay turnos disponibles con estos filtros.</p>
+    </div>
+  {% endif %}
+{% endblock %}
+

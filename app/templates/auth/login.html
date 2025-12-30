@@ -1,0 +1,17 @@
+{% extends "layout/auth.html" %}
+
+{% block content %}
+  <form method="post" class="space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div>
+      <label class="block text-sm font-medium text-slate-700">Email</label>
+      <input class="input mt-1" type="email" name="email" placeholder="vos@correo.com" required />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700">Password</label>
+      <input class="input mt-1" type="password" name="password" required />
+    </div>
+    <button class="btn btn-primary w-full" type="submit">Ingresar</button>
+  </form>
+{% endblock %}
+

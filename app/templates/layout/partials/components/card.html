@@ -1,0 +1,10 @@
+{% macro card(title, subtitle="") %}
+  <div class="card p-5">
+    <div class="mb-3">
+      <p class="text-sm font-medium text-slate-900">{{ title }}</p>
+      {% if subtitle %}<p class="text-xs text-slate-600">{{ subtitle }}</p>{% endif %}
+    </div>
+    {{ caller() }}
+  </div>
+{% endmacro %}
+

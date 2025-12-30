@@ -1,0 +1,27 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/card.html" import card %}
+
+{% set title = "Dashboard" %}
+{% set breadcrumb = "Tenant" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Resumen del consultorio</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Dashboard</h1>
+  </div>
+  <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    {% call card("Pacientes") %}
+      <div class="text-3xl font-semibold text-slate-900">{{ kpis.pacientes }}</div>
+    {% endcall %}
+    {% call card("Consultorios") %}
+      <div class="text-3xl font-semibold text-slate-900">{{ kpis.consultorios }}</div>
+    {% endcall %}
+    {% call card("Turnos") %}
+      <div class="text-3xl font-semibold text-slate-900">{{ kpis.turnos }}</div>
+    {% endcall %}
+    {% call card("Conversaciones") %}
+      <div class="text-3xl font-semibold text-slate-900">{{ kpis.conversaciones }}</div>
+    {% endcall %}
+  </div>
+{% endblock %}
+

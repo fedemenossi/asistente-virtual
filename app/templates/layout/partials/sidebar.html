@@ -1,0 +1,30 @@
+<aside data-sidebar class="fixed inset-y-0 left-0 z-40 w-64 -translate-x-full border-r border-slate-200 bg-white transition lg:translate-x-0">
+  <div class="flex h-16 items-center justify-between px-6">
+    <div>
+      <p class="text-xs uppercase tracking-[0.2em] text-slate-500">SaaS Medico</p>
+      <p class="text-lg font-semibold text-slate-900">Panel</p>
+    </div>
+    <button data-sidebar-close class="lg:hidden inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100">X</button>
+  </div>
+  <nav class="px-4 pb-6">
+    {% set role = request.session.get('role') %}
+    {% if role == 'SUPER_ADMIN' %}
+      <div class="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Super admin</div>
+      <a href="/admin/dashboard" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Dashboard</a>
+      <a href="/admin/tenants" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Tenants</a>
+      <a href="/admin/users" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Usuarios</a>
+      <a href="/admin/audit-logs" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Audit logs</a>
+      <a href="/admin/notifications" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Notificaciones</a>
+    {% else %}
+      <div class="mb-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Tenant</div>
+      <a href="/t/dashboard" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Dashboard</a>
+      <a href="/t/consultorios" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Consultorios</a>
+      <a href="/t/pacientes" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Pacientes</a>
+      <a href="/t/turnos" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Turnos</a>
+      <a href="/t/conversation-states" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Conversaciones</a>
+      <a href="/t/audit-logs" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Audit logs</a>
+      <a href="/t/notifications" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Notificaciones</a>
+      <a href="/t/settings" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Settings</a>
+    {% endif %}
+  </nav>
+</aside>

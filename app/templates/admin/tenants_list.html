@@ -1,0 +1,109 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/button.html" import button %}
+{% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/modal_confirm.html" import modal_confirm %}
+{% from "layout/partials/components/pagination.html" import pagination %}
+
+{% set title = "Tenants" %}
+{% set breadcrumb = "Admin / Tenants" %}
+{% set show_search = true %}
+
+{% block content %}
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <p class="text-sm text-slate-600">Gestion de clientes</p>
+      <h1 class="text-2xl font-semibold text-slate-900">Tenants</h1>
+    </div>
+    {{ button("Crear tenant", href="/admin/tenants/new", variant="primary") }}
+  </div>
+
+  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
+    <input class="input" type="search" name="q" placeholder="Buscar por nombre" value="{{ q }}" />
+    <select class="select" name="status">
+      <option value="">Todos</option>
+      <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Activos</option>
+      <option value="inactive" {% if status_filter == 'inactive' %}selected{% endif %}>Inactivos</option>
+    </select>
+    <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+      <input type="checkbox" name="show_deleted" value="1" {% if show_deleted %}checked{% endif %} />
+      Ver eliminados
+    </label>
+    <button class="btn btn-secondary" type="submit">Filtrar</button>
+  </form>
+
+  {% if tenants %}
+    <div class="card overflow-hidden">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Nombre</th>
+            <th class="px-4 py-3 text-left font-medium">WhatsApp</th>
+            <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-left font-medium">Creado</th>
+            <th class="px-4 py-3 text-right font-medium">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for tenant in tenants %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">{{ tenant.nombre }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ tenant.whatsapp_number }}</td>
+              <td class="px-4 py-3">
+                {% if tenant.deleted_at %}
+                  {{ badge("Eliminado", "warning") }}
+                {% elif tenant.activo %}
+                  {{ badge("Activo", "success") }}
+                {% else %}
+                  {{ badge("Inactivo", "warning") }}
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-slate-600">{{ tenant.created_at.strftime('%Y-%m-%d') if tenant.created_at else '' }}</td>
+              <td class="px-4 py-3 text-right">
+                <div x-data="{ open: false }" class="relative inline-block text-left">
+                  <button type="button" @click="open = !open" class="btn btn-ghost">...</button>
+                  <div x-show="open" x-cloak @click.outside="open = false" class="absolute right-0 mt-2 w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
+                    <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/admin/tenants/{{ tenant.id }}">Ver</a>
+                    <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/admin/tenants/{{ tenant.id }}/edit">Editar</a>
+                    <div class="border-t border-slate-200"></div>
+                    {{ modal_confirm(
+                      id="toggle-" ~ tenant.id,
+                      title="Cambiar estado",
+                      message="Esta accion cambiara el estado del tenant.",
+                      action_url="/admin/tenants/" ~ tenant.id ~ "/toggle",
+                      csrf_token=csrf_token,
+                      button_label="Confirmar",
+                      trigger_label="Activar/Desactivar",
+                      trigger_class="block w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-slate-50"
+                    ) }}
+                    {{ modal_confirm(
+                      id="delete-" ~ tenant.id,
+                      title="Eliminar tenant",
+                      message="Esta accion eliminara el tenant seleccionado.",
+                      action_url="/admin/tenants/" ~ tenant.id ~ "/delete",
+                      csrf_token=csrf_token,
+                      button_label="Eliminar",
+                      trigger_label="Eliminar",
+                      trigger_class="block w-full text-left px-3 py-2 text-sm text-rose-700 hover:bg-slate-50"
+                    ) }}
+                  </div>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if total_pages > 1 %}
+      {{ pagination(page, total_pages, "/admin/tenants", query_string) }}
+    {% endif %}
+  {% else %}
+    <div class="card p-10 text-center">
+      <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
+      <p class="text-sm text-slate-600">No hay tenants cargados todavia.</p>
+      <div class="mt-4">
+        {{ button("Crear tenant", href="/admin/tenants/new", variant="primary") }}
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}
+

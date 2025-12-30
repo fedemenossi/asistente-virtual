@@ -1,0 +1,59 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = tenant.nombre %}
+{% set breadcrumb = "Admin / Tenants" %}
+
+{% block content %}
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <p class="text-sm text-slate-600">Detalle de tenant</p>
+      <h1 class="text-2xl font-semibold text-slate-900">{{ tenant.nombre }}</h1>
+    </div>
+    <a class="btn btn-secondary" href="/admin/tenants/{{ tenant.id }}/edit">Editar</a>
+  </div>
+
+  <div class="grid gap-4 lg:grid-cols-3">
+    <div class="card p-6">
+      <h3 class="text-sm font-semibold text-slate-900">Datos generales</h3>
+      <div class="mt-4 space-y-2 text-sm text-slate-600">
+        <div><span class="text-slate-500">WhatsApp:</span> {{ tenant.whatsapp_number }}</div>
+        <div><span class="text-slate-500">Estado:</span> {% if tenant.activo %}{{ badge("Activo", "success") }}{% else %}{{ badge("Inactivo", "warning") }}{% endif %}</div>
+        <div><span class="text-slate-500">Creado:</span> {{ tenant.created_at.strftime('%Y-%m-%d') if tenant.created_at else '' }}</div>
+      </div>
+    </div>
+
+    <div class="card p-6">
+      <h3 class="text-sm font-semibold text-slate-900">Consultorios</h3>
+      <div class="mt-4 space-y-2 text-sm text-slate-600">
+        {% if consultorios %}
+          {% for consultorio in consultorios %}
+            <div class="flex items-center justify-between">
+              <span>{{ consultorio.nombre }}</span>
+              <span class="text-xs text-slate-500">{{ consultorio.tipo }}</span>
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="text-slate-500">Sin consultorios cargados.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card p-6">
+      <h3 class="text-sm font-semibold text-slate-900">Usuarios</h3>
+      <div class="mt-4 space-y-2 text-sm text-slate-600">
+        {% if users %}
+          {% for user in users %}
+            <div class="flex items-center justify-between">
+              <span>{{ user.email }}</span>
+              <span class="text-xs text-slate-500">{{ user.role }}</span>
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="text-slate-500">Sin usuarios asociados.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endblock %}
+

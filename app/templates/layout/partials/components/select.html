@@ -1,0 +1,11 @@
+{% macro select(name, label, options, value="") %}
+  <label class="block text-sm font-medium text-slate-700">{{ label }}</label>
+  <select name="{{ name }}" class="select mt-1">
+    {% for opt in options %}
+      {% set opt_value = opt[0] %}
+      {% set opt_label = opt[1] %}
+      <option value="{{ opt_value }}" {% if opt_value == value %}selected{% endif %}>{{ opt_label }}</option>
+    {% endfor %}
+  </select>
+{% endmacro %}
+

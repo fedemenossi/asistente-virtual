@@ -1,0 +1,14 @@
+{% extends "layout/base.html" %}
+
+{% set title = "No encontrado" %}
+{% set breadcrumb = "Error" %}
+
+{% block content %}
+  <div class="card p-10 text-center">
+    <h1 class="text-2xl font-semibold text-slate-900">404 - No encontrado</h1>
+    <p class="mt-2 text-sm text-slate-600">La pagina solicitada no existe.</p>
+    <div class="mt-4">
+      <a class="btn btn-secondary" href="/">Volver</a>
+    </div>
+  </div>
+{% endblock %}

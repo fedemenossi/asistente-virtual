@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ title or "Panel" }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/dist/tailwind.css" />
+  </head>
+  <body class="bg-slate-50 text-slate-900">
+    <div class="relative min-h-screen bg-slate-50">
+      <div data-sidebar-overlay class="fixed inset-0 z-30 hidden bg-slate-900/40 lg:hidden"></div>
+      {% include "layout/partials/sidebar.html" %}
+      <div class="lg:pl-64">
+        {% include "layout/partials/topbar.html" %}
+        <main class="px-6 pb-12 pt-6">
+          {% include "layout/partials/flash.html" %}
+          {% block content %}{% endblock %}
+        </main>
+      </div>
+    </div>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
+

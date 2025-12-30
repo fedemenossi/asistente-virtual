@@ -1,0 +1,57 @@
+<header class="sticky top-0 z-20 flex h-16 items-center justify-between border-b border-slate-200 bg-white/90 px-6 backdrop-blur">
+  <div class="flex items-center gap-3">
+    <button data-sidebar-toggle class="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 lg:hidden">=</button>
+    <div>
+      <p class="text-sm text-slate-600">{{ breadcrumb or "" }}</p>
+      <h2 class="text-lg font-semibold text-slate-900">{{ title or "" }}</h2>
+    </div>
+  </div>
+  <div class="flex items-center gap-3">
+    {% if show_search %}
+      <form method="get" action="{{ request.url.path }}" class="hidden md:block">
+        <input class="input w-64" type="search" name="q" placeholder="Buscar" value="{{ q or '' }}" />
+      </form>
+    {% endif %}
+    <div data-dropdown class="relative">
+      <button data-dropdown-toggle class="relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100" title="Notificaciones">!</button>
+      {% if unread_notifications %}
+        <span class="absolute -right-1 -top-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-600 px-1 text-[10px] font-semibold text-white">{{ unread_notifications }}</span>
+      {% endif %}
+      <div data-dropdown-menu class="absolute right-0 mt-2 hidden w-80 rounded-lg border border-slate-200 bg-white shadow-soft">
+        <div class="px-3 py-2 text-xs text-slate-500">Notificaciones</div>
+        <div class="border-t border-slate-200"></div>
+        <div class="max-h-64 overflow-y-auto">
+          {% if notifications %}
+            {% for n in notifications %}
+              <form method="post" action="{% if request.session.get('role') == 'SUPER_ADMIN' %}/admin/notifications/{{ n.id }}/read{% else %}/t/notifications/{{ n.id }}/read{% endif %}" class="px-3 py-2 text-sm hover:bg-slate-50">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                <button class="text-left w-full">
+                  <div class="font-medium text-slate-900">{{ n.title }}</div>
+                  <div class="text-xs text-slate-600">{{ n.message }}</div>
+                </button>
+              </form>
+            {% endfor %}
+          {% else %}
+            <div class="px-3 py-3 text-sm text-slate-600">Sin notificaciones.</div>
+          {% endif %}
+        </div>
+        <div class="border-t border-slate-200"></div>
+        <a class="block px-3 py-2 text-sm text-slate-600 hover:bg-slate-50" href="{% if request.session.get('role') == 'SUPER_ADMIN' %}/admin/notifications{% else %}/t/notifications{% endif %}">Ver todas</a>
+      </div>
+    </div>
+    <div data-dropdown class="relative">
+      <button data-dropdown-toggle class="inline-flex items-center gap-2 rounded-full border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50">
+        <span class="h-7 w-7 rounded-full bg-slate-100 grid place-items-center">{{ (request.session.get('user_email') or 'U')[0]|upper }}</span>
+        <span class="hidden md:inline">{{ request.session.get('user_email') }}</span>
+      </button>
+      <div data-dropdown-menu class="absolute right-0 mt-2 hidden w-48 rounded-lg border border-slate-200 bg-white shadow-soft">
+        <div class="px-3 py-2 text-xs text-slate-500">Sesion</div>
+        <div class="border-t border-slate-200"></div>
+        <form method="post" action="/logout" class="px-2 py-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <button class="btn btn-ghost w-full justify-start" type="submit">Salir</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</header>

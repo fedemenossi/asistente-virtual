@@ -1,0 +1,67 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/modal_confirm.html" import modal_confirm %}
+
+{% set title = "Consultorios" %}
+{% set breadcrumb = "Tenant / Consultorios" %}
+
+{% block content %}
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <p class="text-sm text-slate-600">Administracion</p>
+      <h1 class="text-2xl font-semibold text-slate-900">Consultorios</h1>
+    </div>
+    <a class="btn btn-primary" href="/t/consultorios/new">Nuevo consultorio</a>
+  </div>
+
+  {% if consultorios %}
+    <div class="card overflow-hidden">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Nombre</th>
+            <th class="px-4 py-3 text-left font-medium">Tipo</th>
+            <th class="px-4 py-3 text-left font-medium">Proveedor</th>
+            <th class="px-4 py-3 text-right font-medium">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for consultorio in consultorios %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">{{ consultorio.nombre }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ consultorio.tipo }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ consultorio.proveedor_turnos or '-' }}</td>
+              <td class="px-4 py-3 text-right">
+                <div x-data="{ open: false }" class="relative inline-block text-left">
+                  <button type="button" @click="open = !open" class="btn btn-ghost">...</button>
+                  <div x-show="open" x-cloak @click.outside="open = false" class="absolute right-0 mt-2 w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
+                    <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/t/consultorios/{{ consultorio.id }}/edit">Editar</a>
+                    <div class="border-t border-slate-200"></div>
+                    {{ modal_confirm(
+                      id="delete-consultorio-" ~ consultorio.id,
+                      title="Eliminar consultorio",
+                      message="Esta accion eliminara el consultorio seleccionado.",
+                      action_url="/t/consultorios/" ~ consultorio.id ~ "/delete",
+                      csrf_token=csrf_token,
+                      button_label="Eliminar",
+                      trigger_label="Eliminar",
+                      trigger_class="block w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-slate-50"
+                    ) }}
+                  </div>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card p-10 text-center">
+      <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
+      <p class="text-sm text-slate-600">Aun no tenes consultorios. Crea el primero.</p>
+      <div class="mt-4">
+        <a class="btn btn-primary" href="/t/consultorios/new">Crear consultorio</a>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}
+

@@ -1,0 +1,48 @@
+{% extends "layout/base.html" %}
+
+{% set is_edit = user is not none %}
+{% set title = "Editar usuario" if is_edit else "Nuevo usuario" %}
+{% set breadcrumb = "Admin / Usuarios" %}
+
+{% block content %}
+  <div class="mb-6">
+    <h1 class="text-2xl font-semibold text-slate-900">{{ title }}</h1>
+    <p class="text-sm text-slate-600">Gestiona accesos al panel.</p>
+  </div>
+  <form method="post" class="card p-6 space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div>
+      <label class="block text-sm font-medium text-slate-700">Email</label>
+      <input class="input mt-1" name="email" value="{{ user.email if user else '' }}" required />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700">Password {% if is_edit %}(opcional){% endif %}</label>
+      <input class="input mt-1" type="password" name="password" {% if not is_edit %}required{% endif %} />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700">Rol</label>
+      <select class="select mt-1" name="role">
+        <option value="SUPER_ADMIN" {% if user and user.role == 'SUPER_ADMIN' %}selected{% endif %}>SUPER_ADMIN</option>
+        <option value="TENANT_ADMIN" {% if user and user.role == 'TENANT_ADMIN' %}selected{% endif %}>TENANT_ADMIN</option>
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700">Tenant</label>
+      <select class="select mt-1" name="tenant_id">
+        <option value="">Sin tenant</option>
+        {% for tenant in tenants %}
+          <option value="{{ tenant.id }}" {% if user and user.tenant_id == tenant.id %}selected{% endif %}>{{ tenant.nombre }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+      <input type="checkbox" name="active" value="1" {% if user is none or user.active %}checked{% endif %} />
+      Usuario activo
+    </label>
+    <div class="flex items-center gap-3">
+      <button class="btn btn-primary" type="submit">Guardar</button>
+      <a class="btn btn-secondary" href="/admin/users">Cancelar</a>
+    </div>
+  </form>
+{% endblock %}
+

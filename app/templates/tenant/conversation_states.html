@@ -1,0 +1,39 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Conversaciones" %}
+{% set breadcrumb = "Tenant / Conversaciones" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Estado de conversaciones activas</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Conversaciones</h1>
+  </div>
+  {% if states %}
+    <div class="card overflow-hidden">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Telefono</th>
+            <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-left font-medium">Actualizado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for state in states %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">{{ state.telefono }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ state.estado_actual }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ state.updated_at.strftime('%Y-%m-%d %H:%M') if state.updated_at else '' }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card p-10 text-center">
+      <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
+      <p class="text-sm text-slate-600">No hay conversaciones activas.</p>
+    </div>
+  {% endif %}
+{% endblock %}
+

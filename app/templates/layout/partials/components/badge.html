@@ -1,0 +1,5 @@
+{% macro badge(label, variant="neutral") %}
+  {% if variant == "success" %}{% set classes = "badge-success" %}{% elif variant == "warning" %}{% set classes = "badge-warning" %}{% else %}{% set classes = "badge-neutral" %}{% endif %}
+  <span class="{{ classes }}">{{ label }}</span>
+{% endmacro %}
+

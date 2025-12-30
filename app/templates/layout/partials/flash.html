@@ -1,0 +1,10 @@
+{% if flashes %}
+  <div class="fixed right-6 top-6 z-50 space-y-2">
+    {% for flash in flashes %}
+      <div data-toast class="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm shadow-soft transition">
+        <div class="font-medium text-slate-900">{{ flash.message }}</div>
+        <div class="text-xs text-slate-500">{{ flash.category|upper }}</div>
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}

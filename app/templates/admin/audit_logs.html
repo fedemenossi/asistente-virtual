@@ -1,0 +1,56 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Audit logs" %}
+{% set breadcrumb = "Admin / Audit" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Registro global de acciones</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Audit logs</h1>
+  </div>
+
+  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
+    <select class="select" name="tenant_id">
+      <option value="">Todos los tenants</option>
+      {% for tenant in tenants %}
+        <option value="{{ tenant.id }}" {% if tenant_id == tenant.id|string %}selected{% endif %}>{{ tenant.nombre }}</option>
+      {% endfor %}
+    </select>
+    <input class="input" type="text" name="action" placeholder="Action" value="{{ action }}" />
+    <input class="input" type="text" name="entity" placeholder="Entity" value="{{ entity }}" />
+    <button class="btn btn-secondary" type="submit">Filtrar</button>
+  </form>
+
+  <div class="card overflow-hidden">
+    <table class="min-w-full text-sm">
+      <thead class="bg-slate-50 text-slate-600">
+        <tr>
+          <th class="px-4 py-3 text-left font-medium">Fecha</th>
+          <th class="px-4 py-3 text-left font-medium">Tenant</th>
+          <th class="px-4 py-3 text-left font-medium">Accion</th>
+          <th class="px-4 py-3 text-left font-medium">Entidad</th>
+          <th class="px-4 py-3 text-left font-medium">ID</th>
+          <th class="px-4 py-3 text-left font-medium">Usuario</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if logs %}
+          {% for log in logs %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-600">{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '' }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ log.tenant_id or '-' }}</td>
+              <td class="px-4 py-3 text-slate-900">{{ log.action }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ log.entity }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ log.entity_id or '-' }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ log.user_id or '-' }}</td>
+            </tr>
+          {% endfor %}
+        {% else %}
+          <tr class="border-t border-slate-200">
+            <td colspan="6" class="px-4 py-10 text-center text-slate-600">Sin registros.</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

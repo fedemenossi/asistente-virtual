@@ -1,0 +1,14 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Error interno" %}
+{% set breadcrumb = "Error" %}
+
+{% block content %}
+  <div class="card p-10 text-center">
+    <h1 class="text-2xl font-semibold text-slate-900">500 - Error interno</h1>
+    <p class="mt-2 text-sm text-slate-600">Ocurrio un error inesperado.</p>
+    <div class="mt-4">
+      <a class="btn btn-secondary" href="/">Volver</a>
+    </div>
+  </div>
+{% endblock %}

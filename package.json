@@ -1,0 +1,11 @@
+{
+  "name": "asistente-virtual-ui",
+  "private": true,
+  "scripts": {
+    "tailwind:build": "tailwindcss -i ./app/static/src/tailwind.css -o ./app/static/dist/tailwind.css --minify",
+    "tailwind:watch": "tailwindcss -i ./app/static/src/tailwind.css -o ./app/static/dist/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.14"
+  }
+}

@@ -1,0 +1,78 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/pagination.html" import pagination %}
+{% from "layout/partials/components/modal_confirm.html" import modal_confirm %}
+
+{% set title = "Pacientes" %}
+{% set breadcrumb = "Tenant / Pacientes" %}
+
+{% block content %}
+  <div class="mb-6 flex items-center justify-between">
+    <div>
+      <p class="text-sm text-slate-600">Gestion de pacientes</p>
+      <h1 class="text-2xl font-semibold text-slate-900">Pacientes</h1>
+    </div>
+    <a class="btn btn-primary" href="/t/pacientes/new">Nuevo paciente</a>
+  </div>
+
+  <form method="get" class="mb-4 grid gap-3 md:grid-cols-3">
+    <input class="input" type="search" name="q" placeholder="Buscar por nombre" value="{{ q }}" />
+    <input class="input" type="text" name="obra" placeholder="Obra social" value="{{ obra }}" />
+    <button class="btn btn-secondary" type="submit">Filtrar</button>
+  </form>
+
+  {% if pacientes %}
+    <div class="card overflow-hidden">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Nombre</th>
+            <th class="px-4 py-3 text-left font-medium">Telefono</th>
+            <th class="px-4 py-3 text-left font-medium">Email</th>
+            <th class="px-4 py-3 text-left font-medium">Obra social</th>
+            <th class="px-4 py-3 text-right font-medium">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for paciente in pacientes %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ paciente.telefono }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ paciente.email }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ paciente.obra_social or '-' }}</td>
+              <td class="px-4 py-3 text-right">
+                <div x-data="{ open: false }" class="relative inline-block text-left">
+                  <button type="button" @click="open = !open" class="btn btn-ghost">...</button>
+                  <div x-show="open" x-cloak @click.outside="open = false" class="absolute right-0 mt-2 w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
+                    <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/t/pacientes/{{ paciente.id }}/edit">Editar</a>
+                    <div class="border-t border-slate-200"></div>
+                    {{ modal_confirm(
+                      id="delete-paciente-" ~ paciente.id,
+                      title="Eliminar paciente",
+                      message="Esta accion eliminara el paciente seleccionado.",
+                      action_url="/t/pacientes/" ~ paciente.id ~ "/delete",
+                      csrf_token=csrf_token,
+                      button_label="Eliminar",
+                      trigger_label="Eliminar",
+                      trigger_class="block w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-slate-50"
+                    ) }}
+                  </div>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if total_pages > 1 %}
+      {{ pagination(page, total_pages, "/t/pacientes", query_string) }}
+    {% endif %}
+  {% else %}
+    <div class="card p-10 text-center">
+      <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
+      <p class="text-sm text-slate-600">No hay pacientes. Crea el primero.</p>
+      <div class="mt-4">
+        <a class="btn btn-primary" href="/t/pacientes/new">Crear paciente</a>
+      </div>
+    </div>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/button.html" import button %}
+
+{% set is_edit = tenant is not none %}
+{% set title = "Editar tenant" if is_edit else "Nuevo tenant" %}
+{% set breadcrumb = "Admin / Tenants" %}
+
+{% block content %}
+  <div class="mb-6">
+    <h1 class="text-2xl font-semibold text-slate-900">{{ title }}</h1>
+    <p class="text-sm text-slate-600">Completa los datos del tenant.</p>
+  </div>
+  <form method="post" class="card p-6 space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div>
+      <label class="block text-sm font-medium text-slate-700">Nombre</label>
+      <input class="input mt-1" name="nombre" value="{{ tenant.nombre if tenant else '' }}" required />
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700">WhatsApp</label>
+      <input class="input mt-1" name="whatsapp_number" value="{{ tenant.whatsapp_number if tenant else '' }}" required />
+    </div>
+    <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+      <input type="checkbox" name="activo" value="1" {% if tenant and tenant.activo %}checked{% endif %} />
+      Tenant activo
+    </label>
+    <div class="flex items-center gap-3">
+      <button class="btn btn-primary" type="submit">Guardar</button>
+      <a class="btn btn-secondary" href="/admin/tenants">Cancelar</a>
+    </div>
+  </form>
+{% endblock %}
+
