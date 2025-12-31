@@ -21,10 +21,12 @@ from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.conversacion import EstadoConversacion
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
-from app.models.turno import Turno
+from app.models.turno import AppointmentStatus, Turno
 from app.models.notification import Notification
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
+from app.services.appointment_service import AppointmentService
+from app.services.messaging_service import MessagingService
 
 
 def _template(request: Request, name: str, context: dict) -> Response:
@@ -122,7 +124,7 @@ async def consultorios_new_post(
         tipo=TipoConsultorio(tipo),
         proveedor_turnos=proveedor_turnos,
     )
-    async with session.begin():
+    async with session.begin_nested():
         session.add(consultorio)
         await session.flush()
         await audit_log(
@@ -164,7 +166,7 @@ async def consultorios_edit_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         consultorio = await get_tenant_entity_or_404(
             session, Consultorio, consultorio_id, user.tenant_id
         )
@@ -191,7 +193,7 @@ async def consultorios_delete(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         consultorio = await get_tenant_entity_or_404(
             session, Consultorio, consultorio_id, user.tenant_id
         )
@@ -284,7 +286,7 @@ async def pacientes_new_post(
         email=email,
         obra_social=obra_social,
     )
-    async with session.begin():
+    async with session.begin_nested():
         session.add(paciente)
         await session.flush()
         await audit_log(
@@ -325,7 +327,7 @@ async def pacientes_edit_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         paciente = await get_tenant_entity_or_404(
             session, Paciente, paciente_id, user.tenant_id
         )
@@ -355,7 +357,7 @@ async def pacientes_delete(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         paciente = await get_tenant_entity_or_404(
             session, Paciente, paciente_id, user.tenant_id
         )
@@ -494,7 +496,7 @@ async def settings_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
         tenant.nombre = nombre
         await audit_log(
@@ -519,6 +521,18 @@ def _parse_payment_settings(tenant: Tenant) -> dict:
         "mp_access_token": settings.get("mp_access_token", ""),
         "mp_webhook_secret": settings.get("mp_webhook_secret", ""),
         "public_text": settings.get("public_text", ""),
+    }
+
+
+def _parse_calendar_settings(tenant: Tenant) -> dict:
+    settings = tenant.calendar_settings or {}
+    return {
+        "google_calendar_id": settings.get("google_calendar_id", ""),
+        "calendar_tags": ",".join(settings.get("calendar_tags", []) or []),
+        "default_timezone": settings.get("default_timezone", "UTC"),
+        "virtual_meet_enabled": bool(settings.get("virtual_meet_enabled", False)),
+        "google_credentials_json": settings.get("google_credentials_json", ""),
+        "google_delegated_user": settings.get("google_delegated_user", ""),
     }
 
 
@@ -549,7 +563,7 @@ async def payment_settings_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
         tenant.payment_settings = {
             "enabled": bool(enabled),
@@ -570,6 +584,66 @@ async def payment_settings_post(
         )
     add_flash(request, "success", "Configuracion de pagos actualizada")
     return RedirectResponse("/t/settings/payments", status_code=303)
+
+
+async def calendar_settings_get(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("settings:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    return _template(
+        request,
+        "tenant/settings_calendar.html",
+        {"tenant": tenant, "calendar_settings": _parse_calendar_settings(tenant)},
+    )
+
+
+async def calendar_settings_post(
+    request: Request,
+    google_calendar_id: str = Form(""),
+    calendar_tags: str = Form(""),
+    default_timezone: str = Form("UTC"),
+    virtual_meet_enabled: str | None = Form(None),
+    google_credentials_json: str = Form(""),
+    google_delegated_user: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("settings:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    tags = [tag.strip() for tag in calendar_tags.split(",") if tag.strip()]
+    async with session.begin_nested():
+        tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+        tenant.calendar_settings = {
+            "google_calendar_id": google_calendar_id.strip(),
+            "calendar_tags": tags,
+            "default_timezone": default_timezone.strip() or "UTC",
+            "virtual_meet_enabled": bool(virtual_meet_enabled),
+            "google_credentials_json": google_credentials_json.strip(),
+            "google_delegated_user": google_delegated_user.strip(),
+        }
+        await audit_log(
+            session,
+            request,
+            user,
+            action="update",
+            entity="calendar_settings",
+            entity_id=tenant.id,
+        )
+    add_flash(request, "success", "Configuracion de calendario actualizada")
+    return RedirectResponse("/t/settings/calendar", status_code=303)
+
+
+async def notifications_settings(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("settings:write")),
+) -> Response:
+    return _template(
+        request,
+        "tenant/settings_notifications.html",
+        {},
+    )
 
 
 async def audit_logs(
@@ -692,4 +766,129 @@ async def payment_detail(
         "tenant/payment_detail.html",
         {"row": row, "events": events},
     )
+
+
+async def appointments_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("appointment:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    date_str = request.query_params.get("date", "").strip()
+    status_filter = request.query_params.get("status", "").strip()
+    consultorio_id = request.query_params.get("consultorio_id", "").strip()
+
+    stmt = (
+        select(Turno, Paciente, Consultorio)
+        .join(Paciente, Turno.paciente_id == Paciente.id)
+        .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+        .where(Consultorio.tenant_id == user.tenant_id, Turno.deleted_at.is_(None))
+    )
+    if status_filter:
+        try:
+            stmt = stmt.where(Turno.status == AppointmentStatus(status_filter))
+        except ValueError:
+            status_filter = ""
+    if consultorio_id:
+        try:
+            stmt = stmt.where(Consultorio.id == int(consultorio_id))
+        except ValueError:
+            consultorio_id = ""
+    if date_str:
+        try:
+            parsed = datetime.fromisoformat(date_str)
+            start = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            stmt = stmt.where(Turno.fecha_hora >= start, Turno.fecha_hora < end)
+        except ValueError:
+            date_str = ""
+
+    result = await session.execute(stmt.order_by(Turno.fecha_hora.desc()))
+    rows = list(result.all())
+    consultorios = list(
+        (
+            await session.execute(
+                select(Consultorio).where(
+                    Consultorio.tenant_id == user.tenant_id,
+                    Consultorio.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return _template(
+        request,
+        "tenant/appointments_list.html",
+        {
+            "rows": rows,
+            "consultorios": consultorios,
+            "status_filter": status_filter,
+            "consultorio_id": consultorio_id,
+            "date": date_str,
+        },
+    )
+
+
+async def appointment_detail(
+    request: Request,
+    turno_id: int,
+    user: CurrentUser = Depends(require_permission("appointment:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    stmt = (
+        select(Turno, Paciente, Consultorio)
+        .join(Paciente, Turno.paciente_id == Paciente.id)
+        .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+        .where(Turno.id == turno_id, Consultorio.tenant_id == user.tenant_id)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    return _template(request, "tenant/appointment_detail.html", {"row": row})
+
+
+async def appointment_cancel(
+    request: Request,
+    turno_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("appointment:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    turno = await get_tenant_entity_or_404(session, Turno, turno_id, user.tenant_id)
+    consultorio = await get_entity_or_404(session, Consultorio, turno.consultorio_id)
+    tenant = await get_entity_or_404(session, Tenant, consultorio.tenant_id)
+    await AppointmentService(session).cancel_turno(request, tenant, consultorio, turno)
+    add_flash(request, "success", "Turno cancelado")
+    return RedirectResponse(f"/t/appointments/{turno_id}", status_code=303)
+
+
+async def appointment_resend(
+    request: Request,
+    turno_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("appointment:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    stmt = (
+        select(Turno, Paciente, Consultorio)
+        .join(Paciente, Turno.paciente_id == Paciente.id)
+        .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+        .where(Turno.id == turno_id, Consultorio.tenant_id == user.tenant_id)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    turno = row[0]
+    paciente = row[1]
+    consultorio = row[2]
+    start_at = turno.start_at or turno.fecha_hora
+    fecha_texto = start_at.strftime('%Y-%m-%d %H:%M') if start_at else "-"
+    message = f"Confirmacion de turno: {consultorio.nombre} el {fecha_texto}."
+    MessagingService().send_whatsapp(paciente.telefono, message)
+    add_flash(request, "success", "Confirmacion reenviada")
+    return RedirectResponse(f"/t/appointments/{turno_id}", status_code=303)
 

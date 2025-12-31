@@ -1,0 +1,30 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/button.html" import button %}
+
+{% set title = "Notificaciones" %}
+{% set breadcrumb = "Admin / Settings / Notificaciones" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Configuracion</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Notificaciones</h1>
+  </div>
+
+  <div class="card p-6">
+    <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <h2 class="text-lg font-semibold text-slate-900">Push en este dispositivo</h2>
+        <p class="text-sm text-slate-600">
+          Recibi alertas en tiempo real aun con la app cerrada.
+        </p>
+      </div>
+      <label class="flex items-center gap-3 rounded-lg border border-slate-200 px-4 py-3 text-sm text-slate-700">
+        <input data-push-toggle type="checkbox" class="h-4 w-4 rounded border-slate-300 text-slate-900" />
+        <span data-push-status class="text-slate-600" data-state="disabled">Deshabilitado</span>
+      </label>
+    </div>
+    <div class="mt-4 flex flex-col gap-3 md:flex-row">
+      {{ button("Probar notificacion", variant="secondary", attrs='data-push-test') }}
+    </div>
+  </div>
+{% endblock %}

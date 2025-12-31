@@ -1,0 +1,74 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = "Detalle turno" %}
+{% set breadcrumb = "Tenant / Turnos" %}
+
+{% block content %}
+  {% set turno = row[0] %}
+  {% set paciente = row[1] %}
+  {% set consultorio = row[2] %}
+  {% set status = turno.status.value if turno.status is not none else turno.estado %}
+
+  <div class="mb-6">
+    <h1 class="text-2xl font-semibold text-slate-900">Turno #{{ turno.id }}</h1>
+    <p class="text-sm text-slate-600">Detalle del turno.</p>
+  </div>
+
+  <div class="card p-6 space-y-4">
+    <div class="grid gap-4 md:grid-cols-2">
+      <div>
+        <p class="text-xs text-slate-500">Paciente</p>
+        <p class="text-sm font-medium text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Consultorio</p>
+        <p class="text-sm font-medium text-slate-900">{{ consultorio.nombre }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Fecha</p>
+        {% set fecha = turno.start_at if turno.start_at else turno.fecha_hora %}
+        <p class="text-sm font-medium text-slate-900">{{ fecha.strftime('%Y-%m-%d %H:%M') if fecha else '' }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Estado</p>
+        {% if status in ['confirmed', 'confirmado'] %}
+          {{ badge("Confirmado", "success") }}
+        {% elif status in ['waiting_payment'] %}
+          {{ badge("Esperando pago", "neutral") }}
+        {% elif status in ['cancelled', 'cancelado'] %}
+          {{ badge("Cancelado", "warning") }}
+        {% else %}
+          {{ badge("Borrador", "neutral") }}
+        {% endif %}
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Calendar ID</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.external_calendar_id or "-" }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Event ID</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.external_event_id or "-" }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Google Meet</p>
+        {% if turno.referencia_externa %}
+          <a class="text-sm text-slate-900 underline" href="{{ turno.referencia_externa }}" target="_blank">Abrir enlace</a>
+        {% else %}
+          <p class="text-sm font-medium text-slate-900">-</p>
+        {% endif %}
+      </div>
+    </div>
+    <div class="flex flex-wrap gap-3">
+      <form method="post" action="/t/appointments/{{ turno.id }}/cancel">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button class="btn btn-danger" type="submit">Cancelar</button>
+      </form>
+      <form method="post" action="/t/appointments/{{ turno.id }}/resend">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button class="btn btn-secondary" type="submit">Reenviar confirmacion</button>
+      </form>
+      <a class="btn btn-secondary" href="/t/appointments">Volver</a>
+    </div>
+  </div>
+{% endblock %}

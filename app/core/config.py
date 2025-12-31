@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     mp_access_token: str | None = Field(default=None, alias="MP_ACCESS_TOKEN")
     mp_webhook_secret: str | None = Field(default=None, alias="MP_WEBHOOK_SECRET")
     public_base_url: str | None = Field(default=None, alias="PUBLIC_BASE_URL")
+    google_credentials_json: str | None = Field(default=None, alias="GOOGLE_CREDENTIALS_JSON")
+    google_delegated_user: str | None = Field(default=None, alias="GOOGLE_DELEGATED_USER")
+    internal_job_token: str | None = Field(default=None, alias="INTERNAL_JOB_TOKEN")
+    vapid_public_key: str | None = Field(default=None, alias="VAPID_PUBLIC_KEY")
+    vapid_private_key: str | None = Field(default=None, alias="VAPID_PRIVATE_KEY")
+    vapid_subject: str | None = Field(default="mailto:admin@example.com", alias="VAPID_SUBJECT")
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 

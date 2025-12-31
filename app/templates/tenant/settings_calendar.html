@@ -1,0 +1,43 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Settings calendario" %}
+{% set breadcrumb = "Tenant / Settings / Calendario" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Configuracion de calendario</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Calendario</h1>
+  </div>
+
+  <form method="post" class="card p-6 space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div>
+      <label class="text-xs text-slate-500">Google Calendar ID</label>
+      <input class="input" type="text" name="google_calendar_id" value="{{ calendar_settings.google_calendar_id }}" />
+    </div>
+    <div>
+      <label class="text-xs text-slate-500">Tags (separados por coma)</label>
+      <input class="input" type="text" name="calendar_tags" value="{{ calendar_settings.calendar_tags }}" />
+    </div>
+    <div>
+      <label class="text-xs text-slate-500">Timezone por defecto</label>
+      <input class="input" type="text" name="default_timezone" value="{{ calendar_settings.default_timezone }}" />
+    </div>
+    <div class="flex items-center gap-3">
+      <input class="h-4 w-4" type="checkbox" id="virtual_meet_enabled" name="virtual_meet_enabled" {% if calendar_settings.virtual_meet_enabled %}checked{% endif %} />
+      <label class="text-sm text-slate-700" for="virtual_meet_enabled">Habilitar Google Meet</label>
+    </div>
+    <div>
+      <label class="text-xs text-slate-500">Credenciales JSON (Service Account)</label>
+      <textarea class="textarea" name="google_credentials_json" rows="4">{{ calendar_settings.google_credentials_json }}</textarea>
+    </div>
+    <div>
+      <label class="text-xs text-slate-500">Delegated user (opcional)</label>
+      <input class="input" type="text" name="google_delegated_user" value="{{ calendar_settings.google_delegated_user }}" />
+    </div>
+    <div class="flex items-center gap-3">
+      <button class="btn btn-primary" type="submit">Guardar</button>
+      <a class="btn btn-secondary" href="/t/settings">Volver</a>
+    </div>
+  </form>
+{% endblock %}

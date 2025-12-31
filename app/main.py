@@ -10,6 +10,7 @@ from starlette.staticfiles import StaticFiles
 
 from app.api.routes import admin_consultorios, admin_tenants, health, webhook
 from app.api.routes import payments_webhook
+from app.api.routes import internal
 from app.core.bootstrap import ensure_super_admin
 from app.core.config import get_settings
 from app.core.logging import configure_logging
@@ -72,6 +73,7 @@ async def attach_notifications(request, call_next):
 app.include_router(health.router)
 app.include_router(webhook.router)
 app.include_router(payments_webhook.router)
+app.include_router(internal.router)
 app.include_router(admin_tenants.router)
 app.include_router(admin_consultorios.router)
 app.include_router(auth_router)

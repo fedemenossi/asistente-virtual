@@ -54,6 +54,28 @@ router.add_api_route(
     methods=["GET"],
     response_class=HTMLResponse,
 )
+router.add_api_route(
+    "/appointments",
+    views.appointments_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/appointments/{turno_id}",
+    views.appointment_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/appointments/{turno_id}/cancel",
+    views.appointment_cancel,
+    methods=["POST"],
+)
+router.add_api_route(
+    "/appointments/{turno_id}/resend",
+    views.appointment_resend,
+    methods=["POST"],
+)
 router.add_api_route("/payments", views.payments_list, methods=["GET"], response_class=HTMLResponse)
 router.add_api_route(
     "/payments/{payment_id}",
@@ -91,3 +113,16 @@ router.add_api_route(
     response_class=HTMLResponse,
 )
 router.add_api_route("/settings/payments", views.payment_settings_post, methods=["POST"])
+router.add_api_route(
+    "/settings/calendar",
+    views.calendar_settings_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route("/settings/calendar", views.calendar_settings_post, methods=["POST"])
+router.add_api_route(
+    "/settings/notifications",
+    views.notifications_settings,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)

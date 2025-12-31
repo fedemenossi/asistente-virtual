@@ -10,12 +10,14 @@ from app.core.config import get_settings
 from app.integrations.mercadopago_service import MercadoPagoService, resolve_mp_credentials
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
+from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
-from app.models.turno import EstadoTurno, Turno
+from app.models.turno import AppointmentStatus, EstadoTurno, Turno
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.payment_event_repository import PaymentEventRepository
 from app.repositories.payment_repository import PaymentRepository
+from app.services.appointment_service import AppointmentService
 
 
 class PaymentService:
@@ -90,6 +92,7 @@ class PaymentService:
             tenant_id=tenant.id,
         )
         turno.estado = EstadoTurno.WAITING_PAYMENT
+        turno.status = AppointmentStatus.WAITING_PAYMENT
         await self._session.commit()
         return payment
 
@@ -179,11 +182,25 @@ class PaymentService:
             turno = await self._session.get(Turno, payment.appointment_id)
             if turno:
                 if new_status == PaymentStatus.APPROVED:
-                    turno.estado = EstadoTurno.CONFIRMADO
+                    consultorio = await self._session.get(Consultorio, turno.consultorio_id)
+                    paciente = await self._session.get(Paciente, turno.paciente_id)
+                    if tenant and consultorio and paciente:
+                        await AppointmentService(self._session).confirm_after_payment(
+                            request,
+                            tenant,
+                            consultorio,
+                            paciente,
+                            turno,
+                        )
+                    else:
+                        turno.estado = EstadoTurno.CONFIRMADO
+                        turno.status = AppointmentStatus.CONFIRMED
                 elif new_status in {PaymentStatus.REJECTED, PaymentStatus.CANCELLED}:
                     turno.estado = EstadoTurno.PAYMENT_FAILED
+                    turno.status = AppointmentStatus.CANCELLED
                 else:
                     turno.estado = EstadoTurno.WAITING_PAYMENT
+                    turno.status = AppointmentStatus.WAITING_PAYMENT
         await self._session.commit()
 
     async def _emit_payment_notifications(
@@ -205,5 +222,3 @@ class PaymentService:
             notif_type=notif_type,
             tenant_id=payment.tenant_id,
         )
-        if mp_payment_id and not payment.external_payment_id:
-            payment.external_payment_id = str(mp_payment_id)

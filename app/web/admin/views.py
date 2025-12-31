@@ -23,7 +23,7 @@ from app.models.paciente import Paciente
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
 from app.models.tenant import Tenant
-from app.models.turno import Turno
+from app.models.turno import AppointmentStatus, Turno
 from app.models.user import User, UserRole
 from app.models.notification import Notification
 
@@ -154,7 +154,7 @@ async def tenants_new_post(
         whatsapp_number=whatsapp_number,
         activo=bool(activo),
     )
-    async with session.begin():
+    async with session.begin_nested():
         session.add(tenant)
         await session.flush()
         await audit_log(
@@ -229,7 +229,7 @@ async def tenants_edit_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, tenant_id)
         tenant.nombre = nombre
         tenant.whatsapp_number = whatsapp_number
@@ -254,7 +254,7 @@ async def tenants_toggle(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, tenant_id)
         tenant.activo = not tenant.activo
         await audit_log(
@@ -288,7 +288,7 @@ async def tenants_delete(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, tenant_id)
         tenant.deleted_at = datetime.now(timezone.utc)
         tenant.deleted_by = user.id
@@ -382,7 +382,7 @@ async def users_new_post(
         tenant_id=assigned_tenant_id,
         active=bool(active),
     )
-    async with session.begin():
+    async with session.begin_nested():
         session.add(new_user)
         await session.flush()
         await audit_log(
@@ -433,7 +433,7 @@ async def users_edit_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
+    async with session.begin_nested():
         user = await get_entity_or_404(session, User, user_id)
         user.email = email
         user.role = role
@@ -461,8 +461,15 @@ async def users_toggle(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
-        user = await get_entity_or_404(session, User, user_id)
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        add_flash(request, "error", "Usuario no encontrado")
+        return RedirectResponse("/admin/users", status_code=303)
+    if user.deleted_at is not None:
+        add_flash(request, "error", "Usuario eliminado")
+        return RedirectResponse("/admin/users", status_code=303)
+    async with session.begin_nested():
         user.active = not user.active
         await audit_log(
             session,
@@ -495,8 +502,18 @@ async def users_delete(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin():
-        user = await get_entity_or_404(session, User, user_id)
+    if current.id == user_id:
+        add_flash(request, "error", "No podes eliminar tu propio usuario")
+        return RedirectResponse("/admin/users", status_code=303)
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if user is None:
+        add_flash(request, "error", "Usuario no encontrado")
+        return RedirectResponse("/admin/users", status_code=303)
+    if user.deleted_at is not None:
+        add_flash(request, "error", "Usuario ya eliminado")
+        return RedirectResponse("/admin/users", status_code=303)
+    async with session.begin_nested():
         user.deleted_at = datetime.now(timezone.utc)
         user.deleted_by = current.id
         await audit_log(
@@ -595,7 +612,7 @@ async def notifications_mark_read(
     notification = result.scalar_one_or_none()
     if notification is None:
         raise HTTPException(status_code=404, detail="Notificacion no encontrada")
-    async with session.begin():
+    async with session.begin_nested():
         await mark_notification_read(session, notification)
     return RedirectResponse("/admin/notifications", status_code=303)
 
@@ -687,5 +704,94 @@ async def payments_settings(
         request,
         "admin/settings_payments.html",
         {},
+    )
+
+
+async def notifications_settings(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+) -> Response:
+    return _template(
+        request,
+        "admin/settings_notifications.html",
+        {},
+    )
+
+
+async def calendars(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    result = await session.execute(select(Tenant).where(Tenant.deleted_at.is_(None)))
+    tenants = list(result.scalars().all())
+    rows = []
+    for tenant in tenants:
+        settings = tenant.calendar_settings or {}
+        rows.append(
+            {
+                "tenant": tenant,
+                "calendar_id": settings.get("google_calendar_id"),
+                "timezone": settings.get("default_timezone"),
+                "enabled": bool(settings.get("google_calendar_id")),
+            }
+        )
+    return _template(request, "admin/calendars.html", {"rows": rows})
+
+
+async def appointments_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("appointment:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    tenant_id = request.query_params.get("tenant_id", "").strip()
+    status_filter = request.query_params.get("status", "").strip()
+    tipo = request.query_params.get("tipo", "").strip()
+    date_str = request.query_params.get("date", "").strip()
+
+    stmt = (
+        select(Turno, Tenant, Paciente, Consultorio)
+        .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+        .join(Tenant, Consultorio.tenant_id == Tenant.id)
+        .join(Paciente, Turno.paciente_id == Paciente.id)
+        .where(Turno.deleted_at.is_(None), Consultorio.deleted_at.is_(None))
+    )
+    if tenant_id:
+        try:
+            stmt = stmt.where(Tenant.id == int(tenant_id))
+        except ValueError:
+            tenant_id = ""
+    if status_filter:
+        try:
+            stmt = stmt.where(Turno.status == AppointmentStatus(status_filter))
+        except ValueError:
+            status_filter = ""
+    if tipo:
+        stmt = stmt.where(Turno.tipo == tipo)
+    if date_str:
+        try:
+            parsed = datetime.fromisoformat(date_str)
+            start = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            stmt = stmt.where(Turno.fecha_hora >= start, Turno.fecha_hora < end)
+        except ValueError:
+            date_str = ""
+
+    result = await session.execute(stmt.order_by(Turno.fecha_hora.desc()))
+    rows = list(result.all())
+    tenants = list(
+        (await session.execute(select(Tenant).where(Tenant.deleted_at.is_(None)))).scalars().all()
+    )
+    return _template(
+        request,
+        "admin/appointments_list.html",
+        {
+            "rows": rows,
+            "tenants": tenants,
+            "tenant_id": tenant_id,
+            "status_filter": status_filter,
+            "tipo": tipo,
+            "date": date_str,
+        },
     )
 

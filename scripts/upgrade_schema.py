@@ -11,7 +11,14 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.db import engine
-from app.models import AuditLog, Notification, Payment, PaymentEvent, Subscription  # noqa: F401
+from app.models import (  # noqa: F401
+    AuditLog,
+    Notification,
+    Payment,
+    PaymentEvent,
+    PushSubscription,
+    Subscription,
+)
 from app.models.base import Base
 
 
@@ -26,6 +33,17 @@ SOFT_DELETE_COLUMNS = {
 EXTRA_COLUMNS = {
     "tenants": {
         "payment_settings": "JSON NULL",
+        "calendar_settings": "JSON NULL",
+    },
+    "turnos": {
+        "start_at": "DATETIME NULL",
+        "end_at": "DATETIME NULL",
+        "timezone": "VARCHAR(64) NULL",
+        "external_calendar_provider": "VARCHAR(50) NULL",
+        "external_calendar_id": "VARCHAR(200) NULL",
+        "external_event_id": "VARCHAR(200) NULL",
+        "reminder_sent_at": "DATETIME NULL",
+        "status": "VARCHAR(32) NULL",
     },
 }
 

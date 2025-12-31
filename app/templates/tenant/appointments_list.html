@@ -1,0 +1,80 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = "Turnos reales" %}
+{% set breadcrumb = "Tenant / Turnos" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Agenda real</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Turnos</h1>
+  </div>
+
+  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
+    <input class="input" type="date" name="date" value="{{ date or '' }}" />
+    <select class="select" name="consultorio_id">
+      <option value="">Consultorio</option>
+      {% for consultorio in consultorios %}
+        <option value="{{ consultorio.id }}" {% if consultorio_id and consultorio_id|int == consultorio.id %}selected{% endif %}>{{ consultorio.nombre }}</option>
+      {% endfor %}
+    </select>
+    <select class="select" name="status">
+      <option value="">Estado</option>
+      <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Borrador</option>
+      <option value="waiting_payment" {% if status_filter == 'waiting_payment' %}selected{% endif %}>Esperando pago</option>
+      <option value="confirmed" {% if status_filter == 'confirmed' %}selected{% endif %}>Confirmado</option>
+      <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelado</option>
+      <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completado</option>
+    </select>
+    <button class="btn btn-secondary" type="submit">Filtrar</button>
+  </form>
+
+  {% if rows %}
+    <div class="card overflow-x-auto overflow-y-visible">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Paciente</th>
+            <th class="px-4 py-3 text-left font-medium">Consultorio</th>
+            <th class="px-4 py-3 text-left font-medium">Fecha</th>
+            <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-right font-medium">Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% set turno = row[0] %}
+            {% set paciente = row[1] %}
+            {% set consultorio = row[2] %}
+            {% set status = turno.status.value if turno.status is not none else turno.estado %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ consultorio.nombre }}</td>
+              {% set fecha = turno.start_at if turno.start_at else turno.fecha_hora %}
+              <td class="px-4 py-3 text-slate-600">{{ fecha.strftime('%Y-%m-%d %H:%M') if fecha else '' }}</td>
+              <td class="px-4 py-3">
+                {% if status in ['confirmed', 'confirmado'] %}
+                  {{ badge("Confirmado", "success") }}
+                {% elif status in ['waiting_payment'] %}
+                  {{ badge("Esperando pago", "neutral") }}
+                {% elif status in ['cancelled', 'cancelado'] %}
+                  {{ badge("Cancelado", "warning") }}
+                {% else %}
+                  {{ badge("Borrador", "neutral") }}
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-right">
+                <a class="btn btn-secondary" href="/t/appointments/{{ turno.id }}">Ver</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card p-10 text-center">
+      <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
+      <p class="text-sm text-slate-600">No hay turnos registrados.</p>
+    </div>
+  {% endif %}
+{% endblock %}

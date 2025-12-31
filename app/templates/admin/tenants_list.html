@@ -32,7 +32,7 @@
   </form>
 
   {% if tenants %}
-    <div class="card overflow-hidden">
+    <div class="card overflow-x-auto overflow-y-visible">
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600">
           <tr>
@@ -59,9 +59,9 @@
               </td>
               <td class="px-4 py-3 text-slate-600">{{ tenant.created_at.strftime('%Y-%m-%d') if tenant.created_at else '' }}</td>
               <td class="px-4 py-3 text-right">
-                <div x-data="{ open: false }" class="relative inline-block text-left">
-                  <button type="button" @click="open = !open" class="btn btn-ghost">...</button>
-                  <div x-show="open" x-cloak @click.outside="open = false" class="absolute right-0 mt-2 w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
+                <div data-dropdown class="relative inline-block text-left">
+                  <button data-dropdown-toggle type="button" class="btn btn-ghost">...</button>
+                  <div data-dropdown-menu class="absolute right-0 z-10 mt-2 hidden w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
                     <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/admin/tenants/{{ tenant.id }}">Ver</a>
                     <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/admin/tenants/{{ tenant.id }}/edit">Editar</a>
                     <div class="border-t border-slate-200"></div>

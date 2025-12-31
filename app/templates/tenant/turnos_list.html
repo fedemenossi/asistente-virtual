@@ -20,17 +20,19 @@
     </select>
     <select class="select" name="estado">
       <option value="">Estado</option>
+      <option value="draft" {% if estado == 'draft' %}selected{% endif %}>Borrador</option>
       <option value="pendiente" {% if estado == 'pendiente' %}selected{% endif %}>Pendiente</option>
       <option value="waiting_payment" {% if estado == 'waiting_payment' %}selected{% endif %}>Esperando pago</option>
       <option value="confirmado" {% if estado == 'confirmado' %}selected{% endif %}>Confirmado</option>
       <option value="payment_failed" {% if estado == 'payment_failed' %}selected{% endif %}>Pago fallido</option>
       <option value="cancelado" {% if estado == 'cancelado' %}selected{% endif %}>Cancelado</option>
+      <option value="completed" {% if estado == 'completed' %}selected{% endif %}>Completado</option>
     </select>
     <button class="btn btn-secondary" type="submit">Filtrar</button>
   </form>
 
   {% if rows %}
-    <div class="card overflow-hidden">
+    <div class="card overflow-x-auto overflow-y-visible">
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600">
           <tr>
@@ -51,7 +53,8 @@
             <tr class="border-t border-slate-200 hover:bg-slate-50">
               <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</td>
               <td class="px-4 py-3 text-slate-600">{{ consultorio.nombre }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ turno.fecha_hora.strftime('%Y-%m-%d %H:%M') if turno.fecha_hora else '' }}</td>
+              {% set fecha = turno.start_at if turno.start_at else turno.fecha_hora %}
+              <td class="px-4 py-3 text-slate-600">{{ fecha.strftime('%Y-%m-%d %H:%M') if fecha else '' }}</td>
               <td class="px-4 py-3 text-slate-600">{{ turno.tipo }}</td>
               <td class="px-4 py-3">
                 {% if status == 'confirmado' %}
@@ -62,6 +65,8 @@
                   {{ badge("Pago fallido", "warning") }}
                 {% elif status == 'cancelado' %}
                   {{ badge("Cancelado", "warning") }}
+                {% elif status == 'completed' %}
+                  {{ badge("Completado", "success") }}
                 {% else %}
                   {{ badge("Pendiente", "neutral") }}
                 {% endif %}

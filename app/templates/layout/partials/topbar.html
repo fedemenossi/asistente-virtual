@@ -23,8 +23,9 @@
         <div class="max-h-64 overflow-y-auto">
           {% if notifications %}
             {% for n in notifications %}
-              <form method="post" action="{% if request.session.get('role') == 'SUPER_ADMIN' %}/admin/notifications/{{ n.id }}/read{% else %}/t/notifications/{{ n.id }}/read{% endif %}" class="px-3 py-2 text-sm hover:bg-slate-50">
+              <form method="post" action="/notifications/mark-read" class="px-3 py-2 text-sm hover:bg-slate-50">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                <input type="hidden" name="notification_id" value="{{ n.id }}" />
                 <button class="text-left w-full">
                   <div class="font-medium text-slate-900">{{ n.title }}</div>
                   <div class="text-xs text-slate-600">{{ n.message }}</div>

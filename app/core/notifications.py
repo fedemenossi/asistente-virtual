@@ -16,6 +16,7 @@ async def create_notification(
     notif_type: str = "info",
     tenant_id: int | None = None,
     user_id: int | None = None,
+    link: str | None = None,
 ) -> Notification:
     notification = Notification(
         tenant_id=tenant_id,
@@ -26,6 +27,20 @@ async def create_notification(
     )
     session.add(notification)
     await session.flush()
+    try:
+        from app.services.push_service import send_push_for_notification
+
+        await send_push_for_notification(
+            session,
+            notification_id=notification.id,
+            title=title,
+            message=message,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            link=link,
+        )
+    except Exception:
+        pass
     return notification
 
 

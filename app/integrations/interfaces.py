@@ -1,26 +1,52 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 
-from app.models.turno import Turno
+from app.models.consultorio import Consultorio
+from app.models.paciente import Paciente
+from app.models.tenant import Tenant
+
+
+@dataclass
+class CalendarSlot:
+    slot_id: str
+    start_at: datetime
+    end_at: datetime
+    timezone: str
+    provider: str
+    calendar_id: str
 
 
 class CalendarProvider(ABC):
     @abstractmethod
-    async def create_appointment(self, turno: Turno) -> str:
+    async def list_available_slots(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        start: datetime,
+        end: datetime,
+    ) -> list[CalendarSlot]:
         raise NotImplementedError
 
     @abstractmethod
-    async def cancel_appointment(self, external_id: str) -> None:
+    async def reserve_slot(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        slot_id: str,
+        patient: Paciente,
+        metadata: dict,
+    ) -> dict:
         raise NotImplementedError
 
     @abstractmethod
-    async def list_available_slots(self, start: datetime, end: datetime) -> list[datetime]:
+    async def cancel_slot(self, external_event_id: str) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def book_slot(self, fecha_hora: datetime, notes: str | None = None) -> str:
+    async def get_event(self, external_event_id: str) -> dict:
         raise NotImplementedError
 
 

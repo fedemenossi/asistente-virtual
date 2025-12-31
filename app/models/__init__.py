@@ -5,6 +5,7 @@ from app.models.notification import Notification
 from app.models.paciente import Paciente
 from app.models.payment import Payment
 from app.models.payment_event import PaymentEvent
+from app.models.push_subscription import PushSubscription
 from app.models.subscription import Subscription
 from app.models.tenant import Tenant
 from app.models.turno import Turno
@@ -18,6 +19,7 @@ __all__ = [
     "Paciente",
     "Payment",
     "PaymentEvent",
+    "PushSubscription",
     "Subscription",
     "Tenant",
     "Turno",

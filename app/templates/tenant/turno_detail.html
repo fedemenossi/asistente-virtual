@@ -24,7 +24,8 @@
       </div>
       <div>
         <p class="text-xs text-slate-500">Fecha</p>
-        <p class="text-sm font-medium text-slate-900">{{ turno.fecha_hora.strftime('%Y-%m-%d %H:%M') if turno.fecha_hora else '' }}</p>
+        {% set fecha = turno.start_at if turno.start_at else turno.fecha_hora %}
+        <p class="text-sm font-medium text-slate-900">{{ fecha.strftime('%Y-%m-%d %H:%M') if fecha else '' }}</p>
       </div>
       <div>
         <p class="text-xs text-slate-500">Estado</p>
