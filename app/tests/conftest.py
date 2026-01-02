@@ -134,7 +134,7 @@ async def create_paciente(db_session, tenant_id: int, telefono: str) -> int:
                 telefono=telefono,
                 nombre="Juan",
                 apellido="Perez",
-                dni="123",
+                dni="12345678",
                 email="juan@example.com",
             )
             session.add(paciente)

@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     vapid_public_key: str | None = Field(default=None, alias="VAPID_PUBLIC_KEY")
     vapid_private_key: str | None = Field(default=None, alias="VAPID_PRIVATE_KEY")
     vapid_subject: str | None = Field(default="mailto:admin@example.com", alias="VAPID_SUBJECT")
+    cab_turnos_user: str | None = Field(default=None, alias="CAB_TURNOS_USER")
+    cab_turnos_password: str | None = Field(default=None, alias="CAB_TURNOS_PASSWORD")
+    cab_turnos_staff_id: str | None = Field(default=None, alias="CAB_TURNOS_STAFF_ID")
+    cab_turnos_days: int = Field(default=21, alias="CAB_TURNOS_DAYS")
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
 

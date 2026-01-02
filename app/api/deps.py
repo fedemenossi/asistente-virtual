@@ -27,6 +27,7 @@ async def get_conversation_service(
     session: AsyncSession = Depends(get_async_session),
 ) -> ConversationService:
     return ConversationService(
+        session=session,
         paciente_repo=PacienteRepository(session),
         conversacion_repo=ConversacionRepository(session),
         notification_repo=NotificationRepository(session),

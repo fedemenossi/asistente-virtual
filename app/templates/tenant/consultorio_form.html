@@ -1,6 +1,8 @@
 {% extends "layout/base.html" %}
 
 {% set is_edit = consultorio is not none %}
+{% set form = form_data or {} %}
+{% set errors = errors or {} %}
 {% set title = "Editar consultorio" if is_edit else "Nuevo consultorio" %}
 {% set breadcrumb = "Tenant / Consultorios" %}
 
@@ -9,28 +11,147 @@
     <h1 class="text-2xl font-semibold text-slate-900">{{ title }}</h1>
     <p class="text-sm text-slate-600">Configura la sede y el tipo de atencion.</p>
   </div>
-  <form method="post" class="card p-6 space-y-4">
+  {% if errors %}
+    <div class="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+      Revisá los campos marcados en rojo.
+    </div>
+  {% endif %}
+  <form method="post" class="card p-6 space-y-4" data-consultorio-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    {% set nombre_value = (form.nombre if form.nombre is defined and form.nombre != '' else (consultorio.nombre if consultorio else '')) %}
     <div>
       <label class="block text-sm font-medium text-slate-700">Nombre</label>
-      <input class="input mt-1" name="nombre" value="{{ consultorio.nombre if consultorio else '' }}" required />
+      <input class="input mt-1" name="nombre" value="{{ nombre_value }}" required />
     </div>
     <div>
       <label class="block text-sm font-medium text-slate-700">Tipo</label>
       <select class="select mt-1" name="tipo">
         {% for t in tipos %}
-          <option value="{{ t.value }}" {% if consultorio and consultorio.tipo.value == t.value %}selected{% endif %}>{{ t.value }}</option>
+          {% set selected = false %}
+          {% if form.tipo is defined and form.tipo == t.value %}
+            {% set selected = true %}
+          {% elif consultorio and consultorio.tipo.value == t.value %}
+            {% set selected = true %}
+          {% endif %}
+          <option value="{{ t.value }}" {% if selected %}selected{% endif %}>{{ t.value }}</option>
         {% endfor %}
       </select>
     </div>
     <div>
       <label class="block text-sm font-medium text-slate-700">Proveedor turnos</label>
-      <input class="input mt-1" name="proveedor_turnos" value="{{ consultorio.proveedor_turnos if consultorio else '' }}" />
+      <select class="select mt-1" name="proveedor_turnos" data-provider-select>
+        <option value="">Manual</option>
+        {% set selected_cab = (form.proveedor_turnos is defined and form.proveedor_turnos == 'consultorio_movil') or (consultorio and consultorio.proveedor_turnos == 'consultorio_movil') %}
+        <option value="consultorio_movil" {% if selected_cab %}selected{% endif %}>
+          Consultorio Movil (Cabildo)
+        </option>
+        {% set selected_google = (form.proveedor_turnos is defined and form.proveedor_turnos == 'google') or (consultorio and consultorio.proveedor_turnos == 'google') %}
+        <option value="google" {% if selected_google %}selected{% endif %}>
+          Google Calendar
+        </option>
+        {% if consultorio and consultorio.proveedor_turnos and consultorio.proveedor_turnos not in ['', 'consultorio_movil', 'google'] %}
+          <option value="{{ consultorio.proveedor_turnos }}" selected>{{ consultorio.proveedor_turnos }}</option>
+        {% endif %}
+      </select>
+      <p class="text-xs text-slate-500 mt-1">Selecciona el proveedor externo que usa este consultorio.</p>
+    </div>
+    <div class="border border-slate-200 rounded-xl p-4 space-y-3 hidden" data-cabildo-fields>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Usuario</label>
+        <input class="input mt-1 {% if errors.cab_user %}border-rose-400 focus:ring-rose-300{% endif %}" name="cab_user" value="{{ cabildo_defaults.user if cabildo_defaults else '' }}" />
+        {% if errors.cab_user %}
+          <p class="mt-1 text-xs text-rose-600">{{ errors.cab_user }}</p>
+        {% endif %}
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Password</label>
+        <input class="input mt-1 {% if errors.cab_password %}border-rose-400 focus:ring-rose-300{% endif %}" type="password" name="cab_password" value="{{ cabildo_defaults.password if cabildo_defaults else '' }}" />
+        {% if errors.cab_password %}
+          <p class="mt-1 text-xs text-rose-600">{{ errors.cab_password }}</p>
+        {% endif %}
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Id del profesinal</label>
+        <input class="input mt-1 {% if errors.cab_staff_id %}border-rose-400 focus:ring-rose-300{% endif %}" name="cab_staff_id" value="{{ cabildo_defaults.staff_id if cabildo_defaults else '' }}" />
+        {% if errors.cab_staff_id %}
+          <p class="mt-1 text-xs text-rose-600">{{ errors.cab_staff_id }}</p>
+        {% endif %}
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Dias para buscar turnos</label>
+        <input class="input mt-1 {% if errors.cab_days %}border-rose-400 focus:ring-rose-300{% endif %}" type="number" min="1" name="cab_days" value="{{ cabildo_defaults.days if cabildo_defaults else 21 }}" />
+        {% if errors.cab_days %}
+          <p class="mt-1 text-xs text-rose-600">{{ errors.cab_days }}</p>
+        {% endif %}
+      </div>
+      <p class="text-xs text-slate-500">Estos valores se guardan en la configuracion externa del consultorio.</p>
     </div>
     <div class="flex items-center gap-3">
       <button class="btn btn-primary" type="submit">Guardar</button>
       <a class="btn btn-secondary" href="/t/consultorios">Cancelar</a>
     </div>
   </form>
+  <script>
+    (() => {
+      const form = document.querySelector("[data-consultorio-form]");
+      const select = document.querySelector("[data-provider-select]");
+      const fields = document.querySelector("[data-cabildo-fields]");
+      const inputs = {
+        cab_user: form?.querySelector("input[name='cab_user']"),
+        cab_password: form?.querySelector("input[name='cab_password']"),
+        cab_staff_id: form?.querySelector("input[name='cab_staff_id']"),
+        cab_days: form?.querySelector("input[name='cab_days']"),
+      };
+      if (!select || !fields) return;
+      const toggle = () => {
+        if (select.value === "consultorio_movil") {
+          fields.classList.remove("hidden");
+        } else {
+          fields.classList.add("hidden");
+        }
+      };
+      const clearInlineErrors = () => {
+        fields.querySelectorAll("[data-inline-error]").forEach((el) => el.remove());
+        fields.querySelectorAll("input").forEach((input) => {
+          input.classList.remove("border-rose-400", "focus:ring-rose-300");
+        });
+      };
+      const showError = (input, message) => {
+        if (!input) return;
+        input.classList.add("border-rose-400", "focus:ring-rose-300");
+        const msg = document.createElement("p");
+        msg.className = "mt-1 text-xs text-rose-600";
+        msg.dataset.inlineError = "1";
+        msg.textContent = message;
+        input.parentElement.appendChild(msg);
+      };
+      form?.addEventListener("submit", (event) => {
+        if (select.value !== "consultorio_movil") return;
+        clearInlineErrors();
+        let hasError = false;
+        if (!inputs.cab_user?.value.trim()) {
+          showError(inputs.cab_user, "El usuario es obligatorio.");
+          hasError = true;
+        }
+        if (!inputs.cab_password?.value.trim()) {
+          showError(inputs.cab_password, "La contraseña es obligatoria.");
+          hasError = true;
+        }
+        if (!inputs.cab_staff_id?.value.trim()) {
+          showError(inputs.cab_staff_id, "El staff id es obligatorio.");
+          hasError = true;
+        }
+        if (inputs.cab_days?.value && Number.isNaN(Number(inputs.cab_days.value))) {
+          showError(inputs.cab_days, "Ingresa un numero valido de dias.");
+          hasError = true;
+        }
+        if (hasError) {
+          event.preventDefault();
+        }
+      });
+      select.addEventListener("change", toggle);
+      toggle();
+    })();
+  </script>
 {% endblock %}
 

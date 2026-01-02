@@ -19,6 +19,15 @@ class PacienteRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_dni(self, tenant_id: int, dni: str) -> Paciente | None:
+        stmt = select(Paciente).where(
+            Paciente.tenant_id == tenant_id,
+            Paciente.dni == dni,
+            Paciente.deleted_at.is_(None),
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def create(self, paciente: Paciente) -> Paciente:
         self._session.add(paciente)
         await self._session.flush()

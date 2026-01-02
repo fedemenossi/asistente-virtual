@@ -7,6 +7,7 @@ from fastapi import Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.audit import audit_log
 from app.core.csrf import validate_csrf
@@ -104,7 +105,18 @@ async def consultorios_new_get(
     return _template(
         request,
         "tenant/consultorio_form.html",
-        {"consultorio": None, "tipos": list(TipoConsultorio)},
+        {
+            "consultorio": None,
+            "tipos": list(TipoConsultorio),
+            "errors": {},
+            "form_data": {},
+            "cabildo_defaults": {
+                "user": "",
+                "password": "",
+                "staff_id": "",
+                "days": 21,
+            },
+        },
     )
 
 
@@ -113,20 +125,80 @@ async def consultorios_new_post(
     nombre: str = Form(...),
     tipo: str = Form(...),
     proveedor_turnos: str | None = Form(None),
+    cab_user: str | None = Form(None),
+    cab_password: str | None = Form(None),
+    cab_staff_id: str | None = Form(None),
+    cab_days: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("consultorio:write")),
     session: AsyncSession = Depends(get_async_session),
-) -> RedirectResponse:
+) -> Response:
     validate_csrf(request, csrf_token)
+    config_externa: dict | None = None
+    if proveedor_turnos == "consultorio_movil":
+        errors: dict[str, str] = {}
+        if not cab_user:
+            errors["cab_user"] = "El usuario es obligatorio."
+        if not cab_password:
+            errors["cab_password"] = "La contraseña es obligatoria."
+        if not cab_staff_id:
+            errors["cab_staff_id"] = "El staff id es obligatorio."
+        days_value = 21
+        if cab_days:
+            try:
+                days_value = int(cab_days)
+            except ValueError:
+                errors["cab_days"] = "Ingresa un numero valido de dias."
+        if errors:
+            return _template(
+                request,
+                "tenant/consultorio_form.html",
+                {
+                    "consultorio": None,
+                    "tipos": list(TipoConsultorio),
+                    "errors": errors,
+                    "form_data": {
+                        "nombre": nombre,
+                        "tipo": tipo,
+                        "proveedor_turnos": proveedor_turnos or "",
+                    },
+                    "cabildo_defaults": {
+                        "user": cab_user or "",
+                        "password": cab_password or "",
+                        "staff_id": cab_staff_id or "",
+                        "days": cab_days or 21,
+                    },
+                },
+            )
+        days_value = 21
+        if cab_days:
+            try:
+                days_value = int(cab_days)
+            except ValueError:
+                days_value = 21
+        config_externa = {
+            "cabildo": {
+                "user": cab_user.strip(),
+                "password": cab_password.strip(),
+                "staff_id": cab_staff_id.strip(),
+                "days": days_value,
+            }
+        }
     consultorio = Consultorio(
         tenant_id=user.tenant_id,
         nombre=nombre,
         tipo=TipoConsultorio(tipo),
         proveedor_turnos=proveedor_turnos,
+        configuracion_externa=config_externa,
     )
     async with session.begin_nested():
         session.add(consultorio)
         await session.flush()
+        metadata = None
+        if proveedor_turnos == "consultorio_movil":
+            metadata = {
+                "cabildo": consultorio.configuracion_externa.get("cabildo") if consultorio.configuracion_externa else {},
+            }
         await audit_log(
             session,
             request,
@@ -134,6 +206,7 @@ async def consultorios_new_post(
             action="create",
             entity="consultorio",
             entity_id=consultorio.id,
+            metadata=metadata,
         )
     add_flash(request, "success", "Consultorio creado")
     return RedirectResponse("/t/consultorios", status_code=303)
@@ -148,10 +221,22 @@ async def consultorios_edit_get(
     consultorio = await get_tenant_entity_or_404(
         session, Consultorio, consultorio_id, user.tenant_id
     )
+    cabildo_cfg = (consultorio.configuracion_externa or {}).get("cabildo") or {}
     return _template(
         request,
         "tenant/consultorio_form.html",
-        {"consultorio": consultorio, "tipos": list(TipoConsultorio)},
+        {
+            "consultorio": consultorio,
+            "tipos": list(TipoConsultorio),
+            "errors": {},
+            "form_data": {},
+            "cabildo_defaults": {
+                "user": cabildo_cfg.get("user") or "",
+                "password": cabildo_cfg.get("password") or "",
+                "staff_id": cabildo_cfg.get("staff_id") or "",
+                "days": cabildo_cfg.get("days") or 21,
+            },
+        },
     )
 
 
@@ -161,18 +246,79 @@ async def consultorios_edit_post(
     nombre: str = Form(...),
     tipo: str = Form(...),
     proveedor_turnos: str | None = Form(None),
+    cab_user: str | None = Form(None),
+    cab_password: str | None = Form(None),
+    cab_staff_id: str | None = Form(None),
+    cab_days: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("consultorio:write")),
     session: AsyncSession = Depends(get_async_session),
-) -> RedirectResponse:
+) -> Response:
     validate_csrf(request, csrf_token)
+    consultorio = await get_tenant_entity_or_404(
+        session, Consultorio, consultorio_id, user.tenant_id
+    )
+    errors: dict[str, str] = {}
+    existing_days = (
+        (consultorio.configuracion_externa or {}).get("cabildo") or {}
+    ).get("days") or 21
+    days_value = existing_days
+    if proveedor_turnos == "consultorio_movil":
+        if not cab_user:
+            errors["cab_user"] = "El usuario es obligatorio."
+        if not cab_password:
+            errors["cab_password"] = "La contraseña es obligatoria."
+        if not cab_staff_id:
+            errors["cab_staff_id"] = "El staff id es obligatorio."
+        if cab_days:
+            try:
+                days_value = int(cab_days)
+            except ValueError:
+                errors["cab_days"] = "Ingresa un numero valido de dias."
+        if errors:
+            return _template(
+                request,
+                "tenant/consultorio_form.html",
+                {
+                    "consultorio": consultorio,
+                    "tipos": list(TipoConsultorio),
+                    "errors": errors,
+                    "form_data": {
+                        "nombre": nombre,
+                        "tipo": tipo,
+                        "proveedor_turnos": proveedor_turnos or "",
+                    },
+                    "cabildo_defaults": {
+                        "user": cab_user or "",
+                        "password": cab_password or "",
+                        "staff_id": cab_staff_id or "",
+                        "days": cab_days or 21,
+                    },
+                },
+            )
+    previous_cabildo = None
+    if consultorio.configuracion_externa:
+        previous_cabildo = (consultorio.configuracion_externa.get("cabildo") or {}).copy()
     async with session.begin_nested():
-        consultorio = await get_tenant_entity_or_404(
-            session, Consultorio, consultorio_id, user.tenant_id
-        )
         consultorio.nombre = nombre
         consultorio.tipo = TipoConsultorio(tipo)
         consultorio.proveedor_turnos = proveedor_turnos
+        config_externa = consultorio.configuracion_externa or {}
+        if proveedor_turnos == "consultorio_movil":
+            config_externa["cabildo"] = {
+                "user": cab_user.strip(),
+                "password": cab_password.strip(),
+                "staff_id": cab_staff_id.strip(),
+                "days": days_value,
+            }
+            consultorio.configuracion_externa = config_externa
+            flag_modified(consultorio, "configuracion_externa")
+        metadata = None
+        if proveedor_turnos == "consultorio_movil":
+            metadata = {
+                "cabildo_before": previous_cabildo,
+                "cabildo_after": config_externa.get("cabildo") if config_externa else {},
+            }
         await audit_log(
             session,
             request,
@@ -180,6 +326,7 @@ async def consultorios_edit_post(
             action="update",
             entity="consultorio",
             entity_id=consultorio.id,
+            metadata=metadata,
         )
     add_flash(request, "success", "Consultorio actualizado")
     return RedirectResponse("/t/consultorios", status_code=303)

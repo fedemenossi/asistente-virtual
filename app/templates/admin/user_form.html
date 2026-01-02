@@ -1,6 +1,8 @@
 {% extends "layout/base.html" %}
 
 {% set is_edit = user is not none %}
+{% set errors = errors or {} %}
+{% set form = form_data or {} %}
 {% set title = "Editar usuario" if is_edit else "Nuevo usuario" %}
 {% set breadcrumb = "Admin / Usuarios" %}
 
@@ -9,11 +11,19 @@
     <h1 class="text-2xl font-semibold text-slate-900">{{ title }}</h1>
     <p class="text-sm text-slate-600">Gestiona accesos al panel.</p>
   </div>
+  {% if errors %}
+    <div class="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+      Revisá los campos marcados para continuar.
+    </div>
+  {% endif %}
   <form method="post" class="card p-6 space-y-4">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <div>
       <label class="block text-sm font-medium text-slate-700">Email</label>
-      <input class="input mt-1" name="email" value="{{ user.email if user else '' }}" required />
+      <input class="input mt-1 {% if errors.email %}border-rose-400 focus:ring-rose-300{% endif %}" name="email" value="{{ form.get('email') or (user.email if user else '') }}" required />
+      {% if errors.email %}
+        <p class="mt-1 text-xs text-rose-600">{{ errors.email }}</p>
+      {% endif %}
     </div>
     <div>
       <label class="block text-sm font-medium text-slate-700">Password {% if is_edit %}(opcional){% endif %}</label>
@@ -22,8 +32,8 @@
     <div>
       <label class="block text-sm font-medium text-slate-700">Rol</label>
       <select class="select mt-1" name="role">
-        <option value="SUPER_ADMIN" {% if user and user.role == 'SUPER_ADMIN' %}selected{% endif %}>SUPER_ADMIN</option>
-        <option value="TENANT_ADMIN" {% if user and user.role == 'TENANT_ADMIN' %}selected{% endif %}>TENANT_ADMIN</option>
+        <option value="SUPER_ADMIN" {% if (form.get('role') or (user.role if user else '')) == 'SUPER_ADMIN' %}selected{% endif %}>SUPER_ADMIN</option>
+        <option value="TENANT_ADMIN" {% if (form.get('role') or (user.role if user else '')) == 'TENANT_ADMIN' %}selected{% endif %}>TENANT_ADMIN</option>
       </select>
     </div>
     <div>
@@ -31,12 +41,12 @@
       <select class="select mt-1" name="tenant_id">
         <option value="">Sin tenant</option>
         {% for tenant in tenants %}
-          <option value="{{ tenant.id }}" {% if user and user.tenant_id == tenant.id %}selected{% endif %}>{{ tenant.nombre }}</option>
+          <option value="{{ tenant.id }}" {% if form.get('tenant_id') == tenant.id|string or (user and user.tenant_id == tenant.id and not form.get('tenant_id')) %}selected{% endif %}>{{ tenant.nombre }}</option>
         {% endfor %}
       </select>
     </div>
     <label class="inline-flex items-center gap-2 text-sm text-slate-600">
-      <input type="checkbox" name="active" value="1" {% if user is none or user.active %}checked{% endif %} />
+      <input type="checkbox" name="active" value="1" {% if form.get('active') or (user is none or user.active) %}checked{% endif %} />
       Usuario activo
     </label>
     <div class="flex items-center gap-3">

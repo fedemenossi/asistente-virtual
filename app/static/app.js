@@ -265,4 +265,188 @@
       }
     });
   }
+
+  const chatRoot = document.querySelector("[data-chat-simulator]");
+  if (chatRoot) {
+    const form = chatRoot.querySelector("[data-chat-form]");
+    const log = chatRoot.querySelector("[data-chat-log]");
+    const input = chatRoot.querySelector("[data-chat-input]");
+    const tenantSelect = chatRoot.querySelector("[data-chat-tenant]");
+    const patientSelect = chatRoot.querySelector("[data-chat-patient]");
+    const resetForm = chatRoot.querySelector("[data-chat-reset]");
+    const phoneInput = chatRoot.querySelector("[data-chat-phone]");
+
+    const STORAGE_TO = "chat_simulator_to";
+    const STORAGE_PATIENT = "chat_simulator_patient";
+    const STORAGE_PHONE = "chat_simulator_phone";
+
+    const setDefaults = () => {
+      const savedTo = localStorage.getItem(STORAGE_TO);
+      const savedPhone = localStorage.getItem(STORAGE_PHONE);
+      if (tenantSelect && savedTo) {
+        const option = tenantSelect.querySelector(`option[value="${savedTo}"]`);
+        if (option) {
+          tenantSelect.value = savedTo;
+        } else {
+          localStorage.removeItem(STORAGE_TO);
+        }
+      }
+      if (phoneInput && savedPhone) {
+        phoneInput.value = savedPhone;
+      }
+    };
+
+    const persistDefaults = () => {
+      if (tenantSelect?.value) {
+        localStorage.setItem(STORAGE_TO, tenantSelect.value);
+      }
+      if (patientSelect?.value) {
+        localStorage.setItem(STORAGE_PATIENT, patientSelect.value);
+      }
+      if (phoneInput?.value) {
+        localStorage.setItem(STORAGE_PHONE, phoneInput.value);
+      }
+      if (resetForm) {
+        const toHidden = resetForm.querySelector('input[name="to_number"]');
+        const fromHidden = resetForm.querySelector('input[name="from_number"]');
+        if (toHidden) {
+          const selectedTenant = tenantSelect?.selectedOptions[0];
+          toHidden.value = selectedTenant?.dataset?.whatsapp || "";
+        }
+        if (fromHidden) {
+          const selected = patientSelect?.selectedOptions[0];
+          const manual = phoneInput?.value?.trim() || "";
+          fromHidden.value = selected?.dataset?.phone || manual;
+        }
+      }
+    };
+
+    const syncPhoneInput = () => {
+      if (!phoneInput) return;
+      const selected = patientSelect?.selectedOptions[0];
+      const manual = localStorage.getItem(STORAGE_PHONE) || "";
+      if (selected?.value) {
+        phoneInput.value = selected?.dataset?.phone || "";
+        phoneInput.readOnly = true;
+        phoneInput.classList.add("bg-slate-100");
+      } else {
+        phoneInput.readOnly = false;
+        phoneInput.classList.remove("bg-slate-100");
+        if (manual) {
+          phoneInput.value = manual;
+        }
+      }
+    };
+
+    const appendMessage = (label, text) => {
+      if (!log) return;
+      const wrapper = document.createElement("div");
+      wrapper.className = "mb-3";
+      const title = document.createElement("div");
+      title.className = "text-xs text-slate-500";
+      title.textContent = label;
+      const body = document.createElement("div");
+      body.className = "text-slate-900";
+      body.textContent = text;
+      wrapper.appendChild(title);
+      wrapper.appendChild(body);
+      log.appendChild(wrapper);
+      log.scrollTop = log.scrollHeight;
+    };
+
+    const loadPatients = async () => {
+      if (!tenantSelect || !patientSelect) return;
+      const tenantId = tenantSelect.value;
+      if (!tenantId) return;
+      patientSelect.innerHTML = '<option value="">Seleccionar paciente</option>';
+      const response = await fetch(`/admin/chat-simulator/patients?tenant_id=${tenantId}`);
+      const data = await response.json();
+      (data.items || []).forEach((item) => {
+        const opt = document.createElement("option");
+        opt.value = String(item.id);
+        opt.textContent = `${item.nombre} ${item.apellido} - ${item.telefono}`;
+        opt.dataset.phone = item.telefono || "";
+        patientSelect.appendChild(opt);
+      });
+      const savedPatient = localStorage.getItem(STORAGE_PATIENT);
+      if (savedPatient) {
+        patientSelect.value = savedPatient;
+      }
+      syncPhoneInput();
+    };
+
+    setDefaults();
+    loadPatients().then(() => {
+      persistDefaults();
+    });
+    tenantSelect?.addEventListener("change", async () => {
+      localStorage.removeItem(STORAGE_PATIENT);
+      persistDefaults();
+      await loadPatients();
+    });
+    patientSelect?.addEventListener("change", () => {
+      syncPhoneInput();
+      persistDefaults();
+    });
+    phoneInput?.addEventListener("input", () => {
+      if (!patientSelect?.value) {
+        persistDefaults();
+      }
+    });
+
+    form?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const selectedTenant = tenantSelect?.selectedOptions[0];
+      const toNumber = selectedTenant?.dataset?.whatsapp?.trim();
+      const selected = patientSelect?.selectedOptions[0];
+      const manualNumber = phoneInput?.value?.trim();
+      const fromNumber = selected?.dataset?.phone?.trim() || manualNumber;
+      const message = input?.value?.trim();
+      if (!toNumber || !fromNumber || !message) {
+        alert("Selecciona tenant, ingresa un telefono valido y escribe un mensaje.");
+        return;
+      }
+      persistDefaults();
+      appendMessage("Paciente", message);
+      if (input) input.value = "";
+
+      try {
+        const resp = await fetch("/admin/chat-simulator/api", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrfToken || "",
+          },
+          body: JSON.stringify({
+            to_number: toNumber,
+            from_number: fromNumber,
+            patient_id: patientSelect?.value || null,
+            message,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          appendMessage("Bot", data.error || "Error al enviar.");
+          return;
+        }
+        appendMessage("Bot", data.reply || "(sin respuesta)");
+      } catch (err) {
+        appendMessage("Bot", "No se pudo contactar al servidor.");
+      }
+    });
+  }
+
+  const providerSelect = document.querySelector("[data-provider-select]");
+  const cabildoFields = document.querySelector("[data-cabildo-fields]");
+  if (providerSelect && cabildoFields) {
+    const toggleCabildo = () => {
+      if (providerSelect.value === "consultorio_movil") {
+        cabildoFields.classList.remove("hidden");
+      } else {
+        cabildoFields.classList.add("hidden");
+      }
+    };
+    providerSelect.addEventListener("change", toggleCabildo);
+    toggleCabildo();
+  }
 })();

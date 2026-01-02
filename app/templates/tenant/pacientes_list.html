@@ -26,6 +26,8 @@
         <thead class="bg-slate-50 text-slate-600">
           <tr>
             <th class="px-4 py-3 text-left font-medium">Nombre</th>
+            <th class="px-4 py-3 text-left font-medium">Apellido</th>
+            <th class="px-4 py-3 text-left font-medium">DNI</th>
             <th class="px-4 py-3 text-left font-medium">Telefono</th>
             <th class="px-4 py-3 text-left font-medium">Email</th>
             <th class="px-4 py-3 text-left font-medium">Obra social</th>
@@ -35,7 +37,9 @@
         <tbody>
           {% for paciente in pacientes %}
             <tr class="border-t border-slate-200 hover:bg-slate-50">
-              <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</td>
+              <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }}</td>
+              <td class="px-4 py-3 text-slate-900">{{ paciente.apellido }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ paciente.dni or '-' }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.telefono }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.email }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.obra_social or '-' }}</td>

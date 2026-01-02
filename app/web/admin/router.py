@@ -76,6 +76,32 @@ router.add_api_route(
     response_class=HTMLResponse,
 )
 router.add_api_route(
+    "/chat-simulator",
+    views.chat_simulator_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/chat-simulator/send",
+    views.chat_simulator_send,
+    methods=["POST"],
+)
+router.add_api_route(
+    "/chat-simulator/api",
+    views.chat_simulator_api,
+    methods=["POST"],
+)
+router.add_api_route(
+    "/chat-simulator/patients",
+    views.chat_simulator_patients,
+    methods=["GET"],
+)
+router.add_api_route(
+    "/chat-simulator/reset",
+    views.chat_simulator_reset,
+    methods=["POST"],
+)
+router.add_api_route(
     "/notifications",
     views.notifications_list,
     methods=["GET"],

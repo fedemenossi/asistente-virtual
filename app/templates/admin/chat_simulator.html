@@ -1,0 +1,87 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/button.html" import button %}
+
+{% set title = "Simulador WhatsApp" %}
+{% set breadcrumb = "Admin / Chat simulator" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Pruebas de conversacion</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Simulador WhatsApp</h1>
+  </div>
+
+  <div data-chat-simulator class="card mx-auto max-w-3xl p-6">
+    <div class="mb-4">
+      <h2 class="text-xl font-semibold text-slate-900">Simulador de conversacion</h2>
+      <p class="text-xs text-slate-500">Estilo WhatsApp para probar el flujo.</p>
+    </div>
+
+    <div class="grid gap-4 md:grid-cols-2">
+      <div>
+        <label class="mb-1 block text-sm text-slate-600">Consultorio (tenant)</label>
+        <select data-chat-tenant class="select" required>
+          {% for tenant in tenants %}
+            <option
+              value="{{ tenant.id }}"
+              data-whatsapp="{{ tenant.whatsapp_number }}"
+              {% if defaults.to_number == tenant.whatsapp_number %}selected{% endif %}
+            >
+              {{ tenant.nombre }} - {{ tenant.whatsapp_number }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="mb-1 block text-sm text-slate-600">Paciente</label>
+        <select data-chat-patient class="select">
+          <option value="">Seleccionar paciente</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="mt-4">
+      <label class="mb-1 block text-sm text-slate-600">Telefono del paciente</label>
+      <input
+        data-chat-phone
+        class="input w-full"
+        placeholder="Ej: whatsapp:+54911..."
+        inputmode="tel"
+      />
+      <p class="mt-1 text-xs text-slate-500">
+        Si no seleccionas un paciente, ingresa el telefono manualmente.
+      </p>
+    </div>
+
+    <div data-chat-log class="mt-4 h-[520px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 text-sm">
+      {% if history %}
+        {% for item in history %}
+          <div class="mb-3">
+            <div class="text-slate-500 text-xs">Paciente</div>
+            <div class="text-slate-900">{{ item.message }}</div>
+          </div>
+          <div class="mb-4">
+            <div class="text-slate-500 text-xs">Bot</div>
+            <div class="text-slate-900">{{ item.reply }}</div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="text-center text-sm text-slate-500">
+          Escribi un mensaje para iniciar la conversacion.
+        </div>
+      {% endif %}
+    </div>
+
+    <form data-chat-form class="mt-4 flex gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <textarea data-chat-input class="textarea flex-1 min-h-[96px]" placeholder="Escribe un mensaje"></textarea>
+      {{ button("Enviar", variant="primary", type="submit") }}
+    </form>
+
+    <form data-chat-reset method="post" action="/admin/chat-simulator/reset" class="mt-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="to_number" value="{{ defaults.to_number or '' }}" />
+      <input type="hidden" name="from_number" value="{{ defaults.from_number or '' }}" />
+      {{ button("Reiniciar conversacion", variant="secondary", type="submit") }}
+    </form>
+  </div>
+{% endblock %}

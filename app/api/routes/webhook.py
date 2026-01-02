@@ -30,6 +30,7 @@ async def whatsapp_webhook(
 
     tenant_repo = TenantRepository(session)
     conversation_service = ConversationService(
+        session=session,
         paciente_repo=PacienteRepository(session),
         conversacion_repo=ConversacionRepository(session),
         notification_repo=NotificationRepository(session),

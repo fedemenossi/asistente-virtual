@@ -4,8 +4,9 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 from fastapi import Depends, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit_log
@@ -15,7 +16,7 @@ from app.core.notifications import mark_notification_read
 from app.core.security import CurrentUser, hash_password, require_permission
 from app.core.templates import base_context, templates
 from app.core.ui import add_flash
-from app.core.tenancy import get_entity_or_404
+from app.core.tenancy import get_entity_or_404, set_current_tenant_id
 from app.models.audit_log import AuditLog
 from app.models.consultorio import Consultorio
 from app.models.conversacion import EstadoConversacion
@@ -26,6 +27,12 @@ from app.models.tenant import Tenant
 from app.models.turno import AppointmentStatus, Turno
 from app.models.user import User, UserRole
 from app.models.notification import Notification
+from app.repositories.conversacion_repository import ConversacionRepository
+from app.repositories.notification_repository import NotificationRepository
+from app.repositories.paciente_repository import PacienteRepository
+from app.repositories.tenant_repository import TenantRepository
+from app.services.conversation_service import ConversationService
+from app.services.tenant_service import TenantService
 
 
 def _template(request: Request, name: str, context: dict) -> Response:
@@ -375,6 +382,12 @@ async def users_new_post(
     validate_csrf(request, csrf_token)
     user_role = UserRole(role)
     assigned_tenant_id = tenant_id if user_role == UserRole.TENANT_ADMIN else None
+    form_data = {
+        "email": email,
+        "role": role,
+        "tenant_id": str(tenant_id or ""),
+        "active": "1" if active else "",
+    }
     new_user = User(
         email=email,
         password_hash=hash_password(password),
@@ -382,16 +395,33 @@ async def users_new_post(
         tenant_id=assigned_tenant_id,
         active=bool(active),
     )
-    async with session.begin_nested():
-        session.add(new_user)
-        await session.flush()
-        await audit_log(
-            session,
+    try:
+        async with session.begin_nested():
+            session.add(new_user)
+            await session.flush()
+            await audit_log(
+                session,
+                request,
+                current,
+                action="create",
+                entity="user",
+                entity_id=new_user.id,
+            )
+    except IntegrityError:
+        tenants = list(
+            (
+                await session.execute(
+                    select(Tenant).where(Tenant.deleted_at.is_(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        errors = {"email": "Ya existe un usuario con este email."}
+        return _template(
             request,
-            current,
-            action="create",
-            entity="user",
-            entity_id=new_user.id,
+            "admin/user_form.html",
+            {"user": None, "tenants": tenants, "errors": errors, "form_data": form_data},
         )
     add_flash(request, "success", "Usuario creado")
     return RedirectResponse("/admin/users", status_code=303)
@@ -433,21 +463,45 @@ async def users_edit_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin_nested():
+    form_data = {
+        "email": email,
+        "role": role,
+        "tenant_id": str(tenant_id or ""),
+        "active": "1" if active else "",
+    }
+    try:
+        async with session.begin_nested():
+            user = await get_entity_or_404(session, User, user_id)
+            user.email = email
+            user.role = role
+            user.active = bool(active)
+            user.tenant_id = tenant_id if role == UserRole.TENANT_ADMIN.value else None
+            if password:
+                user.password_hash = hash_password(password)
+            await audit_log(
+                session,
+                request,
+                current,
+                action="update",
+                entity="user",
+                entity_id=user.id,
+            )
+    except IntegrityError:
+        tenants = list(
+            (
+                await session.execute(
+                    select(Tenant).where(Tenant.deleted_at.is_(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        errors = {"email": "Ya existe un usuario con este email."}
         user = await get_entity_or_404(session, User, user_id)
-        user.email = email
-        user.role = role
-        user.active = bool(active)
-        user.tenant_id = tenant_id if role == UserRole.TENANT_ADMIN.value else None
-        if password:
-            user.password_hash = hash_password(password)
-        await audit_log(
-            session,
+        return _template(
             request,
-            current,
-            action="update",
-            entity="user",
-            entity_id=user.id,
+            "admin/user_form.html",
+            {"user": user, "tenants": tenants, "errors": errors, "form_data": form_data},
         )
     add_flash(request, "success", "Usuario actualizado")
     return RedirectResponse("/admin/users", status_code=303)
@@ -716,6 +770,188 @@ async def notifications_settings(
         "admin/settings_notifications.html",
         {},
     )
+
+
+async def chat_simulator_get(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    result = await session.execute(select(Tenant).where(Tenant.deleted_at.is_(None)))
+    tenants = list(result.scalars().all())
+    history = request.session.get("chat_simulator_history", [])
+    request.session["chat_simulator_history"] = []
+    defaults = request.session.get("chat_simulator_defaults", {})
+    return _template(
+        request,
+        "admin/chat_simulator.html",
+        {
+            "tenants": tenants,
+            "history": history,
+            "defaults": defaults,
+        },
+    )
+
+
+async def chat_simulator_send(
+    request: Request,
+    to_number: str = Form(...),
+    from_number: str = Form(...),
+    message: str = Form(...),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    tenant_service = TenantService(TenantRepository(session))
+    tenant = await tenant_service.resolve_by_whatsapp(to_number)
+    if tenant is None or not tenant.activo:
+        add_flash(request, "error", "No existe un tenant activo con ese numero.")
+        return RedirectResponse("/admin/chat-simulator", status_code=303)
+
+    conversation_service = ConversationService(
+        session=session,
+        paciente_repo=PacienteRepository(session),
+        conversacion_repo=ConversacionRepository(session),
+        notification_repo=NotificationRepository(session),
+    )
+
+    async with session.begin_nested():
+        set_current_tenant_id(tenant.id)
+        try:
+            reply_text = await conversation_service.process_message(
+                tenant=tenant,
+                from_phone=from_number,
+                body=message,
+            )
+        finally:
+            set_current_tenant_id(None)
+
+    history = request.session.get("chat_simulator_history", [])
+    history.append(
+        {
+            "to_number": to_number,
+            "from_number": from_number,
+            "message": message,
+            "reply": reply_text,
+        }
+    )
+    request.session["chat_simulator_history"] = history[-20:]
+    request.session["chat_simulator_defaults"] = {
+        "to_number": to_number,
+        "from_number": from_number,
+    }
+    return RedirectResponse("/admin/chat-simulator", status_code=303)
+
+
+async def chat_simulator_api(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> JSONResponse:
+    payload = await request.json()
+    csrf_token = request.headers.get("X-CSRF-Token", "")
+    validate_csrf(request, csrf_token)
+
+    to_number = (payload.get("to_number") or "").strip()
+    from_number = (payload.get("from_number") or "").strip()
+    message = (payload.get("message") or "").strip()
+
+    if not to_number or not from_number or not message:
+        return JSONResponse({"error": "Completa los campos requeridos."}, status_code=400)
+
+    tenant_service = TenantService(TenantRepository(session))
+    tenant = await tenant_service.resolve_by_whatsapp(to_number)
+    if tenant is None or not tenant.activo:
+        return JSONResponse({"error": "No existe un tenant activo con ese numero."}, status_code=404)
+
+    conversation_service = ConversationService(
+        session=session,
+        paciente_repo=PacienteRepository(session),
+        conversacion_repo=ConversacionRepository(session),
+        notification_repo=NotificationRepository(session),
+    )
+
+    async with session.begin_nested():
+        set_current_tenant_id(tenant.id)
+        try:
+            reply_text = await conversation_service.process_message(
+                tenant=tenant,
+                from_phone=from_number,
+                body=message,
+            )
+        finally:
+            set_current_tenant_id(None)
+
+    history = request.session.get("chat_simulator_history", [])
+    history.append(
+        {
+            "to_number": to_number,
+            "from_number": from_number,
+            "message": message,
+            "reply": reply_text,
+        }
+    )
+    request.session["chat_simulator_history"] = history[-20:]
+    request.session["chat_simulator_defaults"] = {
+        "to_number": to_number,
+        "from_number": from_number,
+        "patient_id": payload.get("patient_id"),
+    }
+    return JSONResponse({"reply": reply_text})
+
+
+async def chat_simulator_patients(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> JSONResponse:
+    tenant_id = request.query_params.get("tenant_id", "").strip()
+    try:
+        tenant_id_int = int(tenant_id)
+    except ValueError:
+        return JSONResponse({"items": []})
+
+    result = await session.execute(
+        select(Paciente)
+        .where(Paciente.tenant_id == tenant_id_int, Paciente.deleted_at.is_(None))
+        .order_by(Paciente.nombre, Paciente.apellido)
+    )
+    items = [
+        {
+            "id": paciente.id,
+            "nombre": paciente.nombre,
+            "apellido": paciente.apellido,
+            "telefono": paciente.telefono,
+        }
+        for paciente in result.scalars().all()
+    ]
+    return JSONResponse({"items": items})
+
+
+async def chat_simulator_reset(
+    request: Request,
+    to_number: str = Form(""),
+    from_number: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    request.session["chat_simulator_history"] = []
+    if to_number and from_number:
+        tenant_service = TenantService(TenantRepository(session))
+        tenant = await tenant_service.resolve_by_whatsapp(to_number)
+        if tenant is None:
+            add_flash(request, "error", "Tenant no encontrado.")
+            return RedirectResponse("/admin/chat-simulator", status_code=303)
+        conversacion_repo = ConversacionRepository(session)
+        async with session.begin_nested():
+            await conversacion_repo.delete_state(tenant.id, from_number)
+        add_flash(request, "success", "Conversacion reiniciada.")
+    else:
+        add_flash(request, "success", "Conversacion reiniciada.")
+    return RedirectResponse("/admin/chat-simulator", status_code=303)
 
 
 async def calendars(
