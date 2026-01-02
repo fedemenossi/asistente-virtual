@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
@@ -79,6 +79,11 @@ app.include_router(admin_consultorios.router)
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(tenant_router)
+
+
+@app.get("/", response_class=PlainTextResponse)
+async def root() -> str:
+    return "OK"
 
 
 @app.exception_handler(StarletteHTTPException)
