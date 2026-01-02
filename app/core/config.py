@@ -34,11 +34,18 @@ class Settings(BaseSettings):
     cab_turnos_staff_id: str | None = Field(default=None, alias="CAB_TURNOS_STAFF_ID")
     cab_turnos_days: int = Field(default=21, alias="CAB_TURNOS_DAYS")
 
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=".env", case_sensitive=False, extra="ignore"
+    )
 
 
 class DatabaseSettings(BaseSettings):
-    database_url: str = Field(alias="DATABASE_URL")
+    database_url: str | None = Field(default=None, alias="DATABASE_URL")
+    db_host: str | None = Field(default=None, alias="DB_HOST")
+    db_user: str | None = Field(default=None, alias="DB_USER")
+    db_password: str | None = Field(default=None, alias="DB_PASSWORD")
+    db_name: str | None = Field(default=None, alias="DB_NAME")
+    db_port: int | None = Field(default=None, alias="DB_PORT")
 
     model_config = SettingsConfigDict(
         env_file=".env", case_sensitive=False, extra="ignore"
