@@ -91,8 +91,10 @@ class ConversationService:
         paciente = await self._paciente_repo.get_by_phone(tenant.id, from_phone)
         state = await self._conversacion_repo.get_state(tenant.id, from_phone)
         if state and self._state_expired(state.updated_at):
-            await self._conversacion_repo.delete_state(tenant.id, from_phone)
-            state = None
+            status = (state.status or "active").lower()
+            if status == "active":
+                await self._conversacion_repo.delete_state(tenant.id, from_phone)
+                state = None
 
         if paciente is not None and state is None:
             await self._conversacion_repo.upsert_state(
@@ -203,14 +205,24 @@ class ConversationService:
             return await self._handle_first_time(tenant, from_phone, normalized, contexto)
 
         if state.estado_actual == ConversationState.OTHER_DETAIL.value:
-            await self._notify(tenant, from_phone, "Nueva consulta de paciente")
+            await self._conversacion_repo.mark_pending(
+                tenant.id, from_phone, "consulta", normalized
+            )
+            await self._notify(
+                tenant, from_phone, "Nueva consulta pendiente de respuesta"
+            )
             await self._conversacion_repo.upsert_state(
                 tenant.id, from_phone, ConversationState.MAIN_MENU.value, {}
             )
             return "Gracias por la informacion. En breve te contactamos."
 
         if state.estado_actual == ConversationState.HUMAN_REASON.value:
-            await self._notify(tenant, from_phone, "Solicitud de asistente humano")
+            await self._conversacion_repo.mark_pending(
+                tenant.id, from_phone, "humano", normalized
+            )
+            await self._notify(
+                tenant, from_phone, "Solicitud de asistente humano pendiente"
+            )
             await self._conversacion_repo.upsert_state(
                 tenant.id, from_phone, ConversationState.MAIN_MENU.value, {}
             )

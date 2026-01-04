@@ -5,35 +5,126 @@
 
 {% block content %}
   <div class="mb-6">
-    <p class="text-sm text-slate-600">Estado de conversaciones activas</p>
+    <p class="text-sm text-slate-600">Seguimiento de conversaciones y bandeja pendiente</p>
     <h1 class="text-2xl font-semibold text-slate-900">Conversaciones</h1>
   </div>
-  {% if states %}
-    <div class="card overflow-x-auto overflow-y-visible">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-slate-600">
-          <tr>
-            <th class="px-4 py-3 text-left font-medium">Telefono</th>
-            <th class="px-4 py-3 text-left font-medium">Estado</th>
-            <th class="px-4 py-3 text-left font-medium">Actualizado</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for state in states %}
-            <tr class="border-t border-slate-200 hover:bg-slate-50">
-              <td class="px-4 py-3 text-slate-900">{{ state.telefono }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ state.estado_actual }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ state.updated_at.strftime('%Y-%m-%d %H:%M') if state.updated_at else '' }}</td>
+  <div class="grid gap-3 md:grid-cols-3 mb-6">
+    <div class="card p-4">
+      <div class="text-xs uppercase text-slate-500">Pendientes</div>
+      <div class="text-2xl font-semibold text-slate-900">{{ counts.pending }}</div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs uppercase text-slate-500">Finalizadas</div>
+      <div class="text-2xl font-semibold text-slate-900">{{ counts.finished }}</div>
+    </div>
+    <div class="card p-4">
+      <div class="text-xs uppercase text-slate-500">Activas</div>
+      <div class="text-2xl font-semibold text-slate-900">{{ counts.active }}</div>
+    </div>
+  </div>
+
+  <div class="mb-8">
+    <h2 class="text-lg font-semibold text-slate-900 mb-2">Pendientes de respuesta</h2>
+    {% if pending_states %}
+      <div class="card overflow-x-auto overflow-y-visible">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600">
+            <tr>
+              <th class="px-4 py-3 text-left font-medium">Telefono</th>
+              <th class="px-4 py-3 text-left font-medium">Motivo</th>
+              <th class="px-4 py-3 text-left font-medium">Mensaje</th>
+              <th class="px-4 py-3 text-left font-medium">Actualizado</th>
+              <th class="px-4 py-3 text-left font-medium">Acciones</th>
             </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  {% else %}
-    <div class="card p-10 text-center">
-      <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
-      <p class="text-sm text-slate-600">No hay conversaciones activas.</p>
-    </div>
-  {% endif %}
+          </thead>
+          <tbody>
+            {% for state in pending_states %}
+              <tr class="border-t border-slate-200 hover:bg-slate-50">
+                <td class="px-4 py-3 text-slate-900">{{ state.telefono }}</td>
+                <td class="px-4 py-3 text-slate-600">{{ state.pending_reason or "pendiente" }}</td>
+                <td class="px-4 py-3 text-slate-600">{{ state.pending_message|default("")|truncate(80) }}</td>
+                <td class="px-4 py-3 text-slate-600">{{ state.updated_at.strftime('%Y-%m-%d %H:%M') if state.updated_at else '' }}</td>
+                <td class="px-4 py-3 text-slate-600">
+                  <div class="flex items-center gap-2">
+                    <a class="text-indigo-600 hover:underline" href="/t/conversation-states/{{ state.telefono }}">Detalle</a>
+                    <form method="post" action="/t/conversation-states/{{ state.telefono }}/resolve">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+                      <button class="text-emerald-600 hover:underline" type="submit">Finalizar</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="card p-6 text-sm text-slate-600">No hay conversaciones pendientes.</div>
+    {% endif %}
+  </div>
+
+  <div class="mb-8">
+    <h2 class="text-lg font-semibold text-slate-900 mb-2">Finalizadas</h2>
+    {% if finished_states %}
+      <div class="card overflow-x-auto overflow-y-visible">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600">
+            <tr>
+              <th class="px-4 py-3 text-left font-medium">Telefono</th>
+              <th class="px-4 py-3 text-left font-medium">Estado</th>
+              <th class="px-4 py-3 text-left font-medium">Finalizada</th>
+              <th class="px-4 py-3 text-left font-medium">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for state in finished_states %}
+              <tr class="border-t border-slate-200 hover:bg-slate-50">
+                <td class="px-4 py-3 text-slate-900">{{ state.telefono }}</td>
+                <td class="px-4 py-3 text-slate-600">{{ state.estado_actual }}</td>
+                <td class="px-4 py-3 text-slate-600">{{ state.resolved_at.strftime('%Y-%m-%d %H:%M') if state.resolved_at else '' }}</td>
+                <td class="px-4 py-3 text-slate-600">
+                  <a class="text-indigo-600 hover:underline" href="/t/conversation-states/{{ state.telefono }}">Detalle</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="card p-6 text-sm text-slate-600">No hay conversaciones finalizadas.</div>
+    {% endif %}
+  </div>
+
+  <div>
+    <h2 class="text-lg font-semibold text-slate-900 mb-2">Activas</h2>
+    {% if active_states %}
+      <div class="card overflow-x-auto overflow-y-visible">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600">
+            <tr>
+              <th class="px-4 py-3 text-left font-medium">Telefono</th>
+              <th class="px-4 py-3 text-left font-medium">Estado</th>
+              <th class="px-4 py-3 text-left font-medium">Actualizado</th>
+              <th class="px-4 py-3 text-left font-medium">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for state in active_states %}
+              <tr class="border-t border-slate-200 hover:bg-slate-50">
+                <td class="px-4 py-3 text-slate-900">{{ state.telefono }}</td>
+                <td class="px-4 py-3 text-slate-600">{{ state.estado_actual }}</td>
+                <td class="px-4 py-3 text-slate-600">{{ state.updated_at.strftime('%Y-%m-%d %H:%M') if state.updated_at else '' }}</td>
+                <td class="px-4 py-3 text-slate-600">
+                  <a class="text-indigo-600 hover:underline" href="/t/conversation-states/{{ state.telefono }}">Detalle</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="card p-6 text-sm text-slate-600">No hay conversaciones activas.</div>
+    {% endif %}
+  </div>
 {% endblock %}
 

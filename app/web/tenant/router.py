@@ -90,6 +90,17 @@ router.add_api_route(
     methods=["GET"],
     response_class=HTMLResponse,
 )
+router.add_api_route(
+    "/conversation-states/{telefono}",
+    views.conversation_state_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/conversation-states/{telefono}/resolve",
+    views.conversation_state_resolve,
+    methods=["POST"],
+)
 router.add_api_route("/audit-logs", views.audit_logs, methods=["GET"], response_class=HTMLResponse)
 router.add_api_route(
     "/notifications",

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,11 +34,14 @@ class ConversacionRepository:
                 telefono=telefono,
                 estado_actual=estado_actual,
                 contexto_json=contexto_json,
+                status="active",
             )
             self._session.add(state)
         else:
             state.estado_actual = estado_actual
             state.contexto_json = contexto_json
+            if not state.status:
+                state.status = "active"
         await self._session.flush()
         return state
 
@@ -44,3 +49,35 @@ class ConversacionRepository:
         state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
         if state is not None:
             await self._session.delete(state)
+
+    async def mark_pending(
+        self,
+        tenant_id: int,
+        telefono: str,
+        reason: str,
+        message: str,
+    ) -> EstadoConversacion:
+        state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
+        if state is None:
+            state = EstadoConversacion(
+                tenant_id=tenant_id,
+                telefono=telefono,
+                estado_actual="main_menu",
+                contexto_json={},
+            )
+            self._session.add(state)
+        state.status = "pending"
+        state.pending_reason = reason
+        state.pending_message = message
+        state.pending_at = datetime.now(timezone.utc)
+        state.resolved_at = None
+        await self._session.flush()
+        return state
+
+    async def mark_resolved(self, tenant_id: int, telefono: str) -> None:
+        state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
+        if state is None:
+            return
+        state.status = "finished"
+        state.resolved_at = datetime.now(timezone.utc)
+        await self._session.flush()

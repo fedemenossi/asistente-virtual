@@ -35,6 +35,13 @@ EXTRA_COLUMNS = {
         "payment_settings": "JSON NULL",
         "calendar_settings": "JSON NULL",
     },
+    "estados_conversacion": {
+        "status": "VARCHAR(20) NULL",
+        "pending_reason": "VARCHAR(50) NULL",
+        "pending_message": "VARCHAR(500) NULL",
+        "pending_at": "DATETIME NULL",
+        "resolved_at": "DATETIME NULL",
+    },
     "turnos": {
         "start_at": "DATETIME NULL",
         "end_at": "DATETIME NULL",

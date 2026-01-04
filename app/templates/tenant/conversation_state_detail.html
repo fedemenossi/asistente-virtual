@@ -1,0 +1,68 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Detalle de conversacion" %}
+{% set breadcrumb = "Tenant / Conversaciones / Detalle" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Detalle de la conversacion</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Conversacion {{ state.telefono }}</h1>
+  </div>
+
+  <div class="grid gap-4 md:grid-cols-2">
+    <div class="card p-6">
+      <h2 class="text-lg font-semibold text-slate-900 mb-3">Estado</h2>
+      <div class="text-sm text-slate-700">
+        <div class="mb-2"><span class="text-slate-500">Estado actual:</span> {{ state.estado_actual }}</div>
+        <div class="mb-2"><span class="text-slate-500">Bandeja:</span> {{ status }}</div>
+        <div class="mb-2"><span class="text-slate-500">Actualizado:</span> {{ state.updated_at.strftime('%Y-%m-%d %H:%M') if state.updated_at else '' }}</div>
+        <div class="mb-2"><span class="text-slate-500">Pendiente desde:</span> {{ state.pending_at.strftime('%Y-%m-%d %H:%M') if state.pending_at else '' }}</div>
+        <div class="mb-2"><span class="text-slate-500">Finalizada:</span> {{ state.resolved_at.strftime('%Y-%m-%d %H:%M') if state.resolved_at else '' }}</div>
+      </div>
+      {% if status == "pending" %}
+        <form method="post" action="/t/conversation-states/{{ state.telefono }}/resolve" class="mt-4">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+          <button class="btn btn-secondary" type="submit">Marcar como finalizada</button>
+        </form>
+      {% endif %}
+    </div>
+
+    <div class="card p-6">
+      <h2 class="text-lg font-semibold text-slate-900 mb-3">Contacto</h2>
+      <div class="text-sm text-slate-700">
+        <div class="mb-2"><span class="text-slate-500">Telefono:</span> {{ state.telefono }}</div>
+        {% if whatsapp_link %}
+          <div class="mb-2">
+            <a class="text-indigo-600 hover:underline" href="{{ whatsapp_link }}" target="_blank" rel="noreferrer">
+              Responder por WhatsApp
+            </a>
+          </div>
+        {% endif %}
+        {% if paciente %}
+          <div class="mt-4">
+            <div class="text-slate-500 text-xs uppercase mb-1">Paciente</div>
+            <div class="mb-1">{{ paciente.nombre }} {{ paciente.apellido }}</div>
+            <div class="mb-1">DNI: {{ paciente.dni }}</div>
+            <div class="mb-1">Email: {{ paciente.email }}</div>
+            <div class="mb-1">Obra social: {{ paciente.obra_social or '-' }}</div>
+          </div>
+        {% else %}
+          <div class="text-slate-600 mt-4">Sin paciente asociado.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card p-6 mt-6">
+    <h2 class="text-lg font-semibold text-slate-900 mb-3">Pendiente</h2>
+    <div class="text-sm text-slate-700">
+      <div class="mb-2"><span class="text-slate-500">Motivo:</span> {{ state.pending_reason or '-' }}</div>
+      <div class="mb-2"><span class="text-slate-500">Mensaje:</span> {{ state.pending_message or '-' }}</div>
+    </div>
+  </div>
+
+  <div class="card p-6 mt-6">
+    <h2 class="text-lg font-semibold text-slate-900 mb-3">Contexto</h2>
+    <pre class="text-xs text-slate-700 whitespace-pre-wrap">{{ contexto_pretty }}</pre>
+  </div>
+{% endblock %}

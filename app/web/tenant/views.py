@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
+import re
 from urllib.parse import urlencode
 
 from fastapi import Depends, Form, HTTPException, Request
@@ -26,6 +28,7 @@ from app.models.turno import AppointmentStatus, Turno
 from app.models.notification import Notification
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
+from app.repositories.conversacion_repository import ConversacionRepository
 from app.services.appointment_service import AppointmentService
 from app.services.messaging_service import MessagingService
 
@@ -619,11 +622,95 @@ async def conversation_states(
         .order_by(EstadoConversacion.updated_at.desc())
     )
     states = list(result.scalars().all())
+    pending_states: list[EstadoConversacion] = []
+    finished_states: list[EstadoConversacion] = []
+    active_states: list[EstadoConversacion] = []
+    for state in states:
+        status = (state.status or "active").lower()
+        if status == "pending":
+            pending_states.append(state)
+        elif status == "finished":
+            finished_states.append(state)
+        else:
+            active_states.append(state)
     return _template(
         request,
         "tenant/conversation_states.html",
-        {"states": states},
+        {
+            "pending_states": pending_states,
+            "finished_states": finished_states,
+            "active_states": active_states,
+            "counts": {
+                "pending": len(pending_states),
+                "finished": len(finished_states),
+                "active": len(active_states),
+            },
+        },
     )
+
+
+def _sanitize_phone(value: str | None) -> str:
+    return re.sub(r"\D+", "", value or "")
+
+
+def _build_whatsapp_link(phone: str | None) -> str | None:
+    digits = _sanitize_phone(phone)
+    if not digits:
+        return None
+    return f"https://wa.me/{digits}"
+
+
+async def conversation_state_detail(
+    request: Request,
+    telefono: str,
+    user: CurrentUser = Depends(require_permission("conversation:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    result = await session.execute(
+        select(EstadoConversacion).where(
+            EstadoConversacion.tenant_id == user.tenant_id,
+            EstadoConversacion.telefono == telefono,
+        )
+    )
+    state = result.scalar_one_or_none()
+    if state is None:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+    paciente_result = await session.execute(
+        select(Paciente).where(
+            Paciente.tenant_id == user.tenant_id,
+            Paciente.telefono == telefono,
+            Paciente.deleted_at.is_(None),
+        )
+    )
+    paciente = paciente_result.scalar_one_or_none()
+    contexto_pretty = json.dumps(state.contexto_json or {}, ensure_ascii=True, indent=2)
+    status = (state.status or "active").lower()
+    return _template(
+        request,
+        "tenant/conversation_state_detail.html",
+        {
+            "state": state,
+            "paciente": paciente,
+            "contexto_pretty": contexto_pretty,
+            "status": status,
+            "whatsapp_link": _build_whatsapp_link(state.telefono),
+        },
+    )
+
+
+async def conversation_state_resolve(
+    request: Request,
+    telefono: str,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("conversation:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    repo = ConversacionRepository(session)
+    async with session.begin_nested():
+        await repo.mark_resolved(user.tenant_id, telefono)
+    add_flash(request, "success", "Conversacion marcada como finalizada")
+    return RedirectResponse(f"/t/conversation-states/{telefono}", status_code=303)
 
 
 async def settings_get(
