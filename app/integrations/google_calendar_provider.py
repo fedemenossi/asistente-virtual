@@ -57,7 +57,7 @@ class GoogleCalendarProvider(CalendarProvider):
     ) -> list[CalendarSlot]:
         settings = tenant.calendar_settings or {}
         tags = settings.get("calendar_tags") or []
-        timezone = settings.get("default_timezone") or "UTC"
+        timezone = settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
 
         service = self._build_service()
         events = (
@@ -103,7 +103,7 @@ class GoogleCalendarProvider(CalendarProvider):
     ) -> dict:
         settings = tenant.calendar_settings or {}
         tags = settings.get("calendar_tags") or []
-        timezone = settings.get("default_timezone") or "UTC"
+        timezone = settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
         virtual_meet_enabled = bool(settings.get("virtual_meet_enabled"))
 
         service = self._build_service()

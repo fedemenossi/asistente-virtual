@@ -8,11 +8,63 @@
     <h1 class="text-2xl font-semibold text-slate-900">Configuracion</h1>
     <p class="text-sm text-slate-600">Solo campos permitidos.</p>
   </div>
-  <form method="post" class="card p-6 space-y-4">
+  <form method="post" class="card p-6 space-y-6">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    {% if errors %}
+      <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        Revisa los campos marcados.
+      </div>
+    {% endif %}
     <div>
-      <label class="block text-sm font-medium text-slate-700">Nombre del tenant</label>
-      <input class="input mt-1" name="nombre" value="{{ tenant.nombre }}" required />
+      <h2 class="text-sm font-semibold text-slate-900">Datos del profesional</h2>
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Nombre fantasia</label>
+          <input class="input mt-1" name="fantasy_name" value="{{ (form_data.get('fantasy_name') if form_data is defined and form_data is not none else None) or tenant.fantasy_name or '' }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Nombre</label>
+          <input class="input mt-1" name="first_name" value="{{ (form_data.get('first_name') if form_data is defined and form_data is not none else None) or tenant.first_name or '' }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Apellido</label>
+          <input class="input mt-1" name="last_name" value="{{ (form_data.get('last_name') if form_data is defined and form_data is not none else None) or tenant.last_name or '' }}" />
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h2 class="text-sm font-semibold text-slate-900">Datos de contacto</h2>
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <div class="md:col-span-2">
+          <label class="block text-sm font-medium text-slate-700">Direccion completa</label>
+          <input class="input mt-1" name="address" value="{{ (form_data.get('address') if form_data is defined and form_data is not none else None) or tenant.address or '' }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Codigo postal</label>
+          <input class="input mt-1" name="postal_code" value="{{ (form_data.get('postal_code') if form_data is defined and form_data is not none else None) or tenant.postal_code or '' }}" />
+          {% if errors.postal_code %}<p class="text-xs text-rose-600 mt-1">{{ errors.postal_code }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Telefono</label>
+          <input class="input mt-1" name="phone" value="{{ (form_data.get('phone') if form_data is defined and form_data is not none else None) or tenant.phone or '' }}" />
+          {% if errors.phone %}<p class="text-xs text-rose-600 mt-1">{{ errors.phone }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">WhatsApp</label>
+          <input class="input mt-1" name="whatsapp_number" value="{{ (form_data.get('whatsapp_number') if form_data is defined and form_data is not none else None) or tenant.whatsapp_number or '' }}" />
+          {% if errors.whatsapp_number %}<p class="text-xs text-rose-600 mt-1">{{ errors.whatsapp_number }}</p>{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h2 class="text-sm font-semibold text-slate-900">Datos del tenant</h2>
+      <div class="mt-4">
+        <label class="block text-sm font-medium text-slate-700">Nombre del tenant</label>
+        <input class="input mt-1" name="nombre" value="{{ (form_data.get('nombre') if form_data is defined and form_data is not none else None) or tenant.nombre or '' }}" required />
+        {% if errors.nombre %}<p class="text-xs text-rose-600 mt-1">{{ errors.nombre }}</p>{% endif %}
+      </div>
     </div>
     <div class="flex items-center gap-3">
       <button class="btn btn-primary" type="submit">Guardar</button>

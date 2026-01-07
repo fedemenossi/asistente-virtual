@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 from urllib.parse import urlencode
 
 from fastapi import Depends, Form, HTTPException, Request
@@ -39,6 +40,29 @@ def _template(request: Request, name: str, context: dict) -> Response:
     base = base_context(request)
     base.update(context)
     return templates.TemplateResponse(request, name, base)
+
+
+def _strip_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _validate_digits(value: str | None, field_name: str, errors: dict[str, str]) -> str | None:
+    cleaned = _strip_optional(value)
+    if cleaned and not re.fullmatch(r"[0-9]+", cleaned):
+        errors[field_name] = "Solo se permiten numeros."
+    return cleaned
+
+
+def _collect_tenant_profile_changes(tenant: Tenant, updates: dict[str, str | None]) -> dict:
+    changes = {}
+    for key, value in updates.items():
+        old = getattr(tenant, key)
+        if old != value:
+            changes[key] = {"from": old, "to": value}
+    return changes
 
 
 async def dashboard(
@@ -143,25 +167,77 @@ async def tenants_new_get(
     request: Request,
     user: CurrentUser = Depends(require_permission("tenant:write")),
 ) -> Response:
-    return _template(request, "admin/tenant_form.html", {"tenant": None})
+    return _template(
+        request,
+        "admin/tenant_form.html",
+        {"tenant": None, "errors": {}, "form_data": {}},
+    )
 
 
 async def tenants_new_post(
     request: Request,
     nombre: str = Form(...),
     whatsapp_number: str = Form(...),
+    fantasy_name: str | None = Form(None),
+    first_name: str | None = Form(None),
+    last_name: str | None = Form(None),
+    cuil: str | None = Form(None),
+    address: str | None = Form(None),
+    postal_code: str | None = Form(None),
+    phone: str | None = Form(None),
     activo: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("tenant:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
+    errors: dict[str, str] = {}
+    cleaned = {
+        "nombre": nombre.strip(),
+        "whatsapp_number": whatsapp_number.strip(),
+        "fantasy_name": _strip_optional(fantasy_name),
+        "first_name": _strip_optional(first_name),
+        "last_name": _strip_optional(last_name),
+        "cuil": _validate_digits(cuil, "cuil", errors),
+        "address": _strip_optional(address),
+        "postal_code": _validate_digits(postal_code, "postal_code", errors),
+        "phone": _validate_digits(phone, "phone", errors),
+    }
+    if not cleaned["nombre"]:
+        errors["nombre"] = "El nombre es obligatorio."
+    if not cleaned["whatsapp_number"]:
+        errors["whatsapp_number"] = "El numero de WhatsApp es obligatorio."
+    if errors:
+        return _template(
+            request,
+            "admin/tenant_form.html",
+            {"tenant": None, "errors": errors, "form_data": cleaned},
+        )
     tenant = Tenant(
-        nombre=nombre,
-        whatsapp_number=whatsapp_number,
+        nombre=cleaned["nombre"],
+        whatsapp_number=cleaned["whatsapp_number"],
         activo=bool(activo),
+        fantasy_name=cleaned["fantasy_name"],
+        first_name=cleaned["first_name"],
+        last_name=cleaned["last_name"],
+        cuil=cleaned["cuil"],
+        address=cleaned["address"],
+        postal_code=cleaned["postal_code"],
+        phone=cleaned["phone"],
     )
     async with session.begin_nested():
+        exists_stmt = select(Tenant.id).where(
+            Tenant.whatsapp_number == cleaned["whatsapp_number"],
+            Tenant.deleted_at.is_(None),
+        )
+        exists = await session.execute(exists_stmt)
+        if exists.scalar_one_or_none() is not None:
+            errors["whatsapp_number"] = "Ese WhatsApp ya esta registrado."
+            return _template(
+                request,
+                "admin/tenant_form.html",
+                {"tenant": None, "errors": errors, "form_data": cleaned},
+            )
         session.add(tenant)
         await session.flush()
         await audit_log(
@@ -222,7 +298,11 @@ async def tenants_edit_get(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     tenant = await get_entity_or_404(session, Tenant, tenant_id)
-    return _template(request, "admin/tenant_form.html", {"tenant": tenant})
+    return _template(
+        request,
+        "admin/tenant_form.html",
+        {"tenant": tenant, "errors": {}, "form_data": {}},
+    )
 
 
 async def tenants_edit_post(
@@ -230,24 +310,76 @@ async def tenants_edit_post(
     tenant_id: int,
     nombre: str = Form(...),
     whatsapp_number: str = Form(...),
+    fantasy_name: str | None = Form(None),
+    first_name: str | None = Form(None),
+    last_name: str | None = Form(None),
+    cuil: str | None = Form(None),
+    address: str | None = Form(None),
+    postal_code: str | None = Form(None),
+    phone: str | None = Form(None),
     activo: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("tenant:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
+    errors: dict[str, str] = {}
+    cleaned = {
+        "nombre": nombre.strip(),
+        "whatsapp_number": whatsapp_number.strip(),
+        "fantasy_name": _strip_optional(fantasy_name),
+        "first_name": _strip_optional(first_name),
+        "last_name": _strip_optional(last_name),
+        "cuil": _validate_digits(cuil, "cuil", errors),
+        "address": _strip_optional(address),
+        "postal_code": _validate_digits(postal_code, "postal_code", errors),
+        "phone": _validate_digits(phone, "phone", errors),
+    }
+    if not cleaned["nombre"]:
+        errors["nombre"] = "El nombre es obligatorio."
+    if not cleaned["whatsapp_number"]:
+        errors["whatsapp_number"] = "El numero de WhatsApp es obligatorio."
     async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, tenant_id)
-        tenant.nombre = nombre
-        tenant.whatsapp_number = whatsapp_number
+        if errors:
+            return _template(
+                request,
+                "admin/tenant_form.html",
+                {"tenant": tenant, "errors": errors, "form_data": cleaned},
+            )
+        if cleaned["whatsapp_number"]:
+            exists_stmt = select(Tenant.id).where(
+                Tenant.whatsapp_number == cleaned["whatsapp_number"],
+                Tenant.id != tenant.id,
+                Tenant.deleted_at.is_(None),
+            )
+            exists = await session.execute(exists_stmt)
+            if exists.scalar_one_or_none() is not None:
+                errors["whatsapp_number"] = "Ese WhatsApp ya esta registrado."
+                return _template(
+                    request,
+                    "admin/tenant_form.html",
+                    {"tenant": tenant, "errors": errors, "form_data": cleaned},
+                )
+        changes = _collect_tenant_profile_changes(tenant, cleaned)
+        tenant.nombre = cleaned["nombre"]
+        tenant.whatsapp_number = cleaned["whatsapp_number"]
+        tenant.fantasy_name = cleaned["fantasy_name"]
+        tenant.first_name = cleaned["first_name"]
+        tenant.last_name = cleaned["last_name"]
+        tenant.cuil = cleaned["cuil"]
+        tenant.address = cleaned["address"]
+        tenant.postal_code = cleaned["postal_code"]
+        tenant.phone = cleaned["phone"]
         tenant.activo = bool(activo)
         await audit_log(
             session,
             request,
             user,
-            action="update",
+            action="update_profile",
             entity="tenant",
             entity_id=tenant.id,
+            metadata=changes,
         )
     add_flash(request, "success", "Tenant actualizado")
     return RedirectResponse(f"/admin/tenants/{tenant_id}", status_code=303)

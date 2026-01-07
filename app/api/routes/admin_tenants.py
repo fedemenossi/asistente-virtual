@@ -27,6 +27,13 @@ async def create_tenant(
         nombre=payload.nombre,
         whatsapp_number=payload.whatsapp_number,
         activo=payload.activo,
+        fantasy_name=payload.fantasy_name,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        cuil=payload.cuil,
+        address=payload.address,
+        postal_code=payload.postal_code,
+        phone=payload.phone,
     )
     async with session.begin():
         session.add(tenant)
@@ -61,6 +68,20 @@ async def update_tenant(
             tenant.whatsapp_number = payload.whatsapp_number
         if payload.activo is not None:
             tenant.activo = payload.activo
+        if payload.fantasy_name is not None:
+            tenant.fantasy_name = payload.fantasy_name
+        if payload.first_name is not None:
+            tenant.first_name = payload.first_name
+        if payload.last_name is not None:
+            tenant.last_name = payload.last_name
+        if payload.cuil is not None:
+            tenant.cuil = payload.cuil
+        if payload.address is not None:
+            tenant.address = payload.address
+        if payload.postal_code is not None:
+            tenant.postal_code = payload.postal_code
+        if payload.phone is not None:
+            tenant.phone = payload.phone
         await session.flush()
         return tenant
 

@@ -34,6 +34,13 @@ EXTRA_COLUMNS = {
     "tenants": {
         "payment_settings": "JSON NULL",
         "calendar_settings": "JSON NULL",
+        "fantasy_name": "VARCHAR(200) NULL",
+        "first_name": "VARCHAR(120) NULL",
+        "last_name": "VARCHAR(120) NULL",
+        "cuil": "VARCHAR(32) NULL",
+        "address": "VARCHAR(255) NULL",
+        "postal_code": "VARCHAR(20) NULL",
+        "phone": "VARCHAR(40) NULL",
     },
     "estados_conversacion": {
         "status": "VARCHAR(20) NULL",

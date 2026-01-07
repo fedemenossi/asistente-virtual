@@ -4,40 +4,99 @@
 {% set breadcrumb = "Tenant / Settings / Calendario" %}
 
 {% block content %}
-  <div class="mb-6">
-    <p class="text-sm text-slate-600">Configuracion de calendario</p>
+  <div class="mb-6 flex flex-col gap-2">
+    <div class="inline-flex items-center gap-2 rounded-full bg-slate-900/5 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
+      Google Calendar
+    </div>
     <h1 class="text-2xl font-semibold text-slate-900">Calendario</h1>
+    <p class="text-sm text-slate-600">
+      Conecta tu agenda para ofrecer turnos disponibles de forma automatica.
+    </p>
   </div>
 
-  <form method="post" class="card p-6 space-y-4">
+  <form method="post" class="card p-6 space-y-6">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-    <div>
-      <label class="text-xs text-slate-500">Google Calendar ID</label>
-      <input class="input" type="text" name="google_calendar_id" value="{{ calendar_settings.google_calendar_id }}" />
+    <div class="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+      <h2 class="text-sm font-semibold text-slate-900">Datos del calendario</h2>
+      <p class="text-xs text-slate-500 mt-1">Identifica tu calendario y como se publican los turnos.</p>
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <div>
+          <label class="text-xs text-slate-500">Google Calendar ID</label>
+          <input class="input" type="text" name="google_calendar_id" value="{{ calendar_settings.google_calendar_id }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Timezone por defecto</label>
+          <input class="input" type="text" name="default_timezone" value="{{ calendar_settings.default_timezone }}" />
+        </div>
+        <div class="md:col-span-2">
+          <label class="text-xs text-slate-500">Tags (separados por coma)</label>
+          <input class="input" type="text" name="calendar_tags" value="{{ calendar_settings.calendar_tags }}" />
+        </div>
+      </div>
+      <div class="mt-4 flex items-center gap-3">
+        <input class="h-4 w-4" type="checkbox" id="virtual_meet_enabled" name="virtual_meet_enabled" {% if calendar_settings.virtual_meet_enabled %}checked{% endif %} />
+        <label class="text-sm text-slate-700" for="virtual_meet_enabled">Habilitar Google Meet</label>
+      </div>
     </div>
-    <div>
-      <label class="text-xs text-slate-500">Tags (separados por coma)</label>
-      <input class="input" type="text" name="calendar_tags" value="{{ calendar_settings.calendar_tags }}" />
+
+    <div class="rounded-xl border border-slate-200 bg-white p-4">
+      <h2 class="text-sm font-semibold text-slate-900">Credenciales</h2>
+      <p class="text-xs text-slate-500 mt-1">Service Account y usuario delegado opcional.</p>
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <div class="md:col-span-2">
+          <label class="text-xs text-slate-500">Credenciales JSON (Service Account)</label>
+          <textarea class="textarea" name="google_credentials_json" rows="4">{{ calendar_settings.google_credentials_json }}</textarea>
+        </div>
+        <div class="md:col-span-2">
+          <label class="text-xs text-slate-500">Delegated user (opcional)</label>
+          <input class="input" type="text" name="google_delegated_user" value="{{ calendar_settings.google_delegated_user }}" />
+        </div>
+      </div>
     </div>
-    <div>
-      <label class="text-xs text-slate-500">Timezone por defecto</label>
-      <input class="input" type="text" name="default_timezone" value="{{ calendar_settings.default_timezone }}" />
-    </div>
-    <div class="flex items-center gap-3">
-      <input class="h-4 w-4" type="checkbox" id="virtual_meet_enabled" name="virtual_meet_enabled" {% if calendar_settings.virtual_meet_enabled %}checked{% endif %} />
-      <label class="text-sm text-slate-700" for="virtual_meet_enabled">Habilitar Google Meet</label>
-    </div>
-    <div>
-      <label class="text-xs text-slate-500">Credenciales JSON (Service Account)</label>
-      <textarea class="textarea" name="google_credentials_json" rows="4">{{ calendar_settings.google_credentials_json }}</textarea>
-    </div>
-    <div>
-      <label class="text-xs text-slate-500">Delegated user (opcional)</label>
-      <input class="input" type="text" name="google_delegated_user" value="{{ calendar_settings.google_delegated_user }}" />
-    </div>
-    <div class="flex items-center gap-3">
-      <button class="btn btn-primary" type="submit">Guardar</button>
-      <a class="btn btn-secondary" href="/t/settings">Volver</a>
+
+    <div class="flex flex-wrap items-center gap-3">
+      <button class="btn btn-primary" type="submit">Guardar cambios</button>
+      <button class="btn btn-secondary" type="button" data-calendar-test>
+        Probar conexion
+      </button>
+      <a class="btn btn-ghost" href="/t/settings">Volver</a>
+      <a class="text-xs text-slate-500 hover:text-slate-700" href="/t/settings/calendar/test">
+        Ver JSON
+      </a>
     </div>
   </form>
+
+  <div class="fixed inset-0 z-40 hidden items-center justify-center bg-slate-950/50 p-6 backdrop-blur-sm" data-calendar-modal>
+    <div class="w-full max-w-4xl rounded-2xl border border-slate-200 bg-white shadow-soft">
+      <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
+        <div>
+          <h2 class="text-lg font-semibold text-slate-900">Turnos disponibles</h2>
+          <p class="text-sm text-slate-600">Resultado de la conexion con Google Calendar.</p>
+        </div>
+        <button class="btn btn-ghost" type="button" data-calendar-modal-close>Cerrar</button>
+      </div>
+      <div class="bg-white px-6 py-4">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-xs text-slate-500" data-calendar-test-count></span>
+          <span class="text-sm text-rose-600 hidden" data-calendar-test-error></span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-50 text-slate-600">
+              <tr>
+                <th class="px-4 py-3 text-left font-medium">Inicio</th>
+                <th class="px-4 py-3 text-left font-medium">Fin</th>
+                <th class="px-4 py-3 text-left font-medium">Timezone</th>
+                <th class="px-4 py-3 text-left font-medium">Slot ID</th>
+              </tr>
+            </thead>
+            <tbody data-calendar-test-body></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="flex items-center justify-end border-t border-slate-200 bg-slate-50 px-6 py-4">
+        <button class="btn btn-secondary" type="button" data-calendar-modal-close>Listo</button>
+      </div>
+    </div>
+  </div>
 {% endblock %}

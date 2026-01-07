@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import json
 import re
 from urllib.parse import urlencode
 
 from fastapi import Depends, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -31,12 +32,36 @@ from app.models.payment_event import PaymentEvent
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.services.appointment_service import AppointmentService
 from app.services.messaging_service import MessagingService
+from app.services.calendar_service import CalendarService
 
 
 def _template(request: Request, name: str, context: dict) -> Response:
     base = base_context(request)
     base.update(context)
     return templates.TemplateResponse(request, name, base)
+
+
+def _strip_optional(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _validate_digits(value: str | None, field_name: str, errors: dict[str, str]) -> str | None:
+    cleaned = _strip_optional(value)
+    if cleaned and not re.fullmatch(r"[0-9]+", cleaned):
+        errors[field_name] = "Solo se permiten numeros."
+    return cleaned
+
+
+def _collect_tenant_profile_changes(tenant: Tenant, updates: dict[str, str | None]) -> dict:
+    changes = {}
+    for key, value in updates.items():
+        old = getattr(tenant, key)
+        if old != value:
+            changes[key] = {"from": old, "to": value}
+    return changes
 
 
 async def dashboard(
@@ -660,6 +685,13 @@ def _build_whatsapp_link(phone: str | None) -> str | None:
     return f"https://wa.me/{digits}"
 
 
+def _resolve_timezone(name: str) -> tzinfo | None:
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return None
+
+
 async def conversation_state_detail(
     request: Request,
     telefono: str,
@@ -719,27 +751,84 @@ async def settings_get(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
-    return _template(request, "tenant/settings.html", {"tenant": tenant})
+    return _template(
+        request,
+        "tenant/settings.html",
+        {"tenant": tenant, "errors": {}, "form_data": {}},
+    )
 
 
 async def settings_post(
     request: Request,
     nombre: str = Form(...),
+    fantasy_name: str | None = Form(None),
+    first_name: str | None = Form(None),
+    last_name: str | None = Form(None),
+    address: str | None = Form(None),
+    postal_code: str | None = Form(None),
+    phone: str | None = Form(None),
+    whatsapp_number: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("settings:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
+    errors: dict[str, str] = {}
+    cleaned = {
+        "nombre": nombre.strip(),
+        "fantasy_name": _strip_optional(fantasy_name),
+        "first_name": _strip_optional(first_name),
+        "last_name": _strip_optional(last_name),
+        "address": _strip_optional(address),
+        "postal_code": _validate_digits(postal_code, "postal_code", errors),
+        "phone": _validate_digits(phone, "phone", errors),
+        "whatsapp_number": _strip_optional(whatsapp_number),
+    }
+    if not cleaned["nombre"]:
+        errors["nombre"] = "El nombre es obligatorio."
+    if errors:
+        tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+        return _template(
+            request,
+            "tenant/settings.html",
+            {"tenant": tenant, "errors": errors, "form_data": cleaned},
+        )
     async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
-        tenant.nombre = nombre
+        if cleaned["whatsapp_number"]:
+            exists_stmt = select(Tenant.id).where(
+                Tenant.whatsapp_number == cleaned["whatsapp_number"],
+                Tenant.id != tenant.id,
+                Tenant.deleted_at.is_(None),
+            )
+            exists = await session.execute(exists_stmt)
+            if exists.scalar_one_or_none() is not None:
+                errors["whatsapp_number"] = "Ese WhatsApp ya esta registrado."
+        if errors:
+            return _template(
+                request,
+                "tenant/settings.html",
+                {"tenant": tenant, "errors": errors, "form_data": cleaned},
+            )
+        if not cleaned["whatsapp_number"]:
+            cleaned["whatsapp_number"] = tenant.whatsapp_number
+        changes = _collect_tenant_profile_changes(tenant, cleaned)
+        tenant.nombre = cleaned["nombre"]
+        tenant.fantasy_name = cleaned["fantasy_name"]
+        tenant.first_name = cleaned["first_name"]
+        tenant.last_name = cleaned["last_name"]
+        tenant.address = cleaned["address"]
+        tenant.postal_code = cleaned["postal_code"]
+        tenant.phone = cleaned["phone"]
+        tenant.whatsapp_number = cleaned["whatsapp_number"]
         await audit_log(
             session,
             request,
             user,
-            action="update",
-            entity="tenant_settings",
+            action="update_profile",
+            entity="tenant",
             entity_id=tenant.id,
+            metadata=changes,
         )
     add_flash(request, "success", "Configuracion actualizada")
     return RedirectResponse("/t/settings", status_code=303)
@@ -763,7 +852,7 @@ def _parse_calendar_settings(tenant: Tenant) -> dict:
     return {
         "google_calendar_id": settings.get("google_calendar_id", ""),
         "calendar_tags": ",".join(settings.get("calendar_tags", []) or []),
-        "default_timezone": settings.get("default_timezone", "UTC"),
+        "default_timezone": settings.get("default_timezone", "America/Argentina/Buenos_Aires"),
         "virtual_meet_enabled": bool(settings.get("virtual_meet_enabled", False)),
         "google_credentials_json": settings.get("google_credentials_json", ""),
         "google_delegated_user": settings.get("google_delegated_user", ""),
@@ -837,7 +926,7 @@ async def calendar_settings_post(
     request: Request,
     google_calendar_id: str = Form(""),
     calendar_tags: str = Form(""),
-    default_timezone: str = Form("UTC"),
+    default_timezone: str = Form("America/Argentina/Buenos_Aires"),
     virtual_meet_enabled: str | None = Form(None),
     google_credentials_json: str = Form(""),
     google_delegated_user: str = Form(""),
@@ -867,6 +956,53 @@ async def calendar_settings_post(
         )
     add_flash(request, "success", "Configuracion de calendario actualizada")
     return RedirectResponse("/t/settings/calendar", status_code=303)
+
+
+async def calendar_settings_test(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("settings:write")),
+    session: AsyncSession = Depends(get_async_session),
+):
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    settings = tenant.calendar_settings or {}
+    default_timezone = settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
+    tz = _resolve_timezone(default_timezone) or timezone(timedelta(hours=-3))
+
+    result = await session.execute(
+        select(Consultorio)
+        .where(
+            Consultorio.tenant_id == tenant.id,
+            Consultorio.deleted_at.is_(None),
+        )
+        .order_by(Consultorio.tipo.asc())
+    )
+    consultorios = list(result.scalars().all())
+    consultorio = next(
+        (item for item in consultorios if item.tipo == TipoConsultorio.VIRTUAL),
+        consultorios[0] if consultorios else None,
+    )
+    if consultorio is None:
+        return JSONResponse(
+            {"error": "Necesitas un consultorio para probar el calendario."},
+            status_code=400,
+        )
+
+    start = datetime.now(tz)
+    end = start + timedelta(days=14)
+    service = CalendarService()
+    slots = await service.list_available_slots(tenant, consultorio, start, end)
+    payload = [
+        {
+            "slot_id": slot.slot_id,
+            "start_at": slot.start_at.isoformat(),
+            "end_at": slot.end_at.isoformat(),
+            "timezone": slot.timezone,
+            "provider": slot.provider,
+            "calendar_id": slot.calendar_id,
+        }
+        for slot in slots
+    ]
+    return JSONResponse({"count": len(payload), "items": payload})
 
 
 async def notifications_settings(

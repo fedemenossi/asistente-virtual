@@ -17,6 +17,13 @@
     <div class="card p-6">
       <h3 class="text-sm font-semibold text-slate-900">Datos generales</h3>
       <div class="mt-4 space-y-2 text-sm text-slate-600">
+        <div><span class="text-slate-500">Nombre fantasia:</span> {{ tenant.fantasy_name or "-" }}</div>
+        <div><span class="text-slate-500">Nombre:</span> {{ tenant.first_name or "-" }}</div>
+        <div><span class="text-slate-500">Apellido:</span> {{ tenant.last_name or "-" }}</div>
+        <div><span class="text-slate-500">CUIL:</span> {{ tenant.cuil or "-" }}</div>
+        <div><span class="text-slate-500">Direccion:</span> {{ tenant.address or "-" }}</div>
+        <div><span class="text-slate-500">Codigo postal:</span> {{ tenant.postal_code or "-" }}</div>
+        <div><span class="text-slate-500">Telefono:</span> {{ tenant.phone or "-" }}</div>
         <div><span class="text-slate-500">WhatsApp:</span> {{ tenant.whatsapp_number }}</div>
         <div><span class="text-slate-500">Estado:</span> {% if tenant.activo %}{{ badge("Activo", "success") }}{% else %}{{ badge("Inactivo", "warning") }}{% endif %}</div>
         <div><span class="text-slate-500">Creado:</span> {{ tenant.created_at.strftime('%Y-%m-%d') if tenant.created_at else '' }}</div>

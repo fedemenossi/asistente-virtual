@@ -132,6 +132,11 @@ router.add_api_route(
 )
 router.add_api_route("/settings/calendar", views.calendar_settings_post, methods=["POST"])
 router.add_api_route(
+    "/settings/calendar/test",
+    views.calendar_settings_test,
+    methods=["GET"],
+)
+router.add_api_route(
     "/settings/notifications",
     views.notifications_settings,
     methods=["GET"],

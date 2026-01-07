@@ -55,13 +55,17 @@ def app_and_db(tmp_path: Path):
 
     main, db = _reload_app()
     asyncio.run(_init_db(db))
-    return main.app, db
+    try:
+        yield main.app, db
+    finally:
+        asyncio.run(db.engine.dispose())
 
 
 @pytest.fixture()
 def client(app_and_db: tuple[object, object]):
     app, _ = app_and_db
-    return TestClient(app)
+    with TestClient(app) as client:
+        yield client
 
 
 @pytest.fixture()

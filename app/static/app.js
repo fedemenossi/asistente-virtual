@@ -449,4 +449,94 @@
     providerSelect.addEventListener("change", toggleCabildo);
     toggleCabildo();
   }
+
+  const calendarTestButton = document.querySelector("[data-calendar-test]");
+  const calendarModal = document.querySelector("[data-calendar-modal]");
+  const calendarModalClose = document.querySelectorAll("[data-calendar-modal-close]");
+  const calendarTestBody = document.querySelector("[data-calendar-test-body]");
+  const calendarTestCount = document.querySelector("[data-calendar-test-count]");
+  const calendarTestError = document.querySelector("[data-calendar-test-error]");
+
+  const formatDateTime = (value) => {
+    if (!value) return "";
+    try {
+      return new Date(value).toLocaleString("es-AR");
+    } catch (err) {
+      return value;
+    }
+  };
+
+  const resetCalendarTest = () => {
+    calendarTestBody.innerHTML = "";
+    calendarTestError.textContent = "";
+    calendarTestError.classList.add("hidden");
+    calendarTestCount.textContent = "";
+  };
+
+  const openCalendarModal = () => {
+    if (!calendarModal) return;
+    calendarModal.classList.remove("hidden");
+    calendarModal.classList.add("flex");
+  };
+
+  const closeCalendarModal = () => {
+    if (!calendarModal) return;
+    calendarModal.classList.add("hidden");
+    calendarModal.classList.remove("flex");
+  };
+
+  calendarModalClose.forEach((btn) => {
+    btn.addEventListener("click", closeCalendarModal);
+  });
+
+  calendarModal?.addEventListener("click", (event) => {
+    if (event.target === calendarModal) {
+      closeCalendarModal();
+    }
+  });
+
+  calendarTestButton?.addEventListener("click", async (event) => {
+    event.preventDefault();
+    if (!calendarModal || !calendarTestBody || !calendarTestCount || !calendarTestError) {
+      return;
+    }
+    openCalendarModal();
+    resetCalendarTest();
+    calendarTestButton.disabled = true;
+    calendarTestButton.textContent = "Probando...";
+    try {
+      const resp = await fetch("/t/settings/calendar/test");
+      const data = await resp.json();
+      if (!resp.ok) {
+        calendarTestError.textContent = data.error || "No se pudo conectar al calendario.";
+        calendarTestError.classList.remove("hidden");
+        calendarTestCount.textContent = "0 slots";
+        return;
+      }
+      const items = data.items || [];
+      calendarTestCount.textContent = `${data.count || items.length} slots`;
+      if (items.length === 0) {
+        calendarTestError.textContent = "No se encontraron slots disponibles.";
+        calendarTestError.classList.remove("hidden");
+        return;
+      }
+      items.forEach((item) => {
+        const row = document.createElement("tr");
+        row.className = "border-t border-slate-200";
+        row.innerHTML = `
+          <td class="px-4 py-3 text-slate-900">${formatDateTime(item.start_at)}</td>
+          <td class="px-4 py-3 text-slate-600">${formatDateTime(item.end_at)}</td>
+          <td class="px-4 py-3 text-slate-600">${item.timezone || "-"}</td>
+          <td class="px-4 py-3 text-slate-600">${item.slot_id || "-"}</td>
+        `;
+        calendarTestBody.appendChild(row);
+      });
+    } catch (err) {
+      calendarTestError.textContent = "Error al ejecutar la prueba.";
+      calendarTestError.classList.remove("hidden");
+    } finally {
+      calendarTestButton.disabled = false;
+      calendarTestButton.textContent = "Probar conexion";
+    }
+  });
 })();
