@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from twilio.request_validator import RequestValidator
 from twilio.twiml.messaging_response import MessagingResponse
 
-from app.api.deps import verify_twilio_signature
+from app.core.config import get_settings
 from app.core.db import get_async_session
 from app.core.tenancy import set_current_tenant_id
 from app.repositories.conversacion_repository import ConversacionRepository
@@ -23,9 +24,10 @@ logger = logging.getLogger(__name__)
 
 @router.post("/webhook/whatsapp")
 async def whatsapp_webhook(
-    form: dict = Depends(verify_twilio_signature),
+    request: Request,
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
+    form = dict(await request.form())
     payload = TwilioWebhookPayload.model_validate(form)
 
     tenant_repo = TenantRepository(session)
@@ -42,6 +44,14 @@ async def whatsapp_webhook(
         if tenant is None or not tenant.activo:
             logger.warning("tenant_not_found", extra={"to_number": payload.to_number})
             return _twilio_response("Numero no reconocido.")
+
+        settings = get_settings()
+        tenant_whatsapp = tenant.whatsapp_settings or {}
+        auth_token = tenant_whatsapp.get("twilio_auth_token") or settings.twilio_auth_token
+        validator = RequestValidator(auth_token)
+        signature = request.headers.get("X-Twilio-Signature", "")
+        if not validator.validate(str(request.url), form, signature):
+            raise HTTPException(status_code=403, detail="Firma Twilio invalida")
 
         set_current_tenant_id(tenant.id)
         try:

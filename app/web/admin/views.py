@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 from urllib.parse import urlencode
 
@@ -63,6 +64,23 @@ def _collect_tenant_profile_changes(tenant: Tenant, updates: dict[str, str | Non
         if old != value:
             changes[key] = {"from": old, "to": value}
     return changes
+
+
+def _resolve_timezone(name: str) -> timezone | None:
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        return None
+
+
+def _format_local_time(value: datetime | None) -> str:
+    if not value:
+        return ""
+    tz = _resolve_timezone("America/Argentina/Buenos_Aires") or timezone(timedelta(hours=-3))
+    current = value
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(tz).strftime("%Y-%m-%d %H:%M")
 
 
 async def dashboard(
@@ -745,6 +763,7 @@ async def audit_logs(
 
     result = await session.execute(stmt.order_by(desc(AuditLog.created_at)).limit(200))
     logs = list(result.scalars().all())
+    log_times = {log.id: _format_local_time(log.created_at) for log in logs}
     tenants = list(
         (
             await session.execute(
@@ -763,6 +782,7 @@ async def audit_logs(
             "tenant_id": tenant_id,
             "action": action,
             "entity": entity,
+            "log_times": log_times,
         },
     )
 

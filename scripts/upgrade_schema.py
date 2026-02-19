@@ -34,6 +34,7 @@ EXTRA_COLUMNS = {
     "tenants": {
         "payment_settings": "JSON NULL",
         "calendar_settings": "JSON NULL",
+        "whatsapp_settings": "JSON NULL",
         "fantasy_name": "VARCHAR(200) NULL",
         "first_name": "VARCHAR(120) NULL",
         "last_name": "VARCHAR(120) NULL",

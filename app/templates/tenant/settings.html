@@ -66,6 +66,25 @@
         {% if errors.nombre %}<p class="text-xs text-rose-600 mt-1">{{ errors.nombre }}</p>{% endif %}
       </div>
     </div>
+    <div>
+      <h2 class="text-sm font-semibold text-slate-900">WhatsApp (Twilio)</h2>
+      <p class="text-xs text-slate-500 mt-1">Configura tu propia cuenta Twilio para este tenant.</p>
+      {% if errors.twilio %}<p class="text-xs text-rose-600 mt-2">{{ errors.twilio }}</p>{% endif %}
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Twilio Account SID</label>
+          <input class="input mt-1" name="twilio_account_sid" value="{{ (whatsapp_settings.get('twilio_account_sid') if whatsapp_settings is defined and whatsapp_settings is not none else '') }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Twilio WhatsApp Number</label>
+          <input class="input mt-1" name="twilio_whatsapp_number" placeholder="whatsapp:+549..." value="{{ (whatsapp_settings.get('twilio_whatsapp_number') if whatsapp_settings is defined and whatsapp_settings is not none else '') }}" />
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm font-medium text-slate-700">Twilio Auth Token</label>
+          <input class="input mt-1" name="twilio_auth_token" value="{{ (whatsapp_settings.get('twilio_auth_token') if whatsapp_settings is defined and whatsapp_settings is not none else '') }}" />
+        </div>
+      </div>
+    </div>
     <div class="flex items-center gap-3">
       <button class="btn btn-primary" type="submit">Guardar</button>
     </div>

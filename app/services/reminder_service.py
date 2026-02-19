@@ -9,6 +9,7 @@ from app.core.audit import audit_log
 from app.core.notifications import create_notification
 from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
+from app.models.tenant import Tenant
 from app.models.turno import AppointmentStatus, EstadoTurno, Turno
 from app.services.messaging_service import MessagingService
 
@@ -43,10 +44,11 @@ class ReminderService:
             consultorio = await self._session.get(Consultorio, turno.consultorio_id)
             if not paciente or not consultorio:
                 continue
+            tenant = await self._session.get(Tenant, consultorio.tenant_id)
             message = (
                 f"Recordatorio: turno {consultorio.nombre} el {start_at.strftime('%Y-%m-%d %H:%M')}."
             )
-            self._messaging.send_whatsapp(paciente.telefono, message)
+            self._messaging.send_whatsapp(paciente.telefono, message, tenant=tenant)
             if paciente.email:
                 self._messaging.send_email(
                     paciente.email, "Recordatorio de turno", message

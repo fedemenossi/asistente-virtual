@@ -619,9 +619,10 @@ async def turnos_detail(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     stmt = (
-        select(Turno, Paciente, Consultorio)
+        select(Turno, Paciente, Consultorio, Tenant)
         .join(Paciente, Turno.paciente_id == Paciente.id)
         .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+        .join(Tenant, Consultorio.tenant_id == Tenant.id)
         .where(Turno.id == turno_id, Consultorio.tenant_id == user.tenant_id)
     )
     stmt = stmt.where(
@@ -692,6 +693,16 @@ def _resolve_timezone(name: str) -> tzinfo | None:
         return None
 
 
+def _format_local_time(value: datetime | None) -> str:
+    if not value:
+        return ""
+    tz = _resolve_timezone("America/Argentina/Buenos_Aires") or timezone(timedelta(hours=-3))
+    current = value
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current.astimezone(tz).strftime("%Y-%m-%d %H:%M")
+
+
 async def conversation_state_detail(
     request: Request,
     telefono: str,
@@ -754,7 +765,7 @@ async def settings_get(
     return _template(
         request,
         "tenant/settings.html",
-        {"tenant": tenant, "errors": {}, "form_data": {}},
+        {"tenant": tenant, "errors": {}, "form_data": {}, "whatsapp_settings": _parse_whatsapp_settings(tenant)},
     )
 
 
@@ -768,6 +779,9 @@ async def settings_post(
     postal_code: str | None = Form(None),
     phone: str | None = Form(None),
     whatsapp_number: str | None = Form(None),
+    twilio_account_sid: str | None = Form(None),
+    twilio_auth_token: str | None = Form(None),
+    twilio_whatsapp_number: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("settings:write")),
     session: AsyncSession = Depends(get_async_session),
@@ -784,14 +798,32 @@ async def settings_post(
         "phone": _validate_digits(phone, "phone", errors),
         "whatsapp_number": _strip_optional(whatsapp_number),
     }
+    whatsapp_cleaned = {
+        "twilio_account_sid": _strip_optional(twilio_account_sid),
+        "twilio_auth_token": _strip_optional(twilio_auth_token),
+        "twilio_whatsapp_number": _strip_optional(twilio_whatsapp_number),
+    }
+    has_any_twilio = any(whatsapp_cleaned.values())
+    has_all_twilio = all(whatsapp_cleaned.values())
+    if has_any_twilio and not has_all_twilio:
+        errors["twilio"] = "Completa SID, Auth Token y numero de WhatsApp para usar Twilio propio."
     if not cleaned["nombre"]:
         errors["nombre"] = "El nombre es obligatorio."
     if errors:
         tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+        display_whatsapp = _parse_whatsapp_settings(tenant)
+        for key, value in whatsapp_cleaned.items():
+            if value is not None:
+                display_whatsapp[key] = value
         return _template(
             request,
             "tenant/settings.html",
-            {"tenant": tenant, "errors": errors, "form_data": cleaned},
+            {
+                "tenant": tenant,
+                "errors": errors,
+                "form_data": cleaned,
+                "whatsapp_settings": display_whatsapp,
+            },
         )
     async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
@@ -805,14 +837,29 @@ async def settings_post(
             if exists.scalar_one_or_none() is not None:
                 errors["whatsapp_number"] = "Ese WhatsApp ya esta registrado."
         if errors:
+            display_whatsapp = _parse_whatsapp_settings(tenant)
+            for key, value in whatsapp_cleaned.items():
+                if value is not None:
+                    display_whatsapp[key] = value
             return _template(
                 request,
                 "tenant/settings.html",
-                {"tenant": tenant, "errors": errors, "form_data": cleaned},
+                {
+                    "tenant": tenant,
+                    "errors": errors,
+                    "form_data": cleaned,
+                    "whatsapp_settings": display_whatsapp,
+                },
             )
         if not cleaned["whatsapp_number"]:
             cleaned["whatsapp_number"] = tenant.whatsapp_number
         changes = _collect_tenant_profile_changes(tenant, cleaned)
+        previous_whatsapp_settings = tenant.whatsapp_settings or {}
+        twilio_changed = (
+            (previous_whatsapp_settings.get("twilio_account_sid") or "") != (whatsapp_cleaned["twilio_account_sid"] or "")
+            or (previous_whatsapp_settings.get("twilio_auth_token") or "") != (whatsapp_cleaned["twilio_auth_token"] or "")
+            or (previous_whatsapp_settings.get("twilio_whatsapp_number") or "") != (whatsapp_cleaned["twilio_whatsapp_number"] or "")
+        )
         tenant.nombre = cleaned["nombre"]
         tenant.fantasy_name = cleaned["fantasy_name"]
         tenant.first_name = cleaned["first_name"]
@@ -821,6 +868,13 @@ async def settings_post(
         tenant.postal_code = cleaned["postal_code"]
         tenant.phone = cleaned["phone"]
         tenant.whatsapp_number = cleaned["whatsapp_number"]
+        tenant.whatsapp_settings = {
+            "twilio_account_sid": whatsapp_cleaned["twilio_account_sid"] or "",
+            "twilio_auth_token": whatsapp_cleaned["twilio_auth_token"] or "",
+            "twilio_whatsapp_number": whatsapp_cleaned["twilio_whatsapp_number"] or "",
+        }
+        if twilio_changed:
+            changes["twilio_settings"] = {"from": "configured", "to": "updated"}
         await audit_log(
             session,
             request,
@@ -856,6 +910,15 @@ def _parse_calendar_settings(tenant: Tenant) -> dict:
         "virtual_meet_enabled": bool(settings.get("virtual_meet_enabled", False)),
         "google_credentials_json": settings.get("google_credentials_json", ""),
         "google_delegated_user": settings.get("google_delegated_user", ""),
+    }
+
+
+def _parse_whatsapp_settings(tenant: Tenant) -> dict:
+    settings = tenant.whatsapp_settings or {}
+    return {
+        "twilio_account_sid": settings.get("twilio_account_sid", ""),
+        "twilio_auth_token": settings.get("twilio_auth_token", ""),
+        "twilio_whatsapp_number": settings.get("twilio_whatsapp_number", ""),
     }
 
 
@@ -1032,10 +1095,11 @@ async def audit_logs(
 
     result = await session.execute(stmt.order_by(desc(AuditLog.created_at)).limit(100))
     logs = list(result.scalars().all())
+    log_times = {log.id: _format_local_time(log.created_at) for log in logs}
     return _template(
         request,
         "tenant/audit_logs.html",
-        {"logs": logs, "action": action, "entity": entity},
+        {"logs": logs, "action": action, "entity": entity, "log_times": log_times},
     )
 
 
@@ -1226,9 +1290,17 @@ async def appointment_cancel(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    turno = await get_tenant_entity_or_404(session, Turno, turno_id, user.tenant_id)
-    consultorio = await get_entity_or_404(session, Consultorio, turno.consultorio_id)
-    tenant = await get_entity_or_404(session, Tenant, consultorio.tenant_id)
+    stmt = (
+        select(Turno, Consultorio, Tenant)
+        .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+        .join(Tenant, Consultorio.tenant_id == Tenant.id)
+        .where(Turno.id == turno_id, Consultorio.tenant_id == user.tenant_id)
+    )
+    result = await session.execute(stmt)
+    row = result.first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    turno, consultorio, tenant = row
     await AppointmentService(session).cancel_turno(request, tenant, consultorio, turno)
     add_flash(request, "success", "Turno cancelado")
     return RedirectResponse(f"/t/appointments/{turno_id}", status_code=303)
@@ -1255,10 +1327,11 @@ async def appointment_resend(
     turno = row[0]
     paciente = row[1]
     consultorio = row[2]
+    tenant = row[3]
     start_at = turno.start_at or turno.fecha_hora
     fecha_texto = start_at.strftime('%Y-%m-%d %H:%M') if start_at else "-"
     message = f"Confirmacion de turno: {consultorio.nombre} el {fecha_texto}."
-    MessagingService().send_whatsapp(paciente.telefono, message)
+    MessagingService().send_whatsapp(paciente.telefono, message, tenant=tenant)
     add_flash(request, "success", "Confirmacion reenviada")
     return RedirectResponse(f"/t/appointments/{turno_id}", status_code=303)
 
