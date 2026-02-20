@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
@@ -17,6 +18,7 @@ from app.core.logging import configure_logging
 from app.core.db import AsyncSessionLocal
 from app.core.templates import base_context, templates
 from app.core.notifications import count_unread_notifications, get_recent_notifications
+from app.core.request_context import set_current_request_id
 from app.core.security import CurrentUser, UserRole
 from app.web.admin.router import router as admin_router
 from app.web.auth.router import router as auth_router
@@ -36,6 +38,19 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, max_age=60 * 60 * 24 * 7)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+
+@app.middleware("http")
+async def attach_request_id(request: Request, call_next):
+    request_id = request.headers.get("X-Request-Id") or uuid.uuid4().hex
+    set_current_request_id(request_id)
+    request.state.request_id = request_id
+    try:
+        response = await call_next(request)
+    finally:
+        set_current_request_id(None)
+    response.headers["X-Request-Id"] = request_id
+    return response
 
 
 @app.middleware("http")

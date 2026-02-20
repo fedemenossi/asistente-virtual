@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 from urllib.parse import quote_plus
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import get_database_settings
 
+logger = logging.getLogger(__name__)
 
 settings = get_database_settings()
 
@@ -54,6 +56,7 @@ async def get_async_session() -> AsyncSession:
             if session.in_transaction():
                 await session.commit()
         except Exception:
+            logger.exception("db_session_error_rolling_back")
             if session.in_transaction():
                 await session.rollback()
             raise

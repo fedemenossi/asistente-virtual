@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.core.request_context import get_current_request_id
 from app.core.tenancy import get_current_tenant_id
 
 
@@ -15,6 +16,7 @@ class JsonFormatter(logging.Formatter):
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
+            "request_id": get_current_request_id(),
             "tenant_id": get_current_tenant_id(),
         }
         if record.exc_info:
