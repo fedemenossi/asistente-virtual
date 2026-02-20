@@ -19,6 +19,7 @@ from app.models import (  # noqa: F401
     Payment,
     PaymentEvent,
     Subscription,
+    TenantFeature,
     Tenant,
     Turno,
     User,

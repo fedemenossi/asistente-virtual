@@ -17,4 +17,5 @@ def base_context(request: Request) -> dict:
         "flashes": pop_flashes(request),
         "notifications": getattr(request.state, "notifications", []),
         "unread_notifications": getattr(request.state, "unread_notifications", 0),
+        "tenant_features": getattr(request.state, "tenant_features", {}),
     }

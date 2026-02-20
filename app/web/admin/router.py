@@ -112,3 +112,20 @@ router.add_api_route(
     views.notifications_mark_read,
     methods=["POST"],
 )
+router.add_api_route(
+    "/tenant-features",
+    views.tenant_features_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/tenant-features/{tenant_id}",
+    views.tenant_features_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/tenant-features/{tenant_id}",
+    views.tenant_features_post,
+    methods=["POST"],
+)

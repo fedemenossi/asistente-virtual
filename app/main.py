@@ -14,12 +14,14 @@ from app.api.routes import payments_webhook
 from app.api.routes import internal
 from app.core.bootstrap import ensure_super_admin
 from app.core.config import get_settings
+from app.core.features import feature_defaults
 from app.core.logging import configure_logging
 from app.core.db import AsyncSessionLocal
 from app.core.templates import base_context, templates
 from app.core.notifications import count_unread_notifications, get_recent_notifications
 from app.core.request_context import set_current_request_id
 from app.core.security import CurrentUser, UserRole
+from app.services.tenant_feature_service import TenantFeatureService
 from app.web.admin.router import router as admin_router
 from app.web.auth.router import router as auth_router
 from app.web.tenant.router import router as tenant_router
@@ -32,6 +34,7 @@ async def lifespan(app: FastAPI):
     async with AsyncSessionLocal() as session:
         async with session.begin():
             await ensure_super_admin(session)
+            await TenantFeatureService(session).sync_all_tenants_with_registry()
     yield
 
 
@@ -77,11 +80,16 @@ async def attach_notifications(request, call_next):
     except Exception:
         return await call_next(request)
 
+    request.state.tenant_features = feature_defaults() if current.role == UserRole.TENANT_ADMIN else {}
     async with AsyncSessionLocal() as session:
         request.state.notifications = await get_recent_notifications(session, current)
         request.state.unread_notifications = await count_unread_notifications(
             session, current
         )
+        if current.role == UserRole.TENANT_ADMIN and current.tenant_id:
+            request.state.tenant_features = await TenantFeatureService(session).get_flags(
+                int(current.tenant_id)
+            )
     return await call_next(request)
 
 

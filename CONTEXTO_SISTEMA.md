@@ -39,6 +39,51 @@ Dependencias principales: `requirements.txt`, `package.json`.
 - `scripts`: init DB, upgrade schema, seed.
 - `app/tests`: suite de tests.
 
+### 3.1) Estructura de rutas SSR por panel
+#### Tenant panel
+- `app/web/tenant/router.py`: define todas las rutas `/t/*`.
+- `app/web/tenant/views.py`: handlers (controladores) del panel tenant.
+
+#### Admin panel
+- `app/web/admin/router.py`: define todas las rutas `/admin/*`.
+- `app/web/admin/views.py`: handlers (controladores) del panel admin.
+
+Nota:
+- Hoy no hay módulos separados tipo `appointments.py`, `payments.py`, etc. en `app/web/tenant/` o `app/web/admin/`.
+- Todo está centralizado por panel en `router.py` + `views.py`.
+
+### 3.2) Template de menú (sidebar) actual
+- Archivo usado: `app/templates/layout/partials/sidebar.html`
+- Ese template renderiza items condicionales por rol:
+  - `SUPER_ADMIN`: enlaces `/admin/*`
+  - `TENANT_ADMIN`: enlaces `/t/*`
+- Items actuales en sidebar para `TENANT_ADMIN`:
+  - `/t/dashboard`
+  - `/t/consultorios`
+  - `/t/pacientes`
+  - `/t/turnos`
+  - `/t/appointments`
+  - `/t/payments`
+  - `/t/conversation-states`
+  - `/t/audit-logs`
+  - `/t/notifications`
+  - `/t/settings`
+  - `/t/settings/payments`
+  - `/t/settings/calendar`
+  - `/t/settings/notifications`
+- Items actuales en sidebar para `SUPER_ADMIN`:
+  - `/admin/dashboard`
+  - `/admin/tenants`
+  - `/admin/users`
+  - `/admin/appointments`
+  - `/admin/calendars`
+  - `/admin/payments`
+  - `/admin/settings/payments`
+  - `/admin/settings/notifications`
+  - `/admin/chat-simulator`
+  - `/admin/audit-logs`
+  - `/admin/notifications`
+
 ## 4) Modelo de autenticacion y permisos
 - Roles:
   - `SUPER_ADMIN`: acceso global.
@@ -113,6 +158,7 @@ Multi-tenant:
 - `GET /health`
 - `GET /` -> `OK`
 - `POST /webhook/whatsapp`
+- `POST /webhook/whatsapp/{tenant_id}/{secret}`
 - `POST /webhook/payments/mercadopago`
 - `POST /internal/reminders/run` (token interno)
 
@@ -122,22 +168,91 @@ Multi-tenant:
 - Push: `/push/*`
 
 ### Panel tenant (`/t/*`)
-- Dashboard, consultorios, pacientes.
-- Turnos: `/t/appointments`, detalle, cancelar, reenviar confirmacion.
-- Pagos: `/t/payments`, detalle.
-- Conversaciones: `/t/conversation-states`, detalle, resolver pendiente.
-- Settings:
-  - `/t/settings` (perfil tenant + WhatsApp Twilio por tenant)
-  - `/t/settings/payments`
-  - `/t/settings/calendar`
-  - `/t/settings/calendar/test` (test de slots)
-  - `/t/settings/notifications`
+- `GET /t/dashboard`
+- `GET /t/consultorios`
+- `GET /t/consultorios/new`
+- `POST /t/consultorios/new`
+- `GET /t/consultorios/{consultorio_id}/edit`
+- `POST /t/consultorios/{consultorio_id}/edit`
+- `POST /t/consultorios/{consultorio_id}/delete`
+- `GET /t/pacientes`
+- `GET /t/pacientes/new`
+- `POST /t/pacientes/new`
+- `GET /t/pacientes/{paciente_id}/edit`
+- `POST /t/pacientes/{paciente_id}/edit`
+- `POST /t/pacientes/{paciente_id}/delete`
+- `GET /t/turnos`
+- `GET /t/turnos/{turno_id}`
+- `GET /t/appointments`
+- `GET /t/appointments/{turno_id}`
+- `POST /t/appointments/{turno_id}/cancel`
+- `POST /t/appointments/{turno_id}/resend`
+- `GET /t/payments`
+- `GET /t/payments/{payment_id}`
+- `GET /t/conversation-states`
+- `GET /t/conversation-states/{telefono}`
+- `POST /t/conversation-states/{telefono}/resolve`
+- `GET /t/audit-logs`
+- `GET /t/notifications`
+- `POST /t/notifications/{notification_id}/read`
+- `GET /t/settings`
+- `POST /t/settings`
+- `GET /t/settings/payments`
+- `POST /t/settings/payments`
+- `GET /t/settings/calendar`
+- `POST /t/settings/calendar`
+- `GET /t/settings/calendar/test`
+- `GET /t/settings/notifications`
 
 ### Panel admin (`/admin/*`)
-- Dashboard, tenants, users.
-- Calendarios globales, turnos globales, pagos globales.
-- Chat simulator del bot.
-- Audit logs y notificaciones.
+- `GET /admin/dashboard`
+- `GET /admin/tenants`
+- `GET /admin/tenants/new`
+- `POST /admin/tenants/new`
+- `GET /admin/tenants/{tenant_id}`
+- `GET /admin/tenants/{tenant_id}/edit`
+- `POST /admin/tenants/{tenant_id}/edit`
+- `POST /admin/tenants/{tenant_id}/toggle`
+- `POST /admin/tenants/{tenant_id}/delete`
+- `GET /admin/users`
+- `GET /admin/users/new`
+- `POST /admin/users/new`
+- `GET /admin/users/{user_id}/edit`
+- `POST /admin/users/{user_id}/edit`
+- `POST /admin/users/{user_id}/toggle`
+- `POST /admin/users/{user_id}/delete`
+- `GET /admin/audit-logs`
+- `GET /admin/calendars`
+- `GET /admin/appointments`
+- `GET /admin/payments`
+- `GET /admin/payments/{payment_id}`
+- `GET /admin/settings/payments`
+- `GET /admin/settings/notifications`
+- `GET /admin/chat-simulator`
+- `POST /admin/chat-simulator/send`
+- `POST /admin/chat-simulator/api`
+- `GET /admin/chat-simulator/patients`
+- `POST /admin/chat-simulator/reset`
+- `GET /admin/notifications`
+- `POST /admin/notifications/{notification_id}/read`
+
+### API REST / endpoints FastAPI (no SSR)
+- `GET /health`
+- `GET /`
+- `POST /webhook/whatsapp`
+- `POST /webhook/whatsapp/{tenant_id}/{secret}`
+- `POST /webhook/payments/mercadopago`
+- `POST /internal/reminders/run`
+- `GET /api/admin/consultorios`
+- `POST /api/admin/consultorios`
+- `GET /api/admin/consultorios/{consultorio_id}`
+- `PUT /api/admin/consultorios/{consultorio_id}`
+- `DELETE /api/admin/consultorios/{consultorio_id}`
+- `GET /api/admin/tenants`
+- `POST /api/admin/tenants`
+- `GET /api/admin/tenants/{tenant_id}`
+- `PUT /api/admin/tenants/{tenant_id}`
+- `DELETE /api/admin/tenants/{tenant_id}`
 
 ## 8) Flujo conversacional WhatsApp (actual)
 Archivo central: `app/services/conversation_service.py`.

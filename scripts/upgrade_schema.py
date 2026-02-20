@@ -18,6 +18,7 @@ from app.models import (  # noqa: F401
     PaymentEvent,
     PushSubscription,
     Subscription,
+    TenantFeature,
 )
 from app.models.base import Base
 

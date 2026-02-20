@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit_log
 from app.core.csrf import validate_csrf
 from app.core.db import get_async_session
+from app.core.features import FEATURE_REGISTRY
 from app.core.notifications import mark_notification_read
 from app.core.security import CurrentUser, hash_password, require_permission
 from app.core.templates import base_context, templates
@@ -34,6 +35,7 @@ from app.repositories.notification_repository import NotificationRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.services.conversation_service import ConversationService
+from app.services.tenant_feature_service import TenantFeatureService
 from app.services.tenant_service import TenantService
 
 
@@ -1182,4 +1184,96 @@ async def appointments_list(
             "date": date_str,
         },
     )
+
+
+async def tenant_features_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    tenants = list(
+        (
+            await session.execute(
+                select(Tenant).where(Tenant.deleted_at.is_(None)).order_by(Tenant.nombre)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return _template(
+        request,
+        "admin/tenant_features_list.html",
+        {"tenants": tenants},
+    )
+
+
+async def tenant_features_get(
+    request: Request,
+    tenant_id: int,
+    user: CurrentUser = Depends(require_permission("tenant:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    tenant = await get_entity_or_404(session, Tenant, tenant_id)
+    service = TenantFeatureService(session)
+    async with session.begin_nested():
+        await service.sync_tenant_with_registry(tenant.id)
+    flags = await service.get_flags(tenant.id)
+    return _template(
+        request,
+        "admin/tenant_features_detail.html",
+        {
+            "tenant": tenant,
+            "features": FEATURE_REGISTRY,
+            "flags": flags,
+        },
+    )
+
+
+async def tenant_features_post(
+    request: Request,
+    tenant_id: int,
+    csrf_token: str = Form(""),
+    action: str | None = Form(None),
+    user: CurrentUser = Depends(require_permission("tenant:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    tenant = await get_entity_or_404(session, Tenant, tenant_id)
+    service = TenantFeatureService(session)
+    before_flags = await service.get_flags(tenant.id)
+
+    if action == "enable_all":
+        next_flags = {key: True for key in FEATURE_REGISTRY}
+    elif action == "disable_all":
+        next_flags = {key: False for key in FEATURE_REGISTRY}
+    else:
+        form = await request.form()
+        next_flags = {
+            key: (form.get(f"feature_{key}") == "1")
+            for key in FEATURE_REGISTRY
+        }
+
+    async with session.begin_nested():
+        after_flags = await service.set_flags(
+            tenant_id=tenant.id,
+            flags=next_flags,
+            updated_by=user.id,
+        )
+        changed = {
+            key: {"before": before_flags.get(key), "after": after_flags.get(key)}
+            for key in FEATURE_REGISTRY
+            if before_flags.get(key) != after_flags.get(key)
+        }
+        await audit_log(
+            session,
+            request,
+            user,
+            action="tenant_features_updated",
+            entity="tenant_features",
+            entity_id=tenant.id,
+            metadata={"before": before_flags, "after": after_flags, "diff": changed},
+            tenant_id=tenant.id,
+        )
+    add_flash(request, "success", "Features del tenant actualizadas")
+    return RedirectResponse(f"/admin/tenant-features/{tenant.id}", status_code=303)
 

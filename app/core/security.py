@@ -10,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.db import get_async_session
+from app.core.features import feature_defaults
 from app.models.tenant import Tenant
 from app.models.user import User, UserRole
+from app.services.tenant_feature_service import TenantFeatureService
 
 _settings = get_settings()
 if _settings.app_env.lower() == "test":
@@ -132,3 +134,33 @@ def require_tenant_admin(
     if user.role != UserRole.TENANT_ADMIN:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     return user
+
+
+async def load_tenant_features(
+    request: Request,
+    user: CurrentUser = Depends(require_tenant_admin),
+    session: AsyncSession = Depends(get_async_session),
+) -> CurrentUser:
+    flags = await TenantFeatureService(session).get_flags(int(user.tenant_id))
+    request.state.tenant_features = flags
+    return user
+
+
+def require_feature(feature_key: str):
+    async def _checker(
+        request: Request,
+        user: CurrentUser = Depends(require_tenant_admin),
+        session: AsyncSession = Depends(get_async_session),
+    ) -> CurrentUser:
+        flags = getattr(request.state, "tenant_features", None)
+        if flags is None:
+            flags = feature_defaults()
+            if user.tenant_id:
+                flags = await TenantFeatureService(session).get_flags(int(user.tenant_id))
+            request.state.tenant_features = flags
+        enabled = bool(flags.get(feature_key, True))
+        if not enabled:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Feature deshabilitada")
+        return user
+
+    return _checker

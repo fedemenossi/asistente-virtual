@@ -7,6 +7,7 @@ from app.models.payment import Payment
 from app.models.payment_event import PaymentEvent
 from app.models.push_subscription import PushSubscription
 from app.models.subscription import Subscription
+from app.models.tenant_feature import TenantFeature
 from app.models.tenant import Tenant
 from app.models.turno import Turno
 from app.models.user import User
@@ -21,6 +22,7 @@ __all__ = [
     "PaymentEvent",
     "PushSubscription",
     "Subscription",
+    "TenantFeature",
     "Tenant",
     "Turno",
     "User",
