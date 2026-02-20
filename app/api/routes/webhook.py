@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import ValidationError
@@ -9,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from twilio.request_validator import RequestValidator
 from twilio.twiml.messaging_response import MessagingResponse
 
-from app.core.config import get_settings
 from app.core.db import get_async_session
 from app.core.tenancy import set_current_tenant_id
 from app.repositories.conversacion_repository import ConversacionRepository
@@ -31,6 +31,37 @@ def _mask_phone(value: str | None) -> str:
     if len(trimmed) <= 6:
         return "***"
     return f"{trimmed[:4]}***{trimmed[-2:]}"
+
+
+def _candidate_validation_urls(request: Request) -> list[str]:
+    """
+    Twilio signs the public URL; behind reverse proxies request.url may appear as http.
+    Try common proxy/public variants to avoid false negatives.
+    """
+    current_url = str(request.url)
+    candidates = [current_url]
+
+    split = urlsplit(current_url)
+    if split.scheme == "http":
+        candidates.append(urlunsplit(("https", split.netloc, split.path, split.query, split.fragment)))
+
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    forwarded_host = request.headers.get("x-forwarded-host")
+    if forwarded_host:
+        proto = (forwarded_proto or split.scheme or "https").split(",")[0].strip() or "https"
+        candidates.append(urlunsplit((proto, forwarded_host, split.path, split.query, split.fragment)))
+        if proto != "https":
+            candidates.append(urlunsplit(("https", forwarded_host, split.path, split.query, split.fragment)))
+
+    # preserve order but remove duplicates
+    seen: set[str] = set()
+    unique: list[str] = []
+    for url in candidates:
+        if url in seen:
+            continue
+        seen.add(url)
+        unique.append(url)
+    return unique
 
 
 @router.post("/webhook/whatsapp")
@@ -81,9 +112,16 @@ async def whatsapp_webhook(
             )
             return _twilio_response("Numero no reconocido.")
 
-        settings = get_settings()
         tenant_whatsapp = tenant.whatsapp_settings or {}
-        auth_token = tenant_whatsapp.get("twilio_auth_token") or settings.twilio_auth_token
+        auth_token = (tenant_whatsapp.get("twilio_auth_token") or "").strip()
+        if not auth_token:
+            logger.warning(
+                "whatsapp_webhook_tenant_missing_auth_token tenant_id=%s to=%s from=%s",
+                tenant.id,
+                _mask_phone(payload.to_number),
+                _mask_phone(payload.from_number),
+            )
+            raise HTTPException(status_code=403, detail="Token Twilio no configurado para el tenant")
         using_tenant_token = bool(tenant_whatsapp.get("twilio_auth_token"))
         logger.info(
             "whatsapp_webhook_tenant_resolved tenant_id=%s tenant_active=%s using_tenant_token=%s to=%s from=%s",
@@ -94,13 +132,14 @@ async def whatsapp_webhook(
             _mask_phone(payload.from_number),
         )
         validator = RequestValidator(auth_token)
-        is_valid_signature = validator.validate(str(request.url), form, signature)
+        validation_urls = _candidate_validation_urls(request)
+        is_valid_signature = any(validator.validate(url, form, signature) for url in validation_urls)
         if not is_valid_signature:
             logger.warning(
-                "whatsapp_webhook_signature_invalid tenant_id=%s has_signature=%s url=%s to=%s from=%s",
+                "whatsapp_webhook_signature_invalid tenant_id=%s has_signature=%s validation_urls=%s to=%s from=%s",
                 tenant.id,
                 bool(signature),
-                str(request.url),
+                validation_urls,
                 _mask_phone(payload.to_number),
                 _mask_phone(payload.from_number),
             )
