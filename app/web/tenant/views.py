@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone, tzinfo
+import secrets
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import json
 import re
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.audit import audit_log
+from app.core.config import get_settings
 from app.core.csrf import validate_csrf
 from app.core.db import get_async_session
 from app.core.notifications import mark_notification_read
@@ -62,6 +64,24 @@ def _collect_tenant_profile_changes(tenant: Tenant, updates: dict[str, str | Non
         if old != value:
             changes[key] = {"from": old, "to": value}
     return changes
+
+
+def _build_tenant_whatsapp_webhook_url(request: Request, tenant_id: int, webhook_secret: str | None) -> str:
+    if not webhook_secret:
+        return ""
+    settings = get_settings()
+    if settings.public_base_url:
+        base = settings.public_base_url.rstrip("/")
+    else:
+        base = str(request.base_url).rstrip("/")
+    return f"{base}/webhook/whatsapp/{tenant_id}/{webhook_secret}"
+
+
+def _ensure_webhook_secret(existing: str | None) -> str:
+    value = (existing or "").strip()
+    if value:
+        return value
+    return secrets.token_urlsafe(24)
 
 
 async def dashboard(
@@ -762,10 +782,20 @@ async def settings_get(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    whatsapp_settings = _parse_whatsapp_settings(tenant)
+    webhook_url = _build_tenant_whatsapp_webhook_url(
+        request, tenant.id, whatsapp_settings.get("twilio_webhook_secret")
+    )
     return _template(
         request,
         "tenant/settings.html",
-        {"tenant": tenant, "errors": {}, "form_data": {}, "whatsapp_settings": _parse_whatsapp_settings(tenant)},
+        {
+            "tenant": tenant,
+            "errors": {},
+            "form_data": {},
+            "whatsapp_settings": whatsapp_settings,
+            "twilio_webhook_url": webhook_url,
+        },
     )
 
 
@@ -782,6 +812,7 @@ async def settings_post(
     twilio_account_sid: str | None = Form(None),
     twilio_auth_token: str | None = Form(None),
     twilio_whatsapp_number: str | None = Form(None),
+    twilio_webhook_secret: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("settings:write")),
     session: AsyncSession = Depends(get_async_session),
@@ -802,6 +833,7 @@ async def settings_post(
         "twilio_account_sid": _strip_optional(twilio_account_sid),
         "twilio_auth_token": _strip_optional(twilio_auth_token),
         "twilio_whatsapp_number": _strip_optional(twilio_whatsapp_number),
+        "twilio_webhook_secret": _strip_optional(twilio_webhook_secret),
     }
     has_any_twilio = any(whatsapp_cleaned.values())
     has_all_twilio = all(whatsapp_cleaned.values())
@@ -815,6 +847,11 @@ async def settings_post(
         for key, value in whatsapp_cleaned.items():
             if value is not None:
                 display_whatsapp[key] = value
+        if not display_whatsapp.get("twilio_webhook_secret"):
+            display_whatsapp["twilio_webhook_secret"] = _ensure_webhook_secret(None)
+        webhook_url = _build_tenant_whatsapp_webhook_url(
+            request, tenant.id, display_whatsapp.get("twilio_webhook_secret")
+        )
         return _template(
             request,
             "tenant/settings.html",
@@ -823,6 +860,7 @@ async def settings_post(
                 "errors": errors,
                 "form_data": cleaned,
                 "whatsapp_settings": display_whatsapp,
+                "twilio_webhook_url": webhook_url,
             },
         )
     async with session.begin_nested():
@@ -841,6 +879,11 @@ async def settings_post(
             for key, value in whatsapp_cleaned.items():
                 if value is not None:
                     display_whatsapp[key] = value
+            if not display_whatsapp.get("twilio_webhook_secret"):
+                display_whatsapp["twilio_webhook_secret"] = _ensure_webhook_secret(None)
+            webhook_url = _build_tenant_whatsapp_webhook_url(
+                request, tenant.id, display_whatsapp.get("twilio_webhook_secret")
+            )
             return _template(
                 request,
                 "tenant/settings.html",
@@ -849,6 +892,7 @@ async def settings_post(
                     "errors": errors,
                     "form_data": cleaned,
                     "whatsapp_settings": display_whatsapp,
+                    "twilio_webhook_url": webhook_url,
                 },
             )
         if not cleaned["whatsapp_number"]:
@@ -859,6 +903,10 @@ async def settings_post(
             (previous_whatsapp_settings.get("twilio_account_sid") or "") != (whatsapp_cleaned["twilio_account_sid"] or "")
             or (previous_whatsapp_settings.get("twilio_auth_token") or "") != (whatsapp_cleaned["twilio_auth_token"] or "")
             or (previous_whatsapp_settings.get("twilio_whatsapp_number") or "") != (whatsapp_cleaned["twilio_whatsapp_number"] or "")
+            or (previous_whatsapp_settings.get("twilio_webhook_secret") or "") != (whatsapp_cleaned["twilio_webhook_secret"] or "")
+        )
+        webhook_secret = _ensure_webhook_secret(
+            whatsapp_cleaned["twilio_webhook_secret"] or previous_whatsapp_settings.get("twilio_webhook_secret")
         )
         tenant.nombre = cleaned["nombre"]
         tenant.fantasy_name = cleaned["fantasy_name"]
@@ -872,6 +920,7 @@ async def settings_post(
             "twilio_account_sid": whatsapp_cleaned["twilio_account_sid"] or "",
             "twilio_auth_token": whatsapp_cleaned["twilio_auth_token"] or "",
             "twilio_whatsapp_number": whatsapp_cleaned["twilio_whatsapp_number"] or "",
+            "twilio_webhook_secret": webhook_secret,
         }
         if twilio_changed:
             changes["twilio_settings"] = {"from": "configured", "to": "updated"}
@@ -919,6 +968,7 @@ def _parse_whatsapp_settings(tenant: Tenant) -> dict:
         "twilio_account_sid": settings.get("twilio_account_sid", ""),
         "twilio_auth_token": settings.get("twilio_auth_token", ""),
         "twilio_whatsapp_number": settings.get("twilio_whatsapp_number", ""),
+        "twilio_webhook_secret": settings.get("twilio_webhook_secret", ""),
     }
 
 

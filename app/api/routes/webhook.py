@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import logging
 from urllib.parse import urlsplit, urlunsplit
 
@@ -16,6 +17,7 @@ from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.tenant_repository import TenantRepository
+from app.models.tenant import Tenant
 from app.schemas.webhook import TwilioWebhookPayload
 from app.services.conversation_service import ConversationService
 from app.services.tenant_service import TenantService
@@ -64,10 +66,10 @@ def _candidate_validation_urls(request: Request) -> list[str]:
     return unique
 
 
-@router.post("/webhook/whatsapp")
-async def whatsapp_webhook(
+async def _process_whatsapp_webhook(
     request: Request,
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession,
+    resolved_tenant: Tenant | None = None,
 ) -> Response:
     form = dict(await request.form())
     signature = request.headers.get("X-Twilio-Signature", "")
@@ -85,25 +87,27 @@ async def whatsapp_webhook(
         logger.exception("whatsapp_webhook_invalid_payload")
         raise HTTPException(status_code=400, detail="Payload invalido")
 
-    tenant_repo = TenantRepository(session)
     conversation_service = ConversationService(
         session=session,
         paciente_repo=PacienteRepository(session),
         conversacion_repo=ConversacionRepository(session),
         notification_repo=NotificationRepository(session),
     )
-    tenant_service = TenantService(tenant_repo)
 
     async with session.begin():
-        try:
-            tenant = await tenant_service.resolve_by_whatsapp(payload.to_number)
-        except SQLAlchemyError:
-            logger.exception(
-                "whatsapp_webhook_db_error_resolving_tenant to=%s from=%s",
-                _mask_phone(payload.to_number),
-                _mask_phone(payload.from_number),
-            )
-            raise
+        tenant = resolved_tenant
+        if tenant is None:
+            tenant_repo = TenantRepository(session)
+            tenant_service = TenantService(tenant_repo)
+            try:
+                tenant = await tenant_service.resolve_by_whatsapp(payload.to_number)
+            except SQLAlchemyError:
+                logger.exception(
+                    "whatsapp_webhook_db_error_resolving_tenant to=%s from=%s",
+                    _mask_phone(payload.to_number),
+                    _mask_phone(payload.from_number),
+                )
+                raise
         if tenant is None or not tenant.activo:
             logger.warning(
                 "whatsapp_webhook_tenant_not_found_or_inactive to=%s from=%s",
@@ -168,6 +172,38 @@ async def whatsapp_webhook(
             set_current_tenant_id(None)
 
     return _twilio_response(reply_text)
+
+
+@router.post("/webhook/whatsapp")
+async def whatsapp_webhook(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    return await _process_whatsapp_webhook(request, session)
+
+
+@router.post("/webhook/whatsapp/{tenant_id}/{secret}")
+async def whatsapp_webhook_by_tenant(
+    tenant_id: int,
+    secret: str,
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    tenant = await session.get(Tenant, tenant_id)
+    if tenant is None or tenant.deleted_at is not None or not tenant.activo:
+        logger.warning("whatsapp_webhook_by_tenant_not_found tenant_id=%s", tenant_id)
+        return _twilio_response("Numero no reconocido.")
+
+    tenant_whatsapp = tenant.whatsapp_settings or {}
+    configured_secret = (tenant_whatsapp.get("twilio_webhook_secret") or "").strip()
+    if not configured_secret:
+        logger.warning("whatsapp_webhook_by_tenant_missing_secret tenant_id=%s", tenant_id)
+        raise HTTPException(status_code=403, detail="Webhook secret no configurado para el tenant")
+    if not hmac.compare_digest(configured_secret, secret.strip()):
+        logger.warning("whatsapp_webhook_by_tenant_invalid_secret tenant_id=%s", tenant_id)
+        raise HTTPException(status_code=403, detail="Webhook secret invalido")
+
+    return await _process_whatsapp_webhook(request, session, resolved_tenant=tenant)
 
 
 def _twilio_response(message: str) -> Response:
