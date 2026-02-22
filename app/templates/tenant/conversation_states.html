@@ -5,8 +5,9 @@
 
 {% block content %}
   <div class="mb-6">
-    <p class="text-sm text-slate-600">Bandejas de conversaciones por motivo</p>
-    <h1 class="text-2xl font-semibold text-slate-900">Conversaciones</h1>
+    <span class="badge" data-accent="conversaciones">Conversaciones</span>
+    <p class="page-subtitle">Bandejas de conversaciones por motivo</p>
+    <h1 class="page-title text-slate-900">Conversaciones</h1>
   </div>
 
   <div class="grid gap-3 md:grid-cols-3 mb-4">
@@ -25,20 +26,20 @@
   </div>
 
   <div class="card p-3 mb-4">
-    <div class="flex flex-wrap gap-2 text-sm">
-      <a href="/t/conversation-states?queue=all_pending" class="btn {% if selected_queue == 'all_pending' %}btn-primary{% else %}btn-secondary{% endif %}">Pendientes ({{ counts.pending }})</a>
-      <a href="/t/conversation-states?queue=turno_presencial" class="btn {% if selected_queue == 'turno_presencial' %}btn-primary{% else %}btn-secondary{% endif %}">Turno presencial ({{ counts.turno_presencial }})</a>
-      <a href="/t/conversation-states?queue=turno_virtual" class="btn {% if selected_queue == 'turno_virtual' %}btn-primary{% else %}btn-secondary{% endif %}">Turno virtual ({{ counts.turno_virtual }})</a>
-      <a href="/t/conversation-states?queue=receta_orden" class="btn {% if selected_queue == 'receta_orden' %}btn-primary{% else %}btn-secondary{% endif %}">Receta / orden ({{ counts.receta_orden }})</a>
-      <a href="/t/conversation-states?queue=otra_consulta" class="btn {% if selected_queue == 'otra_consulta' %}btn-primary{% else %}btn-secondary{% endif %}">Otra consulta ({{ counts.otra_consulta }})</a>
-      <a href="/t/conversation-states?queue=finished" class="btn {% if selected_queue == 'finished' %}btn-primary{% else %}btn-secondary{% endif %}">Finalizadas ({{ counts.finished }})</a>
+    <div class="tabs">
+      <a href="/t/conversation-states?queue=all_pending" class="tab {% if selected_queue == 'all_pending' %}active{% endif %}" data-queue="pendientes">Pendientes ({{ counts.pending }})</a>
+      <a href="/t/conversation-states?queue=turno_presencial" class="tab {% if selected_queue == 'turno_presencial' %}active{% endif %}" data-queue="turno_presencial">Turno presencial ({{ counts.turno_presencial }})</a>
+      <a href="/t/conversation-states?queue=turno_virtual" class="tab {% if selected_queue == 'turno_virtual' %}active{% endif %}" data-queue="turno_virtual">Turno virtual ({{ counts.turno_virtual }})</a>
+      <a href="/t/conversation-states?queue=receta_orden" class="tab {% if selected_queue == 'receta_orden' %}active{% endif %}" data-queue="receta_orden">Receta / orden ({{ counts.receta_orden }})</a>
+      <a href="/t/conversation-states?queue=otra_consulta" class="tab {% if selected_queue == 'otra_consulta' %}active{% endif %}" data-queue="otra_consulta">Otra consulta ({{ counts.otra_consulta }})</a>
+      <a href="/t/conversation-states?queue=finished" class="tab {% if selected_queue == 'finished' %}active{% endif %}" data-queue="finalizadas">Finalizadas ({{ counts.finished }})</a>
     </div>
   </div>
 
   {% if rows %}
     <div class="card overflow-x-auto overflow-y-visible">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-slate-600">
+      <table class="table zebra">
+        <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
             <th class="px-4 py-3 text-left font-medium">Telefono</th>
@@ -78,6 +79,9 @@
       </table>
     </div>
   {% else %}
-    <div class="card p-6 text-sm text-slate-600">No hay conversaciones en esta bandeja.</div>
+    <div class="empty">
+      <h3>No hay conversaciones en esta bandeja.</h3>
+      <p>Cuando ingresen nuevas consultas pendientes aparecerán aquí.</p>
+    </div>
   {% endif %}
 {% endblock %}
