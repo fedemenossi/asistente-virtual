@@ -752,6 +752,7 @@ async def conversation_states(
     all_pending_states: list[EstadoConversacion] = []
     finished_states: list[EstadoConversacion] = []
     active_states: list[EstadoConversacion] = []
+    active_cutoff = now_ba() - timedelta(minutes=30)
     for state in states:
         status = (state.status or "active").lower()
         if status == "pending":
@@ -763,7 +764,13 @@ async def conversation_states(
         elif status == "finished":
             finished_states.append(state)
         else:
-            active_states.append(state)
+            updated = state.updated_at
+            if updated is None:
+                continue
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc).astimezone(active_cutoff.tzinfo)
+            if updated >= active_cutoff:
+                active_states.append(state)
 
     if selected_queue == "finished":
         filtered_states = finished_states
