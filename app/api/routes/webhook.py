@@ -215,6 +215,11 @@ def _twilio_response(message: str) -> Response:
             final_message = f"{final_message}\n\n{RESTART_HINT}"
         else:
             final_message = RESTART_HINT
+    logger.info(
+        "whatsapp_webhook_twiml_reply len=%s preview=%s",
+        len(final_message),
+        final_message[:160].replace("\n", " | "),
+    )
     response = MessagingResponse()
     response.message(final_message)
     return Response(content=str(response), media_type="application/xml")
