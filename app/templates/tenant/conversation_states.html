@@ -57,7 +57,7 @@
               <td class="px-4 py-3 text-slate-600">{{ state.telefono }}</td>
               <td class="px-4 py-3 text-slate-600">{{ state.pending_reason or '-' }}</td>
               <td class="px-4 py-3 text-slate-600">{{ state.pending_message|default('')|truncate(90) }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ state.updated_at.strftime('%Y-%m-%d %H:%M') if state.updated_at else '' }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ state.updated_at|format_ba('%Y-%m-%d %H:%M') }}</td>
               <td class="px-4 py-3 text-slate-600">
                 <div class="flex items-center gap-2">
                   <a class="text-indigo-600 hover:underline" href="/t/conversation-states/{{ state.telefono }}">Detalle</a>

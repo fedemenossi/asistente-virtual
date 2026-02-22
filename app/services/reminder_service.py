@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit_log
 from app.core.notifications import create_notification
+from app.core.timezone import format_ba, now_ba
 from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
@@ -20,7 +21,7 @@ class ReminderService:
         self._messaging = MessagingService()
 
     async def run(self, request, hours_before: int = 24, window_minutes: int = 10) -> int:
-        now = datetime.now(timezone.utc)
+        now = now_ba()
         target_start = now + timedelta(hours=hours_before)
         window_end = target_start + timedelta(minutes=window_minutes)
         stmt = select(Turno).where(
@@ -46,7 +47,7 @@ class ReminderService:
                 continue
             tenant = await self._session.get(Tenant, consultorio.tenant_id)
             message = (
-                f"Recordatorio: turno {consultorio.nombre} el {start_at.strftime('%Y-%m-%d %H:%M')}."
+                f"Recordatorio: turno {consultorio.nombre} el {format_ba(start_at)}."
             )
             self._messaging.send_whatsapp(paciente.telefono, message, tenant=tenant)
             if paciente.email:

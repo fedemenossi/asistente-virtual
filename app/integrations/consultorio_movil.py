@@ -12,6 +12,7 @@ import requests
 from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
+from app.core.timezone import now_ba
 
 LOGIN_URL = "https://office.consultoriomovil.net/office/"
 AUTH_URL = f"{LOGIN_URL}login/authenticate"
@@ -116,6 +117,10 @@ def _resolve_timezone(name: str) -> tzinfo:
 
 def _start_of_day(dt: datetime) -> datetime:
     return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _now_in_timezone_naive(tz: tzinfo) -> datetime:
+    return now_ba().astimezone(tz).replace(tzinfo=None)
 
 
 def _to_epoch_seconds(dt: datetime, tz: tzinfo) -> int:
@@ -378,7 +383,7 @@ def list_next_presential_slots(
     availability = fetch_availability(
         session=session,
         staff_id=str(cfg["staff_id"]),
-        start_date=datetime.now(),
+        start_date=_now_in_timezone_naive(tz),
         days=int(cfg["days"]),
         appointment_type="presential",
         tz=tz,
@@ -420,7 +425,7 @@ def reserve_presential_slot(
     availability = fetch_availability(
         session=session,
         staff_id=str(cfg["staff_id"]),
-        start_date=datetime.now(),
+        start_date=_now_in_timezone_naive(tz),
         days=int(cfg["days"]),
         appointment_type="presential",
         tz=tz,

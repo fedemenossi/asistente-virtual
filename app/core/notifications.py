@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import CurrentUser, UserRole
+from app.core.timezone import now_ba
 from app.models.notification import Notification
 
 
@@ -90,5 +89,5 @@ async def mark_notification_read(
     session: AsyncSession,
     notification: Notification,
 ) -> None:
-    notification.read_at = datetime.now(timezone.utc)
+    notification.read_at = now_ba()
     await session.flush()

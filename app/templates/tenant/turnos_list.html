@@ -54,7 +54,7 @@
               <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</td>
               <td class="px-4 py-3 text-slate-600">{{ consultorio.nombre }}</td>
               {% set fecha = turno.start_at if turno.start_at else turno.fecha_hora %}
-              <td class="px-4 py-3 text-slate-600">{{ fecha.strftime('%Y-%m-%d %H:%M') if fecha else '' }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ fecha|format_ba('%Y-%m-%d %H:%M') }}</td>
               <td class="px-4 py-3 text-slate-600">{{ turno.tipo }}</td>
               <td class="px-4 py-3">
                 {% if status == 'confirmado' %}

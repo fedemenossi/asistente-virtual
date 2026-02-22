@@ -2,17 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from app.core.request_context import get_current_request_id
 from app.core.tenancy import get_current_tenant_id
+from app.core.timezone import now_ba
 
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": now_ba().isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),

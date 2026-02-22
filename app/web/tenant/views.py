@@ -20,6 +20,7 @@ from app.core.db import get_async_session
 from app.core.notifications import mark_notification_read
 from app.core.security import CurrentUser, require_permission, require_tenant_admin
 from app.core.templates import base_context, templates
+from app.core.timezone import now_ba
 from app.core.ui import add_flash
 from app.core.tenancy import get_entity_or_404, get_tenant_entity_or_404
 from app.models.audit_log import AuditLog
@@ -392,7 +393,7 @@ async def consultorios_delete(
         consultorio = await get_tenant_entity_or_404(
             session, Consultorio, consultorio_id, user.tenant_id
         )
-        consultorio.deleted_at = datetime.now(timezone.utc)
+        consultorio.deleted_at = now_ba()
         consultorio.deleted_by = user.id
         await audit_log(
             session,
@@ -609,7 +610,7 @@ async def pacientes_delete(
         paciente = await get_tenant_entity_or_404(
             session, Paciente, paciente_id, user.tenant_id
         )
-        paciente.deleted_at = datetime.now(timezone.utc)
+        paciente.deleted_at = now_ba()
         paciente.deleted_by = user.id
         await audit_log(
             session,
@@ -1231,7 +1232,7 @@ async def calendar_settings_test(
             status_code=400,
         )
 
-    start = datetime.now(tz)
+    start = now_ba().astimezone(tz)
     end = start + timedelta(days=14)
     service = CalendarService()
     slots = await service.list_available_slots(tenant, consultorio, start, end)

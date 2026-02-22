@@ -6,6 +6,7 @@ import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import get_ba_tz, now_ba
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
 from app.repositories.conversacion_repository import ConversacionRepository
@@ -676,8 +677,8 @@ class ConversationService:
     def _state_expired(updated_at: datetime | None) -> bool:
         if not updated_at:
             return False
-        now = datetime.now(timezone.utc)
+        now = now_ba()
         value = updated_at
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
+            value = value.replace(tzinfo=get_ba_tz())
         return now - value > timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES)

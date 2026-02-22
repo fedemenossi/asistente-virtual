@@ -15,9 +15,9 @@
       <div class="text-sm text-slate-700">
         <div class="mb-2"><span class="text-slate-500">Estado actual:</span> {{ state.estado_actual }}</div>
         <div class="mb-2"><span class="text-slate-500">Bandeja:</span> {{ status }}</div>
-        <div class="mb-2"><span class="text-slate-500">Actualizado:</span> {{ state.updated_at.strftime('%Y-%m-%d %H:%M') if state.updated_at else '' }}</div>
-        <div class="mb-2"><span class="text-slate-500">Pendiente desde:</span> {{ state.pending_at.strftime('%Y-%m-%d %H:%M') if state.pending_at else '' }}</div>
-        <div class="mb-2"><span class="text-slate-500">Finalizada:</span> {{ state.resolved_at.strftime('%Y-%m-%d %H:%M') if state.resolved_at else '' }}</div>
+        <div class="mb-2"><span class="text-slate-500">Actualizado:</span> {{ state.updated_at|format_ba('%Y-%m-%d %H:%M') }}</div>
+        <div class="mb-2"><span class="text-slate-500">Pendiente desde:</span> {{ state.pending_at|format_ba('%Y-%m-%d %H:%M') }}</div>
+        <div class="mb-2"><span class="text-slate-500">Finalizada:</span> {{ state.resolved_at|format_ba('%Y-%m-%d %H:%M') }}</div>
         <div class="mb-2"><span class="text-slate-500">Resuelta por:</span> {{ state.resolved_by or '-' }}</div>
       </div>
       {% if status == "pending" %}

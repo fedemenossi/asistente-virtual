@@ -18,6 +18,7 @@ from app.core.features import FEATURE_REGISTRY
 from app.core.notifications import mark_notification_read
 from app.core.security import CurrentUser, hash_password, require_permission
 from app.core.templates import base_context, templates
+from app.core.timezone import now_ba
 from app.core.ui import add_flash
 from app.core.tenancy import get_entity_or_404, set_current_tenant_id
 from app.models.audit_log import AuditLog
@@ -90,7 +91,7 @@ async def dashboard(
     user: CurrentUser = Depends(require_permission("tenant:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
-    now = datetime.now(timezone.utc)
+    now = now_ba()
     seven_days = now + timedelta(days=7)
     tenants_active = await session.scalar(
         select(func.count())
@@ -449,7 +450,7 @@ async def tenants_delete(
     validate_csrf(request, csrf_token)
     async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, tenant_id)
-        tenant.deleted_at = datetime.now(timezone.utc)
+        tenant.deleted_at = now_ba()
         tenant.deleted_by = user.id
         await audit_log(
             session,
@@ -720,7 +721,7 @@ async def users_delete(
         add_flash(request, "error", "Usuario ya eliminado")
         return RedirectResponse("/admin/users", status_code=303)
     async with session.begin_nested():
-        user.deleted_at = datetime.now(timezone.utc)
+        user.deleted_at = now_ba()
         user.deleted_by = current.id
         await audit_log(
             session,

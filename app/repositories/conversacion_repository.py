@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.timezone import now_ba
 from app.models.conversacion import EstadoConversacion
 
 
@@ -70,7 +70,7 @@ class ConversacionRepository:
         state.status = "pending"
         state.pending_reason = reason
         state.pending_message = message
-        state.pending_at = datetime.now(timezone.utc)
+        state.pending_at = now_ba()
         state.resolved_at = None
         state.resolved_by = None
         await self._session.flush()
@@ -81,7 +81,7 @@ class ConversacionRepository:
         if state is None:
             return None
         state.status = "finished"
-        state.resolved_at = datetime.now(timezone.utc)
+        state.resolved_at = now_ba()
         state.resolved_by = resolved_by
         await self._session.flush()
         return state
