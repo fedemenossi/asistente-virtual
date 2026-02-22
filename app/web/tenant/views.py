@@ -109,11 +109,26 @@ async def dashboard(
             Turno.deleted_at.is_(None),
         )
     )
-    conversaciones = await session.scalar(
-        select(func.count()).select_from(EstadoConversacion).where(
-            EstadoConversacion.tenant_id == user.tenant_id
-        )
+    conversations_result = await session.execute(
+        select(EstadoConversacion).where(EstadoConversacion.tenant_id == user.tenant_id)
     )
+    conversation_rows = list(conversations_result.scalars().all())
+    active_cutoff = now_ba() - timedelta(minutes=30)
+    conversaciones_abiertas = 0
+    for row in conversation_rows:
+        status = (row.status or "active").lower()
+        if status == "pending":
+            conversaciones_abiertas += 1
+            continue
+        if status == "finished":
+            continue
+        updated = row.updated_at
+        if updated is None:
+            continue
+        if updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc).astimezone(active_cutoff.tzinfo)
+        if updated >= active_cutoff:
+            conversaciones_abiertas += 1
     return _template(
         request,
         "tenant/dashboard.html",
@@ -122,7 +137,7 @@ async def dashboard(
                 "pacientes": pacientes_total or 0,
                 "consultorios": consultorios_total or 0,
                 "turnos": turnos_total or 0,
-                "conversaciones": conversaciones or 0,
+                "conversaciones": conversaciones_abiertas,
             }
         },
     )

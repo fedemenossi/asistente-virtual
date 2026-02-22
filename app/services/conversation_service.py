@@ -639,10 +639,10 @@ class ConversationService:
     def _main_reason_retry_message(self) -> str:
         return (
             "Para ayudarte, elegi una opcion:\n"
-            "1?? Turno presencial\n"
-            "2?? Turno virtual\n"
-            "3?? Receta u orden medica\n"
-            "4?? Otra consulta"
+            "1) Turno presencial\n"
+            "2) Turno virtual\n"
+            "3) Receta u orden medica\n"
+            "4) Otra consulta"
         )
 
     @staticmethod

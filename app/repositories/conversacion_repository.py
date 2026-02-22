@@ -4,6 +4,7 @@ import re
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.timezone import now_ba
 from app.models.conversacion import EstadoConversacion
@@ -28,19 +29,21 @@ class ConversacionRepository:
         estado_actual: str,
         contexto_json: dict | None,
     ) -> EstadoConversacion:
+        safe_context = dict(contexto_json or {})
         state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
         if state is None:
             state = EstadoConversacion(
                 tenant_id=tenant_id,
                 telefono=telefono,
                 estado_actual=estado_actual,
-                contexto_json=contexto_json,
+                contexto_json=safe_context,
                 status="active",
             )
             self._session.add(state)
         else:
             state.estado_actual = estado_actual
-            state.contexto_json = contexto_json
+            state.contexto_json = safe_context
+            flag_modified(state, "contexto_json")
             if not state.status:
                 state.status = "active"
         await self._session.flush()

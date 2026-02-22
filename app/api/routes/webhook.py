@@ -24,6 +24,7 @@ from app.services.tenant_service import TenantService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+RESTART_HINT = 'Escriba la palabra "salir" para reiniciar la conversacion y volver a comenzar.'
 
 
 def _mask_phone(value: str | None) -> str:
@@ -208,6 +209,12 @@ async def whatsapp_webhook_by_tenant(
 
 
 def _twilio_response(message: str) -> Response:
+    final_message = message.strip()
+    if RESTART_HINT not in final_message:
+        if final_message:
+            final_message = f"{final_message}\n\n{RESTART_HINT}"
+        else:
+            final_message = RESTART_HINT
     response = MessagingResponse()
-    response.message(message)
+    response.message(final_message)
     return Response(content=str(response), media_type="application/xml")
