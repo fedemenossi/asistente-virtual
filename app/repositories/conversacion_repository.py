@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversacion import EstadoConversacion
@@ -62,7 +63,7 @@ class ConversacionRepository:
             state = EstadoConversacion(
                 tenant_id=tenant_id,
                 telefono=telefono,
-                estado_actual="main_menu",
+                estado_actual="main_reason_menu",
                 contexto_json={},
             )
             self._session.add(state)
@@ -71,13 +72,30 @@ class ConversacionRepository:
         state.pending_message = message
         state.pending_at = datetime.now(timezone.utc)
         state.resolved_at = None
+        state.resolved_by = None
         await self._session.flush()
         return state
 
-    async def mark_resolved(self, tenant_id: int, telefono: str) -> None:
+    async def mark_resolved(self, tenant_id: int, telefono: str, resolved_by: int | None = None) -> EstadoConversacion | None:
         state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
         if state is None:
-            return
+            return None
         state.status = "finished"
         state.resolved_at = datetime.now(timezone.utc)
+        state.resolved_by = resolved_by
         await self._session.flush()
+        return state
+
+
+def normalize_phone(value: str | None) -> str:
+    return re.sub(r"\D+", "", value or "")
+
+
+def normalize_phone_expr(column):
+    expr = func.replace(column, "whatsapp:", "")
+    expr = func.replace(expr, "+", "")
+    expr = func.replace(expr, "-", "")
+    expr = func.replace(expr, " ", "")
+    expr = func.replace(expr, "(", "")
+    expr = func.replace(expr, ")", "")
+    return expr

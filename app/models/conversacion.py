@@ -20,4 +20,5 @@ class EstadoConversacion(Base):
     pending_message: Mapped[str | None] = mapped_column(String(500))
     pending_at: Mapped[datetime | None] = mapped_column(DateTime)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    resolved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, onupdate=utc_now)

@@ -662,34 +662,95 @@ async def conversation_states(
     user: CurrentUser = Depends(require_permission("conversation:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
+    selected_queue = (request.query_params.get("queue") or "all_pending").strip().lower()
+    allowed_queues = {
+        "turno_presencial",
+        "turno_virtual",
+        "receta_orden",
+        "otra_consulta",
+        "all_pending",
+        "finished",
+    }
+    if selected_queue not in allowed_queues:
+        selected_queue = "all_pending"
+
     result = await session.execute(
         select(EstadoConversacion)
         .where(EstadoConversacion.tenant_id == user.tenant_id)
         .order_by(EstadoConversacion.updated_at.desc())
     )
     states = list(result.scalars().all())
-    pending_states: list[EstadoConversacion] = []
+    pacientes_result = await session.execute(
+        select(Paciente).where(
+            Paciente.tenant_id == user.tenant_id,
+            Paciente.deleted_at.is_(None),
+        )
+    )
+    pacientes = list(pacientes_result.scalars().all())
+    pacientes_by_phone = {_sanitize_phone(p.telefono): p for p in pacientes}
+
+    pending_by_reason: dict[str, list[EstadoConversacion]] = {
+        "turno_presencial": [],
+        "turno_virtual": [],
+        "receta_orden": [],
+        "otra_consulta": [],
+    }
+    all_pending_states: list[EstadoConversacion] = []
     finished_states: list[EstadoConversacion] = []
     active_states: list[EstadoConversacion] = []
     for state in states:
         status = (state.status or "active").lower()
         if status == "pending":
-            pending_states.append(state)
+            reason = (state.pending_reason or "otra_consulta").lower()
+            if reason not in pending_by_reason:
+                reason = "otra_consulta"
+            pending_by_reason[reason].append(state)
+            all_pending_states.append(state)
         elif status == "finished":
             finished_states.append(state)
         else:
             active_states.append(state)
+
+    if selected_queue == "finished":
+        filtered_states = finished_states
+    elif selected_queue == "all_pending":
+        filtered_states = all_pending_states
+    else:
+        filtered_states = pending_by_reason.get(selected_queue, [])
+
+    rows = []
+    for state in filtered_states:
+        paciente = pacientes_by_phone.get(_sanitize_phone(state.telefono))
+        rows.append(
+            {
+                "state": state,
+                "paciente": paciente,
+                "paciente_nombre": (
+                    f"{paciente.nombre} {paciente.apellido}".strip()
+                    if paciente is not None
+                    else "-"
+                ),
+                "whatsapp_link": _build_whatsapp_link(state.telefono),
+            }
+        )
+
     return _template(
         request,
         "tenant/conversation_states.html",
         {
-            "pending_states": pending_states,
+            "rows": rows,
+            "selected_queue": selected_queue,
+            "pending_states": all_pending_states,
             "finished_states": finished_states,
             "active_states": active_states,
             "counts": {
-                "pending": len(pending_states),
+                "pending": len(all_pending_states),
                 "finished": len(finished_states),
                 "active": len(active_states),
+                "turno_presencial": len(pending_by_reason["turno_presencial"]),
+                "turno_virtual": len(pending_by_reason["turno_virtual"]),
+                "receta_orden": len(pending_by_reason["receta_orden"]),
+                "otra_consulta": len(pending_by_reason["otra_consulta"]),
             },
         },
     )
@@ -738,14 +799,18 @@ async def conversation_state_detail(
     state = result.scalar_one_or_none()
     if state is None:
         raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+    phone_digits = _sanitize_phone(telefono)
     paciente_result = await session.execute(
         select(Paciente).where(
             Paciente.tenant_id == user.tenant_id,
-            Paciente.telefono == telefono,
             Paciente.deleted_at.is_(None),
         )
     )
-    paciente = paciente_result.scalar_one_or_none()
+    pacientes = list(paciente_result.scalars().all())
+    paciente = next(
+        (item for item in pacientes if _sanitize_phone(item.telefono) == phone_digits),
+        None,
+    )
     contexto_pretty = json.dumps(state.contexto_json or {}, ensure_ascii=True, indent=2)
     status = (state.status or "active").lower()
     return _template(
@@ -771,9 +836,22 @@ async def conversation_state_resolve(
     validate_csrf(request, csrf_token)
     repo = ConversacionRepository(session)
     async with session.begin_nested():
-        await repo.mark_resolved(user.tenant_id, telefono)
+        state = await repo.mark_resolved(user.tenant_id, telefono, resolved_by=user.id)
+        await audit_log(
+            session,
+            request,
+            user,
+            action="conversation_resolved",
+            entity="conversation_state",
+            entity_id=None,
+            metadata={
+                "telefono": telefono,
+                "tenant_id": user.tenant_id,
+                "pending_reason": getattr(state, "pending_reason", None),
+            },
+        )
     add_flash(request, "success", "Conversacion marcada como finalizada")
-    return RedirectResponse(f"/t/conversation-states/{telefono}", status_code=303)
+    return RedirectResponse("/t/conversation-states?queue=finished", status_code=303)
 
 
 async def settings_get(

@@ -18,6 +18,7 @@
         <div class="mb-2"><span class="text-slate-500">Actualizado:</span> {{ state.updated_at.strftime('%Y-%m-%d %H:%M') if state.updated_at else '' }}</div>
         <div class="mb-2"><span class="text-slate-500">Pendiente desde:</span> {{ state.pending_at.strftime('%Y-%m-%d %H:%M') if state.pending_at else '' }}</div>
         <div class="mb-2"><span class="text-slate-500">Finalizada:</span> {{ state.resolved_at.strftime('%Y-%m-%d %H:%M') if state.resolved_at else '' }}</div>
+        <div class="mb-2"><span class="text-slate-500">Resuelta por:</span> {{ state.resolved_by or '-' }}</div>
       </div>
       {% if status == "pending" %}
         <form method="post" action="/t/conversation-states/{{ state.telefono }}/resolve" class="mt-4">

@@ -50,6 +50,7 @@ EXTRA_COLUMNS = {
         "pending_message": "VARCHAR(500) NULL",
         "pending_at": "DATETIME NULL",
         "resolved_at": "DATETIME NULL",
+        "resolved_by": "INT NULL",
     },
     "turnos": {
         "start_at": "DATETIME NULL",

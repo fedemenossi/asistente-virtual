@@ -1,9 +1,17 @@
-import asyncio
-from datetime import datetime, timedelta, timezone
+from __future__ import annotations
 
+import asyncio
+import re
+
+from sqlalchemy import select
+
+from app.core.security import hash_password
+from app.models.conversacion import EstadoConversacion
+from app.models.user import UserRole
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.services.conversation_service import ConversationService, ConversationState
+from app.tests.conftest import create_paciente, create_tenant, create_user, get_tenant, login
 
 
 def _service(session):
@@ -14,116 +22,220 @@ def _service(session):
     )
 
 
-def test_new_patient_flow_creates_patient(db_session):
-    from app.tests.conftest import create_tenant, get_tenant
+def _extract_csrf(html: str) -> str:
+    match = re.search(r'name="csrf_token" value="([^"]+)"', html)
+    assert match, "CSRF token no encontrado"
+    return match.group(1)
 
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant A", "whatsapp:+100"))
+
+def test_text_outside_menu_does_not_break_state(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Text", "whatsapp:+700"))
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    asyncio.run(create_paciente(db_session, tenant_id, "5491170000001"))
 
     async def run():
         async with db_session() as session:
             service = _service(session)
-            reply = await service.process_message(tenant, "whatsapp:+54911", "hola")
-            assert "nombre" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54911", "Juan")
-            assert "apellido" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54911", "Perez")
-            assert "dni" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54911", "12345678")
-            assert "email" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54911", "juan@example.com")
-            assert "registro completo" in reply.lower()
-            paciente_repo = PacienteRepository(session)
-            paciente = await paciente_repo.get_by_phone(tenant.id, "whatsapp:+54911")
-            assert paciente is not None
-            assert paciente.nombre == "Juan"
+            await service.process_message(tenant, "whatsapp:+5491170000001", "hola")
+            reply = await service.process_message(tenant, "whatsapp:+5491170000001", "quiero saber precios")
+            assert "Para ayudarte" in reply
 
-    asyncio.run(run())
-
-
-def test_exit_command_resets_to_menu(db_session):
-    from app.tests.conftest import create_tenant, get_tenant, create_paciente
-
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant B", "whatsapp:+200"))
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+54912"))
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            reply = await service.process_message(tenant, "whatsapp:+54912", "salir")
-            assert "reiniciamos" in reply.lower()
             repo = ConversacionRepository(session)
-            state = await repo.get_state(tenant.id, "whatsapp:+54912")
+            state = await repo.get_state(tenant.id, "5491170000001")
             assert state is not None
-            assert state.estado_actual == ConversationState.MAIN_MENU.value
+            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+            assert (state.status or "active") == "active"
+            assert state.pending_reason is None
 
     asyncio.run(run())
 
 
-def test_state_expiration_resets_flow(db_session):
-    from app.tests.conftest import create_tenant, get_tenant
-
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant C", "whatsapp:+300"))
+def test_turno_presencial_sets_pending(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Pres", "whatsapp:+701"))
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    asyncio.run(create_paciente(db_session, tenant_id, "5491170100001"))
 
     async def run():
         async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, "whatsapp:+5491170100001", "hola")
+            await service.process_message(tenant, "whatsapp:+5491170100001", "1")
+            await service.process_message(tenant, "whatsapp:+5491170100001", "para mi")
+            reply = await service.process_message(tenant, "whatsapp:+5491170100001", "si")
+            assert "turnos presenciales" in reply.lower()
+
             repo = ConversacionRepository(session)
-            await repo.upsert_state(
-                tenant.id,
-                "whatsapp:+54913",
-                ConversationState.MAIN_MENU.value,
-                {},
+            state = await repo.get_state(tenant.id, "5491170100001")
+            assert state is not None
+            assert state.status == "pending"
+            assert state.pending_reason == "turno_presencial"
+
+    asyncio.run(run())
+
+
+def test_receta_sets_pending(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Rec", "whatsapp:+702"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    asyncio.run(create_paciente(db_session, tenant_id, "5491170200001"))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, "whatsapp:+5491170200001", "hola")
+            await service.process_message(tenant, "whatsapp:+5491170200001", "3")
+            await service.process_message(tenant, "whatsapp:+5491170200001", "nueva")
+            reply = await service.process_message(tenant, "whatsapp:+5491170200001", "ibuprofeno 600")
+            assert "se le respondera" in reply.lower()
+
+            repo = ConversacionRepository(session)
+            state = await repo.get_state(tenant.id, "5491170200001")
+            assert state is not None
+            assert state.status == "pending"
+            assert state.pending_reason == "receta_orden"
+
+    asyncio.run(run())
+
+
+def test_otro_sets_pending(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Otro", "whatsapp:+703"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    asyncio.run(create_paciente(db_session, tenant_id, "5491170300001"))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, "whatsapp:+5491170300001", "hola")
+            await service.process_message(tenant, "whatsapp:+5491170300001", "4")
+            reply = await service.process_message(
+                tenant,
+                "whatsapp:+5491170300001",
+                "Necesito una constancia de atencion para mi trabajo",
             )
-            state = await repo.get_state(tenant.id, "whatsapp:+54913")
-            state.updated_at = datetime.now(timezone.utc) - timedelta(minutes=31)
-            await session.flush()
+            assert "medico le respondera" in reply.lower()
 
-            service = _service(session)
-            reply = await service.process_message(tenant, "whatsapp:+54913", "hola")
-            assert "nombre" in reply.lower()
-            state = await repo.get_state(tenant.id, "whatsapp:+54913")
+            repo = ConversacionRepository(session)
+            state = await repo.get_state(tenant.id, "5491170300001")
             assert state is not None
-            assert state.estado_actual == ConversationState.ASK_FIRST_NAME.value
+            assert state.status == "pending"
+            assert state.pending_reason == "otra_consulta"
 
     asyncio.run(run())
 
 
-def test_known_patient_other_person_flow(db_session):
-    from app.tests.conftest import create_tenant, get_tenant, create_paciente
+def test_resolve_archives_conversation(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Resolve", "whatsapp:+704"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-resolve@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
 
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant D", "whatsapp:+400"))
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+54914"))
-
-    async def run():
+    async def seed_state():
         async with db_session() as session:
-            service = _service(session)
+            async with session.begin():
+                session.add(
+                    EstadoConversacion(
+                        tenant_id=tenant_id,
+                        telefono="5491170400001",
+                        estado_actual=ConversationState.MAIN_REASON_MENU.value,
+                        status="pending",
+                        pending_reason="turno_virtual",
+                        pending_message="Pendiente de respuesta",
+                    )
+                )
 
-            reply = await service.process_message(tenant, "whatsapp:+54914", "A")
-            assert "para vos" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54914", "2")
-            assert "dni" in reply.lower()
+    asyncio.run(seed_state())
+    login(client, "tenant-resolve@test.com", "secret-123")
 
-            reply = await service.process_message(tenant, "whatsapp:+54914", "12345678")
-            assert "encontre" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54914", "no")
-            assert "asistente humano" in reply.lower()
+    detail = client.get("/t/conversation-states/5491170400001")
+    assert detail.status_code == 200
+    csrf = _extract_csrf(detail.text)
 
-            reply = await service.process_message(tenant, "whatsapp:+54914", "A")
-            assert "para vos" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54914", "2")
-            assert "dni" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54914", "11223344")
-            assert "nombre" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54914", "Maria")
-            assert "apellido" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54914", "Lopez")
-            assert "dni" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54914", "11223344")
-            assert "email" in reply.lower()
-            reply = await service.process_message(tenant, "whatsapp:+54914", "maria@example.com")
-            assert "primera consulta" in reply.lower()
+    response = client.post(
+        "/t/conversation-states/5491170400001/resolve",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
 
-    asyncio.run(run())
+    async def check_state():
+        async with db_session() as session:
+            result = await session.execute(
+                select(EstadoConversacion).where(
+                    EstadoConversacion.tenant_id == tenant_id,
+                    EstadoConversacion.telefono == "5491170400001",
+                )
+            )
+            return result.scalar_one()
+
+    state = asyncio.run(check_state())
+    assert state.status == "finished"
+    assert state.resolved_at is not None
+    assert state.resolved_by is not None
+
+
+def test_queue_filtering(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Queues", "whatsapp:+705"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-queues@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    async def seed_states():
+        async with db_session() as session:
+            async with session.begin():
+                session.add_all(
+                    [
+                        EstadoConversacion(
+                            tenant_id=tenant_id,
+                            telefono="5491170500001",
+                            estado_actual=ConversationState.MAIN_REASON_MENU.value,
+                            status="pending",
+                            pending_reason="turno_presencial",
+                            pending_message="Presencial",
+                        ),
+                        EstadoConversacion(
+                            tenant_id=tenant_id,
+                            telefono="5491170500002",
+                            estado_actual=ConversationState.MAIN_REASON_MENU.value,
+                            status="pending",
+                            pending_reason="receta_orden",
+                            pending_message="Receta",
+                        ),
+                        EstadoConversacion(
+                            tenant_id=tenant_id,
+                            telefono="5491170500003",
+                            estado_actual=ConversationState.MAIN_REASON_MENU.value,
+                            status="finished",
+                            pending_reason="otra_consulta",
+                            pending_message="Finalizada",
+                        ),
+                    ]
+                )
+
+    asyncio.run(seed_states())
+    login(client, "tenant-queues@test.com", "secret-123")
+
+    presencial = client.get("/t/conversation-states?queue=turno_presencial")
+    assert presencial.status_code == 200
+    assert "5491170500001" in presencial.text
+    assert "5491170500002" not in presencial.text
+
+    receta = client.get("/t/conversation-states?queue=receta_orden")
+    assert receta.status_code == 200
+    assert "5491170500002" in receta.text
+    assert "5491170500001" not in receta.text
+
+    finished = client.get("/t/conversation-states?queue=finished")
+    assert finished.status_code == 200
+    assert "5491170500003" in finished.text
+    assert "5491170500001" not in finished.text
