@@ -25,14 +25,32 @@
     </div>
   </div>
 
-  <div class="card p-3 mb-4">
-    <div class="tabs">
-      <a href="/t/conversation-states?queue=all_pending" class="tab {% if selected_queue == 'all_pending' %}active{% endif %}" data-queue="pendientes">Pendientes ({{ counts.pending }})</a>
-      <a href="/t/conversation-states?queue=turno_presencial" class="tab {% if selected_queue == 'turno_presencial' %}active{% endif %}" data-queue="turno_presencial">Turno presencial ({{ counts.turno_presencial }})</a>
-      <a href="/t/conversation-states?queue=turno_virtual" class="tab {% if selected_queue == 'turno_virtual' %}active{% endif %}" data-queue="turno_virtual">Turno virtual ({{ counts.turno_virtual }})</a>
-      <a href="/t/conversation-states?queue=receta_orden" class="tab {% if selected_queue == 'receta_orden' %}active{% endif %}" data-queue="receta_orden">Receta / orden ({{ counts.receta_orden }})</a>
-      <a href="/t/conversation-states?queue=otra_consulta" class="tab {% if selected_queue == 'otra_consulta' %}active{% endif %}" data-queue="otra_consulta">Otra consulta ({{ counts.otra_consulta }})</a>
-      <a href="/t/conversation-states?queue=finished" class="tab {% if selected_queue == 'finished' %}active{% endif %}" data-queue="finalizadas">Finalizadas ({{ counts.finished }})</a>
+  <div class="mb-4 overflow-x-auto">
+    <div class="inline-flex min-w-full items-end gap-1 rounded-t-2xl border-b border-slate-200 bg-slate-50/80 p-1">
+      <a
+        href="/t/conversation-states?queue=all_pending"
+        class="rounded-t-xl px-4 py-2 text-sm font-semibold transition {% if selected_queue == 'all_pending' %}border border-slate-200 border-b-white bg-white text-slate-900 shadow-sm{% else %}text-slate-600 hover:bg-white/70 hover:text-slate-900{% endif %}"
+      >Pendientes ({{ counts.pending }})</a>
+      <a
+        href="/t/conversation-states?queue=turno_presencial"
+        class="rounded-t-xl px-4 py-2 text-sm font-semibold transition {% if selected_queue == 'turno_presencial' %}border border-emerald-200 border-b-white bg-emerald-50 text-emerald-800 shadow-sm{% else %}text-slate-600 hover:bg-white/70 hover:text-slate-900{% endif %}"
+      >Turno presencial ({{ counts.turno_presencial }})</a>
+      <a
+        href="/t/conversation-states?queue=turno_virtual"
+        class="rounded-t-xl px-4 py-2 text-sm font-semibold transition {% if selected_queue == 'turno_virtual' %}border border-violet-200 border-b-white bg-violet-50 text-violet-800 shadow-sm{% else %}text-slate-600 hover:bg-white/70 hover:text-slate-900{% endif %}"
+      >Turno virtual ({{ counts.turno_virtual }})</a>
+      <a
+        href="/t/conversation-states?queue=receta_orden"
+        class="rounded-t-xl px-4 py-2 text-sm font-semibold transition {% if selected_queue == 'receta_orden' %}border border-amber-200 border-b-white bg-amber-50 text-amber-800 shadow-sm{% else %}text-slate-600 hover:bg-white/70 hover:text-slate-900{% endif %}"
+      >Receta / orden ({{ counts.receta_orden }})</a>
+      <a
+        href="/t/conversation-states?queue=otra_consulta"
+        class="rounded-t-xl px-4 py-2 text-sm font-semibold transition {% if selected_queue == 'otra_consulta' %}border border-pink-200 border-b-white bg-pink-50 text-pink-800 shadow-sm{% else %}text-slate-600 hover:bg-white/70 hover:text-slate-900{% endif %}"
+      >Otra consulta ({{ counts.otra_consulta }})</a>
+      <a
+        href="/t/conversation-states?queue=finished"
+        class="rounded-t-xl px-4 py-2 text-sm font-semibold transition {% if selected_queue == 'finished' %}border border-slate-200 border-b-white bg-white text-slate-900 shadow-sm{% else %}text-slate-600 hover:bg-white/70 hover:text-slate-900{% endif %}"
+      >Finalizadas ({{ counts.finished }})</a>
     </div>
   </div>
 
