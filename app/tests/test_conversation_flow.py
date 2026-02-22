@@ -12,6 +12,7 @@ from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.services.conversation_service import ConversationService, ConversationState
 from app.tests.conftest import create_paciente, create_tenant, create_user, get_tenant, login
+from app.models.paciente import Paciente
 
 
 def _service(session):
@@ -239,3 +240,48 @@ def test_queue_filtering(client, db_session):
     assert finished.status_code == 200
     assert "5491170500003" in finished.text
     assert "5491170500001" not in finished.text
+
+
+def test_web_patient_create_does_not_duplicate_by_phone(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Dedup", "whatsapp:+706"))
+    asyncio.run(create_paciente(db_session, tenant_id, "5491170600001"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-dedup@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-dedup@test.com", "secret-123")
+
+    form_get = client.get("/t/pacientes/new")
+    assert form_get.status_code == 200
+    csrf = _extract_csrf(form_get.text)
+    response = client.post(
+        "/t/pacientes/new",
+        data={
+            "csrf_token": csrf,
+            "nombre": "Nuevo",
+            "apellido": "Paciente",
+            "telefono": "whatsapp:+5491170600001",
+            "dni": "44555666",
+            "email": "nuevo@example.com",
+            "obra_social": "OSDE",
+            "insurance_number": "X1",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    assert "/t/pacientes/" in response.headers["location"]
+    assert response.headers["location"].endswith("/edit")
+
+    async def count_patients():
+        async with db_session() as session:
+            result = await session.execute(
+                select(Paciente).where(Paciente.tenant_id == tenant_id, Paciente.deleted_at.is_(None))
+            )
+            return len(list(result.scalars().all()))
+
+    assert asyncio.run(count_patients()) == 1

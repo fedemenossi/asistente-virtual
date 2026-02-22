@@ -172,16 +172,68 @@ class ConversationService:
             if not text:
                 return "El numero de afiliado no puede estar vacio."
             context["insurance_number"] = text
-            paciente = Paciente(
-                tenant_id=tenant.id,
-                telefono=normalized_phone,
-                nombre=context.get("first_name", ""),
-                apellido=context.get("last_name", ""),
-                dni=context.get("dni", ""),
-                email=f"{context.get('dni', 'sin-dni')}@no-email.local",
-                obra_social=context.get("insurance"),
+            first_name = (context.get("first_name") or context.get("nombre") or "").strip()
+            last_name = (context.get("last_name") or context.get("apellido") or "").strip()
+            dni = (context.get("dni") or "").strip()
+            insurance = (context.get("insurance") or context.get("obra_social") or "").strip()
+
+            if not first_name:
+                await self._conversacion_repo.upsert_state(
+                    tenant.id, normalized_phone, ConversationState.ASK_FIRST_NAME.value, context
+                )
+                return "Falta tu nombre para completar el registro. Indicalo por favor."
+            if not last_name:
+                await self._conversacion_repo.upsert_state(
+                    tenant.id, normalized_phone, ConversationState.ASK_LAST_NAME.value, context
+                )
+                return "Falta tu apellido para completar el registro."
+            if not self._is_valid_dni(dni):
+                await self._conversacion_repo.upsert_state(
+                    tenant.id, normalized_phone, ConversationState.ASK_DNI.value, context
+                )
+                return "Falta un DNI valido para completar el registro (7 a 9 digitos)."
+            if not insurance:
+                await self._conversacion_repo.upsert_state(
+                    tenant.id, normalized_phone, ConversationState.ASK_INSURANCE.value, context
+                )
+                return "Falta la obra social para completar el registro."
+            await self._conversacion_repo.upsert_state(
+                tenant.id, normalized_phone, ConversationState.ASK_EMAIL.value, context
             )
-            await self._paciente_repo.create(paciente)
+            return "Ahora indicanos tu email."
+
+        if current_state == ConversationState.ASK_EMAIL.value:
+            email = text.strip()
+            if not self._is_valid_email(email):
+                return "Email invalido. Ingresalo nuevamente."
+            context["email"] = email
+            first_name = (context.get("first_name") or context.get("nombre") or "").strip()
+            last_name = (context.get("last_name") or context.get("apellido") or "").strip()
+            dni = (context.get("dni") or "").strip()
+            insurance = (context.get("insurance") or context.get("obra_social") or "").strip()
+
+            existing = await self._paciente_repo.get_by_phone(tenant.id, normalized_phone)
+            if existing is not None:
+                existing.nombre = first_name
+                existing.apellido = last_name
+                existing.dni = dni
+                existing.obra_social = insurance
+                existing.email = email
+                existing.insurance_number = context.get("insurance_number")
+                paciente = existing
+                await self._session.flush()
+            else:
+                paciente = Paciente(
+                    tenant_id=tenant.id,
+                    telefono=normalized_phone,
+                    nombre=first_name,
+                    apellido=last_name,
+                    dni=dni,
+                    email=email,
+                    obra_social=insurance,
+                    insurance_number=context.get("insurance_number"),
+                )
+                await self._paciente_repo.create(paciente)
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -527,6 +579,11 @@ class ConversationService:
         if normalized in {"nueva", "nuevo", "2"}:
             return "nueva"
         return None
+
+    @staticmethod
+    def _is_valid_email(value: str) -> bool:
+        candidate = value.strip()
+        return bool(candidate) and ("@" in candidate) and ("." in candidate.split("@")[-1])
 
     @staticmethod
     def _detect_reason(value: str) -> str | None:

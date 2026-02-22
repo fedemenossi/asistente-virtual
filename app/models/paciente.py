@@ -17,6 +17,7 @@ class Paciente(Base, TimestampMixin, SoftDeleteMixin):
     dni: Mapped[str] = mapped_column(String(32), nullable=False)
     email: Mapped[str] = mapped_column(String(200), nullable=False)
     obra_social: Mapped[str | None] = mapped_column(String(100))
+    insurance_number: Mapped[str | None] = mapped_column(String(100))
 
     tenant = relationship("Tenant", back_populates="pacientes")
     turnos = relationship("Turno", back_populates="paciente")

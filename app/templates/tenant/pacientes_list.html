@@ -31,6 +31,7 @@
             <th class="px-4 py-3 text-left font-medium">Telefono</th>
             <th class="px-4 py-3 text-left font-medium">Email</th>
             <th class="px-4 py-3 text-left font-medium">Obra social</th>
+            <th class="px-4 py-3 text-left font-medium">Afiliado</th>
             <th class="px-4 py-3 text-right font-medium">Acciones</th>
           </tr>
         </thead>
@@ -43,6 +44,7 @@
               <td class="px-4 py-3 text-slate-600">{{ paciente.telefono }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.email }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.obra_social or '-' }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ paciente.insurance_number or '-' }}</td>
               <td class="px-4 py-3 text-right">
                 <div data-dropdown class="relative inline-block text-left">
                   <button data-dropdown-toggle type="button" class="btn btn-ghost">...</button>

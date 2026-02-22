@@ -467,19 +467,45 @@ async def pacientes_new_post(
     dni: str = Form(...),
     email: str = Form(...),
     obra_social: str | None = Form(None),
+    insurance_number: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("patient:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
+    normalized_phone = _sanitize_phone(telefono)
+    duplicate_result = await session.execute(
+        select(Paciente).where(
+            Paciente.tenant_id == user.tenant_id,
+            Paciente.deleted_at.is_(None),
+        )
+    )
+    duplicates = list(duplicate_result.scalars().all())
+    existing = next(
+        (
+            p
+            for p in duplicates
+            if _sanitize_phone(p.telefono) == normalized_phone or (p.dni and p.dni == dni)
+        ),
+        None,
+    )
+    if existing is not None:
+        add_flash(
+            request,
+            "warning",
+            "Ya existe un paciente con ese telefono o DNI. Editalo en lugar de crearlo de nuevo.",
+        )
+        return RedirectResponse(f"/t/pacientes/{existing.id}/edit", status_code=303)
+
     paciente = Paciente(
         tenant_id=user.tenant_id,
         nombre=nombre,
         apellido=apellido,
-        telefono=telefono,
+        telefono=normalized_phone,
         dni=dni,
         email=email,
         obra_social=obra_social,
+        insurance_number=insurance_number,
     )
     async with session.begin_nested():
         session.add(paciente)
@@ -517,21 +543,48 @@ async def pacientes_edit_post(
     dni: str = Form(...),
     email: str = Form(...),
     obra_social: str | None = Form(None),
+    insurance_number: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("patient:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
+    normalized_phone = _sanitize_phone(telefono)
+    duplicate_result = await session.execute(
+        select(Paciente).where(
+            Paciente.tenant_id == user.tenant_id,
+            Paciente.deleted_at.is_(None),
+            Paciente.id != paciente_id,
+        )
+    )
+    duplicates = list(duplicate_result.scalars().all())
+    existing = next(
+        (
+            p
+            for p in duplicates
+            if _sanitize_phone(p.telefono) == normalized_phone or (p.dni and p.dni == dni)
+        ),
+        None,
+    )
+    if existing is not None:
+        add_flash(
+            request,
+            "warning",
+            "Ya existe otro paciente con ese telefono o DNI.",
+        )
+        return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
+
     async with session.begin_nested():
         paciente = await get_tenant_entity_or_404(
             session, Paciente, paciente_id, user.tenant_id
         )
         paciente.nombre = nombre
         paciente.apellido = apellido
-        paciente.telefono = telefono
+        paciente.telefono = normalized_phone
         paciente.dni = dni
         paciente.email = email
         paciente.obra_social = obra_social
+        paciente.insurance_number = insurance_number
         await audit_log(
             session,
             request,

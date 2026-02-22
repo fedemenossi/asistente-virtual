@@ -36,6 +36,10 @@
         <label class="block text-sm font-medium text-slate-700">Obra social</label>
         <input class="input mt-1" name="obra_social" value="{{ paciente.obra_social if paciente else '' }}" />
       </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Numero de afiliado</label>
+        <input class="input mt-1" name="insurance_number" value="{{ paciente.insurance_number if paciente else '' }}" />
+      </div>
     </div>
     <div class="flex items-center gap-3">
       <button class="btn btn-primary" type="submit">Guardar</button>
