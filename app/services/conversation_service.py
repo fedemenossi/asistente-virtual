@@ -254,7 +254,10 @@ class ConversationService:
                     ConversationState.ASK_PRESENTIAL_FOR_WHOM.value,
                     {"reason": reason, "patient_id": getattr(paciente, "id", None)},
                 )
-                return "El turno presencial es para vos o para otra persona?"
+                return (
+                    "El turno presencial es:\n"
+                    f"{self._for_whom_options()}"
+                )
             if reason == "turno_virtual":
                 await self._conversacion_repo.upsert_state(
                     tenant.id,
@@ -262,7 +265,10 @@ class ConversationService:
                     ConversationState.ASK_VIRTUAL_FOR_WHOM.value,
                     {"reason": reason, "patient_id": getattr(paciente, "id", None)},
                 )
-                return "El turno virtual es para vos o para otra persona?"
+                return (
+                    "El turno virtual es:\n"
+                    f"{self._for_whom_options()}"
+                )
             if reason == "receta_orden":
                 await self._conversacion_repo.upsert_state(
                     tenant.id,
@@ -270,7 +276,10 @@ class ConversationService:
                     ConversationState.ASK_RECIPE_KIND.value,
                     {"reason": reason, "patient_id": getattr(paciente, "id", None)},
                 )
-                return "Tu solicitud es para una receta/orden vencida o nueva?"
+                return (
+                    "Tu solicitud de receta/orden es:\n"
+                    f"{self._recipe_kind_options()}"
+                )
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -282,7 +291,7 @@ class ConversationService:
         if current_state == ConversationState.ASK_PRESENTIAL_FOR_WHOM.value:
             who = self._detect_for_whom(text)
             if not who:
-                return "Responde: para vos o para otra persona."
+                return f"No te entendí. {self._for_whom_options()}"
             context["for_whom"] = who
             if who == "self":
                 await self._conversacion_repo.upsert_state(
@@ -291,7 +300,7 @@ class ConversationService:
                     ConversationState.ASK_PRESENTIAL_FIRST_TIME.value,
                     context,
                 )
-                return "Es primera vez? (si/no)"
+                return self._first_time_options()
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -358,12 +367,12 @@ class ConversationService:
                 ConversationState.ASK_PRESENTIAL_FIRST_TIME.value,
                 context,
             )
-            return "Es primera vez? (si/no)"
+            return self._first_time_options()
 
         if current_state == ConversationState.ASK_PRESENTIAL_FIRST_TIME.value:
             first_time = self._detect_yes_no(text)
             if first_time is None:
-                return "Responde si o no."
+                return f"No te entendí. {self._first_time_options()}"
             context["first_time"] = first_time
             summary = self._build_presential_summary(context)
             await self._set_pending(
@@ -381,7 +390,7 @@ class ConversationService:
         if current_state == ConversationState.ASK_VIRTUAL_FOR_WHOM.value:
             who = self._detect_for_whom(text)
             if not who:
-                return "Responde: para vos o para otra persona."
+                return f"No te entendí. {self._for_whom_options()}"
             context["for_whom"] = who
             if who == "self":
                 await self._conversacion_repo.upsert_state(
@@ -390,7 +399,7 @@ class ConversationService:
                     ConversationState.ASK_VIRTUAL_FIRST_TIME.value,
                     context,
                 )
-                return "Es primera vez? (si/no)"
+                return self._first_time_options()
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -457,12 +466,12 @@ class ConversationService:
                 ConversationState.ASK_VIRTUAL_FIRST_TIME.value,
                 context,
             )
-            return "Es primera vez? (si/no)"
+            return self._first_time_options()
 
         if current_state == ConversationState.ASK_VIRTUAL_FIRST_TIME.value:
             first_time = self._detect_yes_no(text)
             if first_time is None:
-                return "Responde si o no."
+                return f"No te entendí. {self._first_time_options()}"
             context["first_time"] = first_time
             summary = self._build_virtual_summary(context)
             await self._set_pending(
@@ -477,7 +486,7 @@ class ConversationService:
         if current_state == ConversationState.ASK_RECIPE_KIND.value:
             kind = self._detect_recipe_kind(text)
             if not kind:
-                return "Responde si la solicitud es vencida o nueva."
+                return f"No te entendí. {self._recipe_kind_options()}"
             context["recipe_kind"] = kind
             await self._conversacion_repo.upsert_state(
                 tenant.id,
@@ -644,6 +653,18 @@ class ConversationService:
             "3) Receta u orden medica\n"
             "4) Otra consulta"
         )
+
+    @staticmethod
+    def _for_whom_options() -> str:
+        return "1) Para mi\n2) Para otra persona"
+
+    @staticmethod
+    def _first_time_options() -> str:
+        return "Es primera vez?\n1) Si\n2) No"
+
+    @staticmethod
+    def _recipe_kind_options() -> str:
+        return "1) Nueva\n2) Vencida"
 
     @staticmethod
     def _build_presential_summary(context: dict) -> str:
