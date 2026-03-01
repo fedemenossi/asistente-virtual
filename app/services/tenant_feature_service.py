@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,9 +115,3 @@ class TenantFeatureService:
             )
         await self._session.flush()
         return len(missing)
-
-
-def flatten_feature_selection(flags: dict[str, bool]) -> Iterable[tuple[str, bool]]:
-    for key in FEATURE_REGISTRY:
-        yield key, bool(flags.get(key, FEATURE_REGISTRY[key].get("default_enabled", True)))
-
