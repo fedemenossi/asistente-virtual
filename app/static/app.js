@@ -52,8 +52,27 @@
     const menu = dropdown.querySelector("[data-dropdown-menu]");
     if (!toggle || !menu) return;
 
+    const placeMenu = () => {
+      const toggleRect = toggle.getBoundingClientRect();
+      const menuRect = menu.getBoundingClientRect();
+      const menuWidth = menuRect.width || menu.offsetWidth || 160;
+      const viewportWidth = window.innerWidth;
+      const left = Math.max(8, Math.min(toggleRect.right - menuWidth, viewportWidth - menuWidth - 8));
+
+      menu.style.position = "fixed";
+      menu.style.top = `${toggleRect.bottom + 8}px`;
+      menu.style.left = `${left}px`;
+      menu.style.right = "auto";
+      menu.style.bottom = "auto";
+      menu.style.zIndex = "9999";
+    };
+
     const close = () => menu.classList.add("hidden");
-    const open = () => menu.classList.remove("hidden");
+
+    const open = () => {
+      menu.classList.remove("hidden");
+      placeMenu();
+    };
 
     toggle.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -67,6 +86,18 @@
     document.addEventListener("click", (event) => {
       if (!dropdown.contains(event.target)) {
         close();
+      }
+    });
+
+    window.addEventListener("resize", () => {
+      if (!menu.classList.contains("hidden")) {
+        placeMenu();
+      }
+    });
+
+    window.addEventListener("scroll", () => {
+      if (!menu.classList.contains("hidden")) {
+        placeMenu();
       }
     });
   });
