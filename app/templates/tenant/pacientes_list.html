@@ -21,8 +21,8 @@
   </form>
 
   {% if pacientes %}
-    <div class="card" style="overflow: visible;">
-      <div>
+    <div class="card">
+      <div class="h-[520px] overflow-auto">
         <table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600">
           <tr>
@@ -49,7 +49,7 @@
               <td class="w-24 whitespace-nowrap px-4 py-3 text-right">
                 <div data-dropdown class="relative inline-block text-left">
                   <button data-dropdown-toggle type="button" class="btn btn-ghost">...</button>
-                  <div data-dropdown-menu class="absolute bottom-full right-0 z-50 mb-2 hidden w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
+                  <div data-dropdown-menu class="relative z-50 mt-2 ml-auto hidden w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
                     <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/t/pacientes/{{ paciente.id }}/edit">Editar</a>
                     <div class="border-t border-slate-200"></div>
                     {{ modal_confirm(
