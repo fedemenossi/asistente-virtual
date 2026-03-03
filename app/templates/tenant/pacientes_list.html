@@ -21,9 +21,8 @@
   </form>
 
   {% if pacientes %}
-    <div class="card">
-      <div class="h-[520px] overflow-auto">
-        <table class="min-w-full text-sm">
+    <div class="card overflow-x-auto overflow-y-visible">
+      <table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600">
           <tr>
             <th class="px-4 py-3 text-left font-medium">Nombre</th>
@@ -33,7 +32,7 @@
             <th class="px-4 py-3 text-left font-medium">Email</th>
             <th class="px-4 py-3 text-left font-medium">Obra social</th>
             <th class="px-4 py-3 text-left font-medium">Afiliado</th>
-            <th class="w-24 whitespace-nowrap px-4 py-3 text-right font-medium">Acciones</th>
+            <th class="px-4 py-3 text-right font-medium">Acciones</th>
           </tr>
         </thead>
         <tbody>
@@ -46,10 +45,10 @@
               <td class="px-4 py-3 text-slate-600">{{ paciente.email }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.obra_social or '-' }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.insurance_number or '-' }}</td>
-              <td class="w-24 whitespace-nowrap px-4 py-3 text-right">
+              <td class="px-4 py-3 text-right">
                 <div data-dropdown class="relative inline-block text-left">
                   <button data-dropdown-toggle type="button" class="btn btn-ghost">...</button>
-                  <div data-dropdown-menu class="relative z-50 mt-2 ml-auto hidden w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
+                  <div data-dropdown-menu class="absolute right-0 z-10 mt-2 hidden w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
                     <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/t/pacientes/{{ paciente.id }}/edit">Editar</a>
                     <div class="border-t border-slate-200"></div>
                     {{ modal_confirm(
@@ -68,8 +67,7 @@
             </tr>
           {% endfor %}
         </tbody>
-        </table>
-      </div>
+      </table>
     </div>
     {% if total_pages > 1 %}
       {{ pagination(page, total_pages, "/t/pacientes", query_string) }}
