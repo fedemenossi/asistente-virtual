@@ -15,6 +15,10 @@
       <div class="text-sm text-slate-700">
         <div class="mb-2"><span class="text-slate-500">Estado actual:</span> {{ state.estado_actual }}</div>
         <div class="mb-2"><span class="text-slate-500">Bandeja:</span> {{ status }}</div>
+        <div class="mb-2"><span class="text-slate-500">Categoria:</span> {{ category_label }}</div>
+        <div class="mb-2"><span class="text-slate-500">Subtipo:</span> {{ subtype_label }}</div>
+        <div class="mb-2"><span class="text-slate-500">Requiere revision humana:</span> {{ "Si" if state.requires_human_review else "No" }}</div>
+        <div class="mb-2"><span class="text-slate-500">Tiene adjuntos:</span> {{ "Si" if state.has_media else "No" }}</div>
         <div class="mb-2"><span class="text-slate-500">Actualizado:</span> {{ state.updated_at|format_ba('%Y-%m-%d %H:%M') }}</div>
         <div class="mb-2"><span class="text-slate-500">Pendiente desde:</span> {{ state.pending_at|format_ba('%Y-%m-%d %H:%M') }}</div>
         <div class="mb-2"><span class="text-slate-500">Finalizada:</span> {{ state.resolved_at|format_ba('%Y-%m-%d %H:%M') }}</div>
@@ -59,6 +63,8 @@
     <div class="text-sm text-slate-700">
       <div class="mb-2"><span class="text-slate-500">Motivo:</span> {{ state.pending_reason or '-' }}</div>
       <div class="mb-2"><span class="text-slate-500">Mensaje:</span> {{ state.pending_message or '-' }}</div>
+      <div class="mb-2"><span class="text-slate-500">Ultimo mensaje del paciente:</span> {{ state.last_patient_message or '-' }}</div>
+      <div class="mb-2"><span class="text-slate-500">Adjuntos:</span> {{ state.media_metadata or '-' }}</div>
     </div>
   </div>
 

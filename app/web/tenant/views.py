@@ -34,6 +34,11 @@ from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.services.appointment_service import AppointmentService
+from app.services.conversation_intents import (
+    CATEGORY_LABELS,
+    ConversationCategory,
+    SUBTYPE_LABELS,
+)
 from app.services.messaging_service import MessagingService
 from app.services.calendar_service import CalendarService
 
@@ -732,6 +737,10 @@ async def conversation_states(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     selected_queue = (request.query_params.get("queue") or "all_pending").strip().lower()
+    selected_category = (request.query_params.get("category") or "").strip().upper()
+    selected_subtype = (request.query_params.get("subtype") or "").strip().upper()
+    media_only = (request.query_params.get("media_only") or "").strip() == "1"
+    human_only = (request.query_params.get("human_only") or "").strip() == "1"
     allowed_queues = {
         "turno_presencial",
         "turno_virtual",
@@ -742,6 +751,16 @@ async def conversation_states(
     }
     if selected_queue not in allowed_queues:
         selected_queue = "all_pending"
+    allowed_categories = {
+        "",
+        ConversationCategory.PRESENTIAL_APPOINTMENT,
+        ConversationCategory.VIRTUAL_APPOINTMENT,
+        ConversationCategory.PRESCRIPTION_OR_ORDER,
+        ConversationCategory.OTHER_QUERY,
+        ConversationCategory.HUMAN_HANDOFF,
+    }
+    if selected_category not in allowed_categories:
+        selected_category = ""
 
     result = await session.execute(
         select(EstadoConversacion)
@@ -794,6 +813,49 @@ async def conversation_states(
     else:
         filtered_states = pending_by_reason.get(selected_queue, [])
 
+    def _match_filters(state: EstadoConversacion) -> bool:
+        if selected_category and (state.conversation_category or "") != selected_category:
+            return False
+        if selected_subtype and (state.conversation_subtype or "") != selected_subtype:
+            return False
+        if media_only and not bool(state.has_media):
+            return False
+        if human_only and not bool(state.requires_human_review):
+            return False
+        return True
+
+    filtered_states = [state for state in filtered_states if _match_filters(state)]
+
+    category_counts = {
+        key: len([s for s in all_pending_states if (s.conversation_category or "") == key])
+        for key in CATEGORY_LABELS.keys()
+    }
+    subtype_values = sorted(
+        {
+            (state.conversation_subtype or "").strip()
+            for state in states
+            if (state.conversation_subtype or "").strip()
+        }
+    )
+
+    from urllib.parse import urlencode
+
+    base_filter_pairs = []
+    if selected_category:
+        base_filter_pairs.append(("category", selected_category))
+    if selected_subtype:
+        base_filter_pairs.append(("subtype", selected_subtype))
+    if media_only:
+        base_filter_pairs.append(("media_only", "1"))
+    if human_only:
+        base_filter_pairs.append(("human_only", "1"))
+
+    def _queue_url(queue: str) -> str:
+        params = [("queue", queue), *base_filter_pairs]
+        return f"/t/conversation-states?{urlencode(params)}"
+
+    queue_urls = {queue: _queue_url(queue) for queue in allowed_queues}
+
     rows = []
     for state in filtered_states:
         paciente = pacientes_by_phone.get(_sanitize_phone(state.telefono))
@@ -805,6 +867,10 @@ async def conversation_states(
                     f"{paciente.nombre} {paciente.apellido}".strip()
                     if paciente is not None
                     else "-"
+                ),
+                "category_label": CATEGORY_LABELS.get(state.conversation_category or "", "-"),
+                "subtype_label": SUBTYPE_LABELS.get(
+                    state.conversation_subtype or "", state.conversation_subtype or "-"
                 ),
                 "whatsapp_link": _build_whatsapp_link(state.telefono),
             }
@@ -819,6 +885,15 @@ async def conversation_states(
             "pending_states": all_pending_states,
             "finished_states": finished_states,
             "active_states": active_states,
+            "queue_urls": queue_urls,
+            "selected_category": selected_category,
+            "selected_subtype": selected_subtype,
+            "media_only": media_only,
+            "human_only": human_only,
+            "category_labels": CATEGORY_LABELS,
+            "subtype_labels": SUBTYPE_LABELS,
+            "category_counts": category_counts,
+            "subtype_values": subtype_values,
             "counts": {
                 "pending": len(all_pending_states),
                 "finished": len(finished_states),
@@ -897,6 +972,10 @@ async def conversation_state_detail(
             "paciente": paciente,
             "contexto_pretty": contexto_pretty,
             "status": status,
+            "category_label": CATEGORY_LABELS.get(state.conversation_category or "", "-"),
+            "subtype_label": SUBTYPE_LABELS.get(
+                state.conversation_subtype or "", state.conversation_subtype or "-"
+            ),
             "whatsapp_link": _build_whatsapp_link(state.telefono),
         },
     )

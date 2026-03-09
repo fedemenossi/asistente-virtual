@@ -67,12 +67,34 @@ def _candidate_validation_urls(request: Request) -> list[str]:
     return unique
 
 
+def _extract_media_items(form: dict) -> list[dict]:
+    try:
+        count = int((form.get("NumMedia") or "0").strip())
+    except (ValueError, AttributeError):
+        count = 0
+    items: list[dict] = []
+    for index in range(max(count, 0)):
+        url = (form.get(f"MediaUrl{index}") or "").strip()
+        content_type = (form.get(f"MediaContentType{index}") or "").strip()
+        if not url and not content_type:
+            continue
+        items.append(
+            {
+                "index": index,
+                "url": url,
+                "content_type": content_type,
+            }
+        )
+    return items
+
+
 async def _process_whatsapp_webhook(
     request: Request,
     session: AsyncSession,
     resolved_tenant: Tenant | None = None,
 ) -> Response:
     form = dict(await request.form())
+    media_items = _extract_media_items(form)
     signature = request.headers.get("X-Twilio-Signature", "")
     logger.info(
         "whatsapp_webhook_received method=%s path=%s content_type=%s has_signature=%s form_keys=%s",
@@ -152,15 +174,17 @@ async def _process_whatsapp_webhook(
     set_current_tenant_id(tenant.id)
     try:
         logger.info(
-            "whatsapp_webhook_processing tenant_id=%s from=%s body_len=%s",
+            "whatsapp_webhook_processing tenant_id=%s from=%s body_len=%s media_count=%s",
             tenant.id,
             _mask_phone(payload.from_number),
             len((payload.body or "").strip()),
+            len(media_items),
         )
         reply_text = await conversation_service.process_message(
             tenant=tenant,
             from_phone=payload.from_number,
             body=payload.body,
+            media_items=media_items,
         )
         logger.info(
             "whatsapp_webhook_processed tenant_id=%s from=%s reply_len=%s",

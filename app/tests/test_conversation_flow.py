@@ -93,6 +93,8 @@ def test_receta_sets_pending(db_session):
             assert state is not None
             assert state.status == "pending"
             assert state.pending_reason == "receta_orden"
+            assert state.conversation_category == "PRESCRIPTION_OR_ORDER"
+            assert state.conversation_subtype == "NEW_PRESCRIPTION"
 
     asyncio.run(run())
 
@@ -211,6 +213,10 @@ def test_queue_filtering(client, db_session):
                             status="pending",
                             pending_reason="receta_orden",
                             pending_message="Receta",
+                            conversation_category="PRESCRIPTION_OR_ORDER",
+                            conversation_subtype="EXPIRED_PRESCRIPTION",
+                            has_media=True,
+                            requires_human_review=True,
                         ),
                         EstadoConversacion(
                             tenant_id=tenant_id,
@@ -240,6 +246,44 @@ def test_queue_filtering(client, db_session):
     assert finished.status_code == 200
     assert "5491170500003" in finished.text
     assert "5491170500001" not in finished.text
+
+    filtered = client.get(
+        "/t/conversation-states?queue=all_pending&category=PRESCRIPTION_OR_ORDER&subtype=EXPIRED_PRESCRIPTION&media_only=1&human_only=1"
+    )
+    assert filtered.status_code == 200
+    assert "5491170500002" in filtered.text
+    assert "5491170500001" not in filtered.text
+
+
+def test_recipe_media_sets_flags(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Media", "whatsapp:+707"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    asyncio.run(create_paciente(db_session, tenant_id, "5491170700001"))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, "whatsapp:+5491170700001", "hola")
+            await service.process_message(tenant, "whatsapp:+5491170700001", "3")
+            await service.process_message(tenant, "whatsapp:+5491170700001", "orden medica")
+            reply = await service.process_message(
+                tenant,
+                "whatsapp:+5491170700001",
+                "",
+                media_items=[{"index": 0, "url": "https://example.test/foto.jpg", "content_type": "image/jpeg"}],
+            )
+            assert "se le respondera" in reply.lower()
+
+            repo = ConversacionRepository(session)
+            state = await repo.get_state(tenant.id, "5491170700001")
+            assert state is not None
+            assert state.status == "pending"
+            assert state.has_media is True
+            assert state.requires_human_review is True
+            assert state.conversation_subtype == "MEDICAL_ORDER"
+            assert state.media_metadata is not None
+
+    asyncio.run(run())
 
 
 def test_web_patient_create_does_not_duplicate_by_phone(client, db_session):

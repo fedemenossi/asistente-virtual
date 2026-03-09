@@ -27,14 +27,44 @@
 
   <div class="card p-3 mb-4">
     <div class="flex flex-wrap gap-2">
-      <a href="/t/conversation-states?queue=all_pending" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'all_pending' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Pendientes ({{ counts.pending }})</a>
-      <a href="/t/conversation-states?queue=turno_presencial" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'turno_presencial' %}border-emerald-200 bg-emerald-50 text-emerald-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Turno presencial ({{ counts.turno_presencial }})</a>
-      <a href="/t/conversation-states?queue=turno_virtual" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'turno_virtual' %}border-violet-200 bg-violet-50 text-violet-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Turno virtual ({{ counts.turno_virtual }})</a>
-      <a href="/t/conversation-states?queue=receta_orden" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'receta_orden' %}border-amber-200 bg-amber-50 text-amber-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Receta / orden ({{ counts.receta_orden }})</a>
-      <a href="/t/conversation-states?queue=otra_consulta" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'otra_consulta' %}border-pink-200 bg-pink-50 text-pink-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Otra consulta ({{ counts.otra_consulta }})</a>
-      <a href="/t/conversation-states?queue=finished" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'finished' %}border-slate-300 bg-slate-100 text-slate-800{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Finalizadas ({{ counts.finished }})</a>
+      <a href="{{ queue_urls['all_pending'] }}" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'all_pending' %}border-blue-200 bg-blue-50 text-blue-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Pendientes ({{ counts.pending }})</a>
+      <a href="{{ queue_urls['turno_presencial'] }}" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'turno_presencial' %}border-emerald-200 bg-emerald-50 text-emerald-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Turno presencial ({{ counts.turno_presencial }})</a>
+      <a href="{{ queue_urls['turno_virtual'] }}" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'turno_virtual' %}border-violet-200 bg-violet-50 text-violet-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Turno virtual ({{ counts.turno_virtual }})</a>
+      <a href="{{ queue_urls['receta_orden'] }}" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'receta_orden' %}border-amber-200 bg-amber-50 text-amber-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Receta / orden ({{ counts.receta_orden }})</a>
+      <a href="{{ queue_urls['otra_consulta'] }}" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'otra_consulta' %}border-pink-200 bg-pink-50 text-pink-700{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Otra consulta ({{ counts.otra_consulta }})</a>
+      <a href="{{ queue_urls['finished'] }}" class="rounded-full border px-3 py-1 text-sm font-medium transition {% if selected_queue == 'finished' %}border-slate-300 bg-slate-100 text-slate-800{% else %}border-slate-200 bg-white text-slate-700 hover:bg-slate-50{% endif %}">Finalizadas ({{ counts.finished }})</a>
     </div>
   </div>
+
+  <form method="get" action="/t/conversation-states" class="card p-3 mb-4">
+    <input type="hidden" name="queue" value="{{ selected_queue }}"/>
+    <div class="grid gap-3 md:grid-cols-4">
+      <select class="select" name="category">
+        <option value="">Todas las categorias</option>
+        {% for key, label in category_labels.items() %}
+          <option value="{{ key }}" {% if selected_category == key %}selected{% endif %}>{{ label }} ({{ category_counts.get(key, 0) }})</option>
+        {% endfor %}
+      </select>
+      <select class="select" name="subtype">
+        <option value="">Todos los subtipos</option>
+        {% for subtype in subtype_values %}
+          <option value="{{ subtype }}" {% if selected_subtype == subtype %}selected{% endif %}>{{ subtype_labels.get(subtype, subtype) }}</option>
+        {% endfor %}
+      </select>
+      <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+        <input type="checkbox" name="media_only" value="1" {% if media_only %}checked{% endif %}/>
+        Solo con adjuntos
+      </label>
+      <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+        <input type="checkbox" name="human_only" value="1" {% if human_only %}checked{% endif %}/>
+        Requiere revision humana
+      </label>
+    </div>
+    <div class="mt-3 flex gap-2">
+      <button type="submit" class="btn btn-secondary">Aplicar filtros</button>
+      <a href="/t/conversation-states?queue={{ selected_queue }}" class="btn btn-link">Limpiar</a>
+    </div>
+  </form>
 
   {% if rows %}
     <div class="card overflow-x-auto overflow-y-visible">
@@ -56,11 +86,24 @@
             <tr class="border-t border-slate-200 hover:bg-slate-50">
               <td class="px-4 py-3 text-slate-900">{{ row.paciente_nombre }}</td>
               <td class="px-4 py-3 text-slate-600">{{ state.telefono }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ state.pending_reason or '-' }}</td>
+              <td class="px-4 py-3 text-slate-600">
+                <div class="flex flex-col gap-1">
+                  <span class="inline-flex w-fit rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700">{{ row.category_label }}</span>
+                  {% if state.conversation_subtype %}
+                    <span class="inline-flex w-fit rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">{{ row.subtype_label }}</span>
+                  {% endif %}
+                </div>
+              </td>
               <td class="px-4 py-3 text-slate-600">{{ state.pending_message|default('')|truncate(90) }}</td>
               <td class="px-4 py-3 text-slate-600">{{ state.updated_at|format_ba('%Y-%m-%d %H:%M') }}</td>
               <td class="px-4 py-3 text-slate-600">
                 <div class="flex items-center gap-2">
+                  {% if state.has_media %}
+                    <span class="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">Adjuntos</span>
+                  {% endif %}
+                  {% if state.requires_human_review %}
+                    <span class="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs text-rose-700">Revision humana</span>
+                  {% endif %}
                   <a class="text-indigo-600 hover:underline" href="/t/conversation-states/{{ state.telefono }}">Detalle</a>
                   {% if row.whatsapp_link %}
                     <a class="text-sky-600 hover:underline" href="{{ row.whatsapp_link }}" target="_blank" rel="noreferrer">Abrir WhatsApp</a>
