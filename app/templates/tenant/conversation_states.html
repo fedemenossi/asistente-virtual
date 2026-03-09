@@ -87,31 +87,39 @@
               <td class="px-4 py-3 text-slate-900">{{ row.paciente_nombre }}</td>
               <td class="px-4 py-3 text-slate-600">{{ state.telefono }}</td>
               <td class="px-4 py-3 text-slate-600">
-                <div class="flex flex-col gap-1">
-                  <span class="inline-flex w-fit rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700">{{ row.category_label }}</span>
+                <div class="flex flex-col gap-1.5">
+                  <span class="inline-flex w-fit items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                    {{ row.category_label }}
+                  </span>
                   {% if state.conversation_subtype %}
-                    <span class="inline-flex w-fit rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs text-indigo-700">{{ row.subtype_label }}</span>
+                    <span class="text-xs text-slate-500">Subtipo: {{ row.subtype_label }}</span>
                   {% endif %}
                 </div>
               </td>
               <td class="px-4 py-3 text-slate-600">{{ state.pending_message|default('')|truncate(90) }}</td>
               <td class="px-4 py-3 text-slate-600">{{ state.updated_at|format_ba('%Y-%m-%d %H:%M') }}</td>
               <td class="px-4 py-3 text-slate-600">
-                <div class="flex items-center gap-2">
+                <div class="flex flex-wrap items-center gap-2">
                   {% if state.has_media %}
                     <span class="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-700">Adjuntos</span>
                   {% endif %}
                   {% if state.requires_human_review %}
                     <span class="rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs text-rose-700">Revision humana</span>
                   {% endif %}
-                  <a class="text-indigo-600 hover:underline" href="/t/conversation-states/{{ state.telefono }}">Detalle</a>
+                  <a class="btn btn-secondary !px-3 !py-1.5 text-xs" href="/t/conversation-states/{{ state.telefono }}">
+                    👁 Ver detalle
+                  </a>
                   {% if row.whatsapp_link %}
-                    <a class="text-sky-600 hover:underline" href="{{ row.whatsapp_link }}" target="_blank" rel="noreferrer">Abrir WhatsApp</a>
+                    <a class="btn btn-secondary !px-3 !py-1.5 text-xs" href="{{ row.whatsapp_link }}" target="_blank" rel="noreferrer">
+                      💬 Abrir WhatsApp
+                    </a>
                   {% endif %}
                   {% if is_pending %}
                     <form method="post" action="/t/conversation-states/{{ state.telefono }}/resolve">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
-                      <button class="text-emerald-600 hover:underline" type="submit">Marcar finalizada</button>
+                      <button class="btn !px-3 !py-1.5 text-xs border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" type="submit">
+                        ✅ Marcar finalizada
+                      </button>
                     </form>
                   {% endif %}
                 </div>
