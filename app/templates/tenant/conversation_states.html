@@ -67,15 +67,15 @@
   </form>
 
   {% if rows %}
-    <div class="card overflow-x-auto overflow-y-visible">
-      <table class="table zebra">
+    <div class="card overflow-y-visible md:-mx-4 lg:-mx-8 xl:-mx-12">
+      <table class="table zebra w-full table-fixed">
         <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
             <th class="px-4 py-3 text-left font-medium">Telefono</th>
             <th class="px-4 py-3 text-left font-medium">Motivo</th>
             <th class="px-4 py-3 text-left font-medium">Resumen</th>
-            <th class="px-4 py-3 text-left font-medium">Ultimo mensaje</th>
+            <th class="px-4 py-3 text-left font-medium whitespace-nowrap">Ultimo mensaje</th>
             <th class="px-4 py-3 text-left font-medium">Acciones</th>
           </tr>
         </thead>
@@ -84,20 +84,30 @@
             {% set state = row.state %}
             {% set is_pending = (state.status or 'active')|lower == 'pending' %}
             <tr class="border-t border-slate-200 hover:bg-slate-50">
-              <td class="px-4 py-2 text-slate-900">{{ row.paciente_nombre }}</td>
+              <td class="px-4 py-2 text-slate-900 whitespace-nowrap">{{ row.paciente_nombre }}</td>
               <td class="px-4 py-2 text-slate-600">{{ state.telefono }}</td>
-              <td class="px-4 py-2 text-slate-600">
-                <div class="flex flex-col gap-1">
+              <td class="px-4 py-2 text-slate-600 whitespace-nowrap">
+                <div class="flex items-center gap-2">
                   <span class="inline-flex w-fit items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
                     {{ row.category_label }}
                   </span>
                   {% if state.conversation_subtype %}
-                    <span class="text-xs text-slate-500">Subtipo: {{ row.subtype_label }}</span>
+                    <span class="text-xs text-slate-500">- {{ row.subtype_label }}</span>
                   {% endif %}
                 </div>
               </td>
-              <td class="px-4 py-2 text-slate-600">{{ state.pending_message|default('')|truncate(90) }}</td>
-              <td class="px-4 py-2 text-slate-600">{{ state.updated_at|format_ba('%Y-%m-%d %H:%M') }}</td>
+              <td class="px-4 py-2 text-slate-600 align-top">
+                {% set summary_raw = state.pending_message|default('') %}
+                {% set summary_text = summary_raw %}
+                {% if 'detalle=' in summary_raw %}
+                  {% set detail_part = summary_raw.split('detalle=', 1)[1] %}
+                  {% set summary_text = detail_part.split('; adjuntos=', 1)[0] %}
+                {% endif %}
+                <span class="block whitespace-normal break-words leading-5" title="{{ summary_text }}">
+                  {{ summary_text }}
+                </span>
+              </td>
+              <td class="px-4 py-2 text-slate-600 whitespace-nowrap">{{ state.updated_at|format_ba('%Y-%m-%d %H:%M') }}</td>
               <td class="px-4 py-2 text-slate-600">
                 <div class="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
                   {% if state.has_media %}

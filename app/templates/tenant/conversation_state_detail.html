@@ -6,73 +6,67 @@
 {% block content %}
   <div class="mb-6">
     <p class="text-sm text-slate-600">Detalle de la conversacion</p>
-    <h1 class="text-2xl font-semibold text-slate-900">Conversacion {{ state.telefono }}</h1>
-    <div class="mt-3">
-      <a href="/t/conversation-states" class="btn btn-secondary">Volver</a>
-    </div>
+    <h1 class="text-2xl font-semibold text-slate-900">
+      Conversacion {{ state.telefono }}{% if paciente %} - {{ paciente.nombre }} {{ paciente.apellido }}{% endif %}
+    </h1>
   </div>
 
-  <div class="grid gap-4 md:grid-cols-2">
-    <div class="card p-6">
-      <h2 class="text-lg font-semibold text-slate-900 mb-3">Estado</h2>
+  <div class="grid gap-3 md:grid-cols-2">
+    <div class="card p-4">
+      <h2 class="text-base font-semibold text-slate-900 mb-2">Estado</h2>
       <div class="text-sm text-slate-700">
-        <div class="mb-2"><span class="text-slate-500">Estado actual:</span> {{ state.estado_actual }}</div>
-        <div class="mb-2"><span class="text-slate-500">Bandeja:</span> {{ status }}</div>
-        <div class="mb-2"><span class="text-slate-500">Categoria:</span> {{ category_label }}</div>
-        <div class="mb-2"><span class="text-slate-500">Subtipo:</span> {{ subtype_label }}</div>
-        <div class="mb-2"><span class="text-slate-500">Requiere revision humana:</span> {{ "Si" if state.requires_human_review else "No" }}</div>
-        <div class="mb-2"><span class="text-slate-500">Tiene adjuntos:</span> {{ "Si" if state.has_media else "No" }}</div>
-        <div class="mb-2"><span class="text-slate-500">Actualizado:</span> {{ state.updated_at|format_ba('%Y-%m-%d %H:%M') }}</div>
-        <div class="mb-2"><span class="text-slate-500">Pendiente desde:</span> {{ state.pending_at|format_ba('%Y-%m-%d %H:%M') }}</div>
-        <div class="mb-2"><span class="text-slate-500">Finalizada:</span> {{ state.resolved_at|format_ba('%Y-%m-%d %H:%M') }}</div>
-        <div class="mb-2"><span class="text-slate-500">Resuelta por:</span> {{ state.resolved_by or '-' }}</div>
+        <div class="mb-1.5"><span class="text-slate-500">Estado actual:</span> {{ state.estado_actual }}</div>
+        <div class="mb-1.5"><span class="text-slate-500">Bandeja:</span> {{ status }}</div>
+        <div class="mb-1.5"><span class="text-slate-500">Categoria:</span> {{ category_label }}</div>
+        <div class="mb-1.5"><span class="text-slate-500">Subtipo:</span> {{ subtype_label }}</div>
+        <div class="mb-1.5"><span class="text-slate-500">Requiere revision humana:</span> {{ "Si" if state.requires_human_review else "No" }}</div>
+        <div class="mb-1.5"><span class="text-slate-500">Tiene adjuntos:</span> {{ "Si" if state.has_media else "No" }}</div>
+        <div class="mb-1.5"><span class="text-slate-500">Actualizado:</span> {{ state.updated_at|format_ba('%Y-%m-%d %H:%M') }}</div>
+        <div class="mb-1.5"><span class="text-slate-500">Pendiente desde:</span> {{ state.pending_at|format_ba('%Y-%m-%d %H:%M') }}</div>
+        <div class="mb-1.5"><span class="text-slate-500">Finalizada:</span> {{ state.resolved_at|format_ba('%Y-%m-%d %H:%M') }}</div>
+        <div><span class="text-slate-500">Resuelta por:</span> {{ state.resolved_by or '-' }}</div>
       </div>
-      {% if status == "pending" %}
-        <form method="post" action="/t/conversation-states/{{ state.telefono }}/resolve" class="mt-4">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
-          <button class="btn btn-secondary" type="submit">Marcar como finalizada</button>
-        </form>
-      {% endif %}
     </div>
 
-    <div class="card p-6">
-      <h2 class="text-lg font-semibold text-slate-900 mb-3">Contacto</h2>
+    <div class="card p-4">
+      <h2 class="text-base font-semibold text-slate-900 mb-2">Contacto</h2>
       <div class="text-sm text-slate-700">
-        <div class="mb-2"><span class="text-slate-500">Telefono:</span> {{ state.telefono }}</div>
-        {% if whatsapp_link %}
-          <div class="mb-2">
-            <a class="text-indigo-600 hover:underline" href="{{ whatsapp_link }}" target="_blank" rel="noreferrer">
-              Responder por WhatsApp
-            </a>
-          </div>
-        {% endif %}
+        <div class="mb-1.5"><span class="text-slate-500">Telefono:</span> {{ state.telefono }}</div>
         {% if paciente %}
-          <div class="mt-4">
+          <div class="mt-2">
             <div class="text-slate-500 text-xs uppercase mb-1">Paciente</div>
-            <div class="mb-1">{{ paciente.nombre }} {{ paciente.apellido }}</div>
-            <div class="mb-1">DNI: {{ paciente.dni }}</div>
-            <div class="mb-1">Email: {{ paciente.email }}</div>
-            <div class="mb-1">Obra social: {{ paciente.obra_social or '-' }}</div>
+            <div class="mb-1.5">{{ paciente.nombre }} {{ paciente.apellido }}</div>
+            <div class="mb-1.5">DNI: {{ paciente.dni }}</div>
+            <div class="mb-1.5">Email: {{ paciente.email }}</div>
+            <div>Obra social: {{ paciente.obra_social or '-' }}</div>
           </div>
         {% else %}
-          <div class="text-slate-600 mt-4">Sin paciente asociado.</div>
+          <div class="text-slate-600 mt-2">Sin paciente asociado.</div>
         {% endif %}
       </div>
     </div>
   </div>
 
-  <div class="card p-6 mt-6">
-    <h2 class="text-lg font-semibold text-slate-900 mb-3">Pendiente</h2>
+  <div class="card p-4 mt-3">
+    <h2 class="text-base font-semibold text-slate-900 mb-2">Pendiente</h2>
     <div class="text-sm text-slate-700">
-      <div class="mb-2"><span class="text-slate-500">Motivo:</span> {{ state.pending_reason or '-' }}</div>
-      <div class="mb-2"><span class="text-slate-500">Mensaje:</span> {{ state.pending_message or '-' }}</div>
-      <div class="mb-2"><span class="text-slate-500">Ultimo mensaje del paciente:</span> {{ state.last_patient_message or '-' }}</div>
-      <div class="mb-2"><span class="text-slate-500">Adjuntos:</span> {{ state.media_metadata or '-' }}</div>
+      <div class="mb-1.5"><span class="text-slate-500">Motivo:</span> {{ state.pending_reason or '-' }}</div>
+      <div class="mb-1.5"><span class="text-slate-500">Mensaje:</span> {{ state.pending_message or '-' }}</div>
+      <div class="mb-1.5"><span class="text-slate-500">Ultimo mensaje del paciente:</span> {{ state.last_patient_message or '-' }}</div>
+      <div><span class="text-slate-500">Adjuntos:</span> {{ state.media_metadata or '-' }}</div>
     </div>
   </div>
 
-  <div class="card p-6 mt-6">
-    <h2 class="text-lg font-semibold text-slate-900 mb-3">Contexto</h2>
-    <pre class="text-xs text-slate-700 whitespace-pre-wrap">{{ contexto_pretty }}</pre>
+  <div class="mt-4 flex flex-wrap items-center gap-2">
+    <a href="/t/conversation-states" class="btn btn-secondary !px-3 !py-1.5 text-xs whitespace-nowrap">↩️ Volver</a>
+    {% if whatsapp_link %}
+      <a href="{{ whatsapp_link }}" target="_blank" rel="noreferrer" class="btn btn-secondary !px-3 !py-1.5 text-xs whitespace-nowrap">💬 Responder</a>
+    {% endif %}
+    {% if status == "pending" %}
+      <form method="post" action="/t/conversation-states/{{ state.telefono }}/resolve" class="inline-flex">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
+        <button class="btn btn-secondary !px-3 !py-1.5 text-xs whitespace-nowrap border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" type="submit">✅ Finalizar</button>
+      </form>
+    {% endif %}
   </div>
 {% endblock %}

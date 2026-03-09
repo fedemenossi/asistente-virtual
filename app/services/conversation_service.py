@@ -63,7 +63,7 @@ class ConversationState(str, Enum):
 
 
 INACTIVITY_TIMEOUT_MINUTES = 30
-EXIT_COMMANDS = {"salir", "cancelar", "exit", "reiniciar", "menu"}
+EXIT_COMMANDS = {"salir", "cancelar", "exit", "reiniciar"}
 
 
 class ConversationService:
@@ -111,7 +111,7 @@ class ConversationService:
         if state is not None and (state.status or "").lower() == "pending" and lowered not in EXIT_COMMANDS:
             return (
                 "Tu consulta ya fue derivada y esta pendiente de respuesta humana. "
-                "Si queres reiniciar, escribi MENU."
+                "Si queres reiniciar, escribi SALIR."
             )
 
         if lowered in EXIT_COMMANDS:
@@ -328,7 +328,7 @@ class ConversationService:
                 {"reason": reason, "patient_id": getattr(paciente, "id", None)},
                 conversation_category=category,
             )
-            return "Escribi en un solo mensaje tu consulta."
+            return "Escriba la consulta en un solo mensaje que sera respondida a la brevedad."
 
         if current_state == ConversationState.ASK_PRESENTIAL_FOR_WHOM.value:
             who = detect_for_whom(text)
@@ -592,7 +592,7 @@ class ConversationService:
                 last_patient_message=text,
                 media_items=media_items,
             )
-            return "Gracias. Aguarde que el medico le respondera a la brevedad."
+            return "Consulta recibida, aguarde que nos pondremos en contacto a la brevedad."
 
         await self._conversacion_repo.upsert_state(
             tenant.id,
