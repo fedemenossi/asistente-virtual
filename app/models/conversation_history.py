@@ -14,6 +14,7 @@ class ConversationHistory(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
     telefono: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    patient_id: Mapped[int | None] = mapped_column(ForeignKey("pacientes.id"), index=True)
     estado_actual: Mapped[str | None] = mapped_column(String(50))
     contexto_json: Mapped[dict | None] = mapped_column(JSON)
     previous_status: Mapped[str | None] = mapped_column(String(20))
@@ -30,4 +31,3 @@ class ConversationHistory(Base):
     resolved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     close_reason: Mapped[str | None] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now, nullable=False)
-

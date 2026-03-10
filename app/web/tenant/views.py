@@ -25,6 +25,7 @@ from app.core.ui import add_flash
 from app.core.tenancy import get_entity_or_404, get_tenant_entity_or_404
 from app.models.audit_log import AuditLog
 from app.models.consultorio import Consultorio, TipoConsultorio
+from app.models.conversation_history import ConversationHistory
 from app.models.conversacion import EstadoConversacion
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
@@ -768,6 +769,12 @@ async def conversation_states(
         .order_by(EstadoConversacion.updated_at.desc())
     )
     states = list(result.scalars().all())
+    history_result = await session.execute(
+        select(ConversationHistory)
+        .where(ConversationHistory.tenant_id == user.tenant_id)
+        .order_by(ConversationHistory.resolved_at.desc(), ConversationHistory.id.desc())
+    )
+    history_states = list(history_result.scalars().all())
     pacientes_result = await session.execute(
         select(Paciente).where(
             Paciente.tenant_id == user.tenant_id,
@@ -776,6 +783,7 @@ async def conversation_states(
     )
     pacientes = list(pacientes_result.scalars().all())
     pacientes_by_phone = {_sanitize_phone(p.telefono): p for p in pacientes}
+    pacientes_by_id = {p.id: p for p in pacientes}
 
     pending_by_reason: dict[str, list[EstadoConversacion]] = {
         "turno_presencial": [],
@@ -784,7 +792,7 @@ async def conversation_states(
         "otra_consulta": [],
     }
     all_pending_states: list[EstadoConversacion] = []
-    finished_states: list[EstadoConversacion] = []
+    finished_states: list[ConversationHistory] = history_states
     active_states: list[EstadoConversacion] = []
     active_cutoff = now_ba() - timedelta(minutes=30)
     for state in states:
@@ -796,7 +804,9 @@ async def conversation_states(
             pending_by_reason[reason].append(state)
             all_pending_states.append(state)
         elif status == "finished":
-            finished_states.append(state)
+            # Finalized conversations are persisted in conversaciones_historial.
+            # Keep state row focused on the current active/pending context.
+            continue
         else:
             updated = state.updated_at
             if updated is None:
@@ -813,14 +823,14 @@ async def conversation_states(
     else:
         filtered_states = pending_by_reason.get(selected_queue, [])
 
-    def _match_filters(state: EstadoConversacion) -> bool:
-        if selected_category and (state.conversation_category or "") != selected_category:
+    def _match_filters(item) -> bool:
+        if selected_category and (getattr(item, "conversation_category", "") or "") != selected_category:
             return False
-        if selected_subtype and (state.conversation_subtype or "") != selected_subtype:
+        if selected_subtype and (getattr(item, "conversation_subtype", "") or "") != selected_subtype:
             return False
-        if media_only and not bool(state.has_media):
+        if media_only and not bool(getattr(item, "has_media", False)):
             return False
-        if human_only and not bool(state.requires_human_review):
+        if human_only and not bool(getattr(item, "requires_human_review", False)):
             return False
         return True
 
@@ -832,9 +842,12 @@ async def conversation_states(
     }
     subtype_values = sorted(
         {
-            (state.conversation_subtype or "").strip()
-            for state in states
-            if (state.conversation_subtype or "").strip()
+            (subtype or "").strip()
+            for subtype in (
+                [state.conversation_subtype for state in states]
+                + [history.conversation_subtype for history in history_states]
+            )
+            if (subtype or "").strip()
         }
     )
 
@@ -857,24 +870,60 @@ async def conversation_states(
     queue_urls = {queue: _queue_url(queue) for queue in allowed_queues}
 
     rows = []
-    for state in filtered_states:
-        paciente = pacientes_by_phone.get(_sanitize_phone(state.telefono))
-        rows.append(
-            {
-                "state": state,
-                "paciente": paciente,
-                "paciente_nombre": (
-                    f"{paciente.nombre} {paciente.apellido}".strip()
-                    if paciente is not None
-                    else "-"
-                ),
-                "category_label": CATEGORY_LABELS.get(state.conversation_category or "", "-"),
-                "subtype_label": SUBTYPE_LABELS.get(
-                    state.conversation_subtype or "", state.conversation_subtype or "-"
-                ),
-                "whatsapp_link": _build_whatsapp_link(state.telefono),
-            }
-        )
+    if selected_queue == "finished":
+        for item in filtered_states:
+            paciente = pacientes_by_id.get(item.patient_id) if item.patient_id else None
+            if paciente is None:
+                paciente = pacientes_by_phone.get(_sanitize_phone(item.telefono))
+            rows.append(
+                {
+                    "is_history": True,
+                    "is_pending": False,
+                    "telefono": item.telefono,
+                    "updated_at": item.resolved_at,
+                    "pending_message": item.pending_message,
+                    "has_media": bool(item.has_media),
+                    "requires_human_review": bool(item.requires_human_review),
+                    "paciente_nombre": (
+                        f"{paciente.nombre} {paciente.apellido}".strip()
+                        if paciente is not None
+                        else "-"
+                    ),
+                    "category_label": CATEGORY_LABELS.get(item.conversation_category or "", "-"),
+                    "subtype_label": SUBTYPE_LABELS.get(
+                        item.conversation_subtype or "", item.conversation_subtype or "-"
+                    ),
+                    "whatsapp_link": _build_whatsapp_link(item.telefono),
+                    "detail_href": None,
+                    "resolve_href": None,
+                }
+            )
+    else:
+        for state in filtered_states:
+            paciente = pacientes_by_phone.get(_sanitize_phone(state.telefono))
+            rows.append(
+                {
+                    "is_history": False,
+                    "is_pending": (state.status or "active").lower() == "pending",
+                    "telefono": state.telefono,
+                    "updated_at": state.updated_at,
+                    "pending_message": state.pending_message,
+                    "has_media": bool(state.has_media),
+                    "requires_human_review": bool(state.requires_human_review),
+                    "paciente_nombre": (
+                        f"{paciente.nombre} {paciente.apellido}".strip()
+                        if paciente is not None
+                        else "-"
+                    ),
+                    "category_label": CATEGORY_LABELS.get(state.conversation_category or "", "-"),
+                    "subtype_label": SUBTYPE_LABELS.get(
+                        state.conversation_subtype or "", state.conversation_subtype or "-"
+                    ),
+                    "whatsapp_link": _build_whatsapp_link(state.telefono),
+                    "detail_href": f"/t/conversation-states/{state.telefono}",
+                    "resolve_href": f"/t/conversation-states/{state.telefono}/resolve",
+                }
+            )
 
     return _template(
         request,

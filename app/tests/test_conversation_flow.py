@@ -5,6 +5,7 @@ import re
 
 from sqlalchemy import select
 
+from app.core.timezone import now_ba
 from app.core.security import hash_password
 from app.models.conversation_history import ConversationHistory
 from app.models.conversacion import EstadoConversacion
@@ -206,6 +207,13 @@ def test_salir_finishes_conversation_state(db_session):
             assert state_after_new_message is not None
             assert state_after_new_message.estado_actual == ConversationState.MAIN_REASON_MENU.value
             assert state_after_new_message.status == "active"
+            history_result_after_new = await session.execute(
+                select(ConversationHistory).where(
+                    ConversationHistory.tenant_id == tenant.id,
+                    ConversationHistory.telefono == "5491171200001",
+                )
+            )
+            assert len(list(history_result_after_new.scalars().all())) == 1
 
     asyncio.run(run())
 
@@ -530,6 +538,26 @@ def test_queue_filtering(client, db_session):
                             status="finished",
                             pending_reason="otra_consulta",
                             pending_message="Finalizada",
+                        ),
+                        ConversationHistory(
+                            tenant_id=tenant_id,
+                            telefono="5491170500003",
+                            patient_id=None,
+                            estado_actual=ConversationState.MAIN_REASON_MENU.value,
+                            contexto_json={},
+                            previous_status="pending",
+                            pending_reason="otra_consulta",
+                            pending_message="Finalizada",
+                            conversation_category="OTHER_QUERY",
+                            conversation_subtype=None,
+                            requires_human_review=False,
+                            has_media=False,
+                            last_patient_message="Finalizada",
+                            media_metadata=[],
+                            pending_at=None,
+                            resolved_at=now_ba(),
+                            resolved_by=None,
+                            close_reason="manual_resolve",
                         ),
                     ]
                 )

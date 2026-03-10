@@ -59,6 +59,9 @@ EXTRA_COLUMNS = {
         "resolved_at": "DATETIME NULL",
         "resolved_by": "INT NULL",
     },
+    "conversaciones_historial": {
+        "patient_id": "INT NULL",
+    },
     "turnos": {
         "start_at": "DATETIME NULL",
         "end_at": "DATETIME NULL",

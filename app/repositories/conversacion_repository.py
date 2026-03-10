@@ -147,6 +147,7 @@ class ConversacionRepository:
             ConversationHistory(
                 tenant_id=state.tenant_id,
                 telefono=state.telefono,
+                patient_id=(state.contexto_json or {}).get("patient_id"),
                 estado_actual=state.estado_actual,
                 contexto_json=state.contexto_json,
                 previous_status=state.status,
