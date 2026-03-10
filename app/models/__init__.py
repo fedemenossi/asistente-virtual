@@ -1,5 +1,6 @@
 from app.models.consultorio import Consultorio
 from app.models.conversacion import EstadoConversacion
+from app.models.conversation_history import ConversationHistory
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
 from app.models.paciente import Paciente
@@ -15,6 +16,7 @@ from app.models.user import User
 __all__ = [
     "AuditLog",
     "Consultorio",
+    "ConversationHistory",
     "EstadoConversacion",
     "Notification",
     "Paciente",

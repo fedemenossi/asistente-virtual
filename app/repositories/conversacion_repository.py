@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.timezone import now_ba
+from app.models.conversation_history import ConversationHistory
 from app.models.conversacion import EstadoConversacion
 
 
@@ -50,8 +51,22 @@ class ConversacionRepository:
             state.estado_actual = estado_actual
             state.contexto_json = safe_context
             flag_modified(state, "contexto_json")
-            if not state.status:
+            previous_status = (state.status or "").lower()
+            if previous_status != "pending":
                 state.status = "active"
+                if previous_status == "finished":
+                    state.pending_reason = None
+                    state.pending_message = None
+                    state.pending_at = None
+                    state.resolved_at = None
+                    state.resolved_by = None
+                    state.conversation_category = None
+                    state.conversation_subtype = None
+                    state.requires_human_review = False
+                    state.has_media = False
+                    state.last_patient_message = None
+                    state.media_metadata = None
+                    flag_modified(state, "media_metadata")
         if conversation_category is not None:
             state.conversation_category = conversation_category
         if conversation_subtype is not None:
@@ -68,9 +83,11 @@ class ConversacionRepository:
         await self._session.flush()
         return state
 
-    async def delete_state(self, tenant_id: int, telefono: str) -> None:
+    async def delete_state(self, tenant_id: int, telefono: str, *, allow_finished: bool = False) -> None:
         state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
         if state is not None:
+            if (state.status or "").lower() == "finished" and not allow_finished:
+                return
             await self._session.delete(state)
 
     async def mark_pending(
@@ -113,12 +130,42 @@ class ConversacionRepository:
         await self._session.flush()
         return state
 
-    async def mark_resolved(self, tenant_id: int, telefono: str, resolved_by: int | None = None) -> EstadoConversacion | None:
+    async def mark_resolved(
+        self,
+        tenant_id: int,
+        telefono: str,
+        resolved_by: int | None = None,
+        close_reason: str | None = None,
+    ) -> EstadoConversacion | None:
         state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
         if state is None:
             return None
+        if (state.status or "").lower() == "finished":
+            return state
+        resolved_at = now_ba()
+        self._session.add(
+            ConversationHistory(
+                tenant_id=state.tenant_id,
+                telefono=state.telefono,
+                estado_actual=state.estado_actual,
+                contexto_json=state.contexto_json,
+                previous_status=state.status,
+                pending_reason=state.pending_reason,
+                pending_message=state.pending_message,
+                conversation_category=state.conversation_category,
+                conversation_subtype=state.conversation_subtype,
+                requires_human_review=bool(state.requires_human_review),
+                has_media=bool(state.has_media),
+                last_patient_message=state.last_patient_message,
+                media_metadata=state.media_metadata,
+                pending_at=state.pending_at,
+                resolved_at=resolved_at,
+                resolved_by=resolved_by,
+                close_reason=close_reason,
+            )
+        )
         state.status = "finished"
-        state.resolved_at = now_ba()
+        state.resolved_at = resolved_at
         state.resolved_by = resolved_by
         await self._session.flush()
         return state

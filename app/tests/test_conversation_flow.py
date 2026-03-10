@@ -6,6 +6,7 @@ import re
 from sqlalchemy import select
 
 from app.core.security import hash_password
+from app.models.conversation_history import ConversationHistory
 from app.models.conversacion import EstadoConversacion
 from app.models.tenant import Tenant
 from app.models.user import UserRole
@@ -40,7 +41,7 @@ def test_text_outside_menu_does_not_break_state(db_session):
             service = _service(session)
             await service.process_message(tenant, "whatsapp:+5491170000001", "hola")
             reply = await service.process_message(tenant, "whatsapp:+5491170000001", "quiero saber precios")
-            assert "Para ayudarte" in reply
+            assert "Debe seleccionar una opción válida." in reply
 
             repo = ConversacionRepository(session)
             state = await repo.get_state(tenant.id, "5491170000001")
@@ -170,7 +171,7 @@ def test_otro_sets_pending(db_session):
     asyncio.run(run())
 
 
-def test_salir_resets_conversation_state(db_session):
+def test_salir_finishes_conversation_state(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Exit", "whatsapp:+712"))
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
     asyncio.run(create_paciente(db_session, tenant_id, "5491171200001"))
@@ -186,13 +187,79 @@ def test_salir_resets_conversation_state(db_session):
 
             repo = ConversacionRepository(session)
             state_after_exit = await repo.get_state(tenant.id, "5491171200001")
-            assert state_after_exit is None
+            assert state_after_exit is not None
+            assert state_after_exit.status == "finished"
+            assert state_after_exit.resolved_at is not None
+            history_result = await session.execute(
+                select(ConversationHistory).where(
+                    ConversationHistory.tenant_id == tenant.id,
+                    ConversationHistory.telefono == "5491171200001",
+                )
+            )
+            history_rows = list(history_result.scalars().all())
+            assert len(history_rows) == 1
+            assert history_rows[0].close_reason == "exit_command"
 
             next_reply = await service.process_message(tenant, "whatsapp:+5491171200001", "hola")
             assert "Cual es el motivo de tu consulta?" in next_reply
             state_after_new_message = await repo.get_state(tenant.id, "5491171200001")
             assert state_after_new_message is not None
             assert state_after_new_message.estado_actual == ConversationState.MAIN_REASON_MENU.value
+            assert state_after_new_message.status == "active"
+
+    asyncio.run(run())
+
+
+def test_salir_is_tenant_isolated(db_session):
+    tenant_a_id = asyncio.run(create_tenant(db_session, "Tenant Exit A", "whatsapp:+726"))
+    tenant_b_id = asyncio.run(create_tenant(db_session, "Tenant Exit B", "whatsapp:+727"))
+    tenant_a = asyncio.run(get_tenant(db_session, tenant_a_id))
+    tenant_b = asyncio.run(get_tenant(db_session, tenant_b_id))
+    phone = "5491172600001"
+    asyncio.run(create_paciente(db_session, tenant_a_id, phone))
+    asyncio.run(create_paciente(db_session, tenant_b_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant_a, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant_b, f"whatsapp:+{phone}", "hola")
+
+            await service.process_message(tenant_a, f"whatsapp:+{phone}", "salir")
+
+            repo = ConversacionRepository(session)
+            state_a = await repo.get_state(tenant_a.id, phone)
+            state_b = await repo.get_state(tenant_b.id, phone)
+            assert state_a is not None
+            assert state_b is not None
+            assert state_a.status == "finished"
+            assert state_b.status == "active"
+
+    asyncio.run(run())
+
+
+def test_delete_state_does_not_remove_finished_by_default(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Keep Finished", "whatsapp:+728"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491172800001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            repo = ConversacionRepository(session)
+
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "salir")
+
+            finished = await repo.get_state(tenant.id, phone)
+            assert finished is not None
+            assert finished.status == "finished"
+
+            await repo.delete_state(tenant.id, phone)
+            still_there = await repo.get_state(tenant.id, phone)
+            assert still_there is not None
+            assert still_there.status == "finished"
 
     asyncio.run(run())
 
@@ -403,6 +470,20 @@ def test_resolve_archives_conversation(client, db_session):
     assert state.status == "finished"
     assert state.resolved_at is not None
     assert state.resolved_by is not None
+
+    async def check_history():
+        async with db_session() as session:
+            result = await session.execute(
+                select(ConversationHistory).where(
+                    ConversationHistory.tenant_id == tenant_id,
+                    ConversationHistory.telefono == "5491170400001",
+                )
+            )
+            return list(result.scalars().all())
+
+    history_rows = asyncio.run(check_history())
+    assert len(history_rows) == 1
+    assert history_rows[0].close_reason == "manual_resolve"
 
 
 def test_queue_filtering(client, db_session):

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.core.db import engine
 from app.models import (  # noqa: F401
     AuditLog,
+    ConversationHistory,
     Notification,
     Payment,
     PaymentEvent,

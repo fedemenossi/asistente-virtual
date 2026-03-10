@@ -106,7 +106,8 @@ class ConversationService:
                 await self._conversacion_repo.delete_state(tenant.id, normalized_phone)
                 state = None
         if state is not None and (state.status or "").lower() == "finished":
-            await self._conversacion_repo.delete_state(tenant.id, normalized_phone)
+            # Finished conversations must remain persisted for history.
+            # Treat them as no active session so a new flow can start.
             state = None
 
         paciente = await self._paciente_repo.get_by_phone(tenant.id, normalized_phone)
@@ -118,7 +119,10 @@ class ConversationService:
             )
 
         if lowered in EXIT_COMMANDS:
-            await self._conversacion_repo.delete_state(tenant.id, normalized_phone)
+            if state is not None and (state.status or "").lower() != "finished":
+                await self._conversacion_repo.mark_resolved(
+                    tenant.id, normalized_phone, close_reason="exit_command"
+                )
             return "Conversacion finalizada. Escribi cualquier mensaje para comenzar una conversacion nueva."
 
         if state is None:

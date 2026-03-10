@@ -1102,7 +1102,12 @@ async def chat_simulator_reset(
             return RedirectResponse("/admin/chat-simulator", status_code=303)
         conversacion_repo = ConversacionRepository(session)
         async with session.begin_nested():
-            await conversacion_repo.delete_state(tenant.id, from_number)
+            await conversacion_repo.mark_resolved(
+                tenant.id,
+                from_number,
+                resolved_by=user.id,
+                close_reason="simulator_reset",
+            )
         add_flash(request, "success", "Conversacion reiniciada.")
     else:
         add_flash(request, "success", "Conversacion reiniciada.")

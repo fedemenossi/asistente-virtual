@@ -991,7 +991,12 @@ async def conversation_state_resolve(
     validate_csrf(request, csrf_token)
     repo = ConversacionRepository(session)
     async with session.begin_nested():
-        state = await repo.mark_resolved(user.tenant_id, telefono, resolved_by=user.id)
+        state = await repo.mark_resolved(
+            user.tenant_id,
+            telefono,
+            resolved_by=user.id,
+            close_reason="manual_resolve",
+        )
         await audit_log(
             session,
             request,
