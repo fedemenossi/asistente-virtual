@@ -174,9 +174,10 @@ async def _process_whatsapp_webhook(
     set_current_tenant_id(tenant.id)
     try:
         logger.info(
-            "whatsapp_webhook_processing tenant_id=%s from=%s body_len=%s media_count=%s",
+            "whatsapp_webhook_processing tenant_id=%s from=%s message_sid=%s body_len=%s media_count=%s",
             tenant.id,
             _mask_phone(payload.from_number),
+            payload.message_sid or "-",
             len((payload.body or "").strip()),
             len(media_items),
         )
@@ -187,9 +188,10 @@ async def _process_whatsapp_webhook(
             media_items=media_items,
         )
         logger.info(
-            "whatsapp_webhook_processed tenant_id=%s from=%s reply_len=%s",
+            "whatsapp_webhook_processed tenant_id=%s from=%s message_sid=%s reply_len=%s",
             tenant.id,
             _mask_phone(payload.from_number),
+            payload.message_sid or "-",
             len((reply_text or "").strip()),
         )
     finally:

@@ -27,7 +27,7 @@ def test_webhook_by_tenant_uses_secret_and_processes_message(client, db_session,
         lambda self, url, form, signature: True,
     )
 
-    async def _fake_process(self, tenant, from_phone, body):
+    async def _fake_process(self, tenant, from_phone, body, media_items=None):
         return "ok-tenant-webhook"
 
     monkeypatch.setattr(

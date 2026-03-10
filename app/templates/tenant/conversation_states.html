@@ -97,7 +97,7 @@
               <td class="px-4 py-2 text-slate-600 align-top">
                 {% set summary_raw = row.pending_message|default('', true)|string %}
                 {% set summary_text = summary_raw %}
-                {% if 'detalle=' in summary_raw %}
+                {% if summary_raw and ('detalle=' in summary_raw) %}
                   {% set detail_part = summary_raw.split('detalle=', 1)[1] %}
                   {% set summary_text = detail_part.split('; adjuntos=', 1)[0] %}
                 {% endif %}
