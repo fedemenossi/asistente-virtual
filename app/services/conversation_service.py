@@ -105,6 +105,9 @@ class ConversationService:
             if (state.status or "active").lower() == "active":
                 await self._conversacion_repo.delete_state(tenant.id, normalized_phone)
                 state = None
+        if state is not None and (state.status or "").lower() == "finished":
+            await self._conversacion_repo.delete_state(tenant.id, normalized_phone)
+            state = None
 
         paciente = await self._paciente_repo.get_by_phone(tenant.id, normalized_phone)
 
@@ -123,14 +126,14 @@ class ConversationService:
                 await self._conversacion_repo.upsert_state(
                     tenant.id, normalized_phone, ConversationState.ASK_FIRST_NAME.value, {}
                 )
-                return "Hola, para comenzar necesito tu nombre."
+                return self._assistant_registration_greeting(tenant)
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
                 ConversationState.MAIN_REASON_MENU.value,
                 {"patient_id": paciente.id},
             )
-            return self._known_patient_greeting(tenant, paciente.nombre)
+            return self._known_patient_greeting(tenant, paciente.nombre, paciente.apellido)
 
         context = state.contexto_json or {}
         current_state = state.estado_actual
@@ -246,7 +249,7 @@ class ConversationService:
                 ConversationState.MAIN_REASON_MENU.value,
                 {"patient_id": paciente.id, "insurance_number": context.get("insurance_number")},
             )
-            return self._known_patient_greeting(tenant, paciente.nombre)
+            return self._known_patient_greeting(tenant, paciente.nombre, paciente.apellido)
 
         if current_state in {ConversationState.MAIN_REASON_MENU.value, ConversationState.MAIN_MENU.value}:
             intent = classify_main_intent(text)
@@ -642,9 +645,16 @@ class ConversationService:
         candidate = value.strip()
         return bool(candidate) and ("@" in candidate) and ("." in candidate.split("@")[-1])
 
-    def _known_patient_greeting(self, tenant: Tenant, patient_name: str | None) -> str:
+    def _known_patient_greeting(
+        self,
+        tenant: Tenant,
+        patient_name: str | None,
+        patient_last_name: str | None = None,
+    ) -> str:
         doctor_name = (tenant.fantasy_name or tenant.nombre or "profesional").strip()
-        patient_label = (patient_name or "").strip() or ""
+        patient_label = " ".join(
+            part.strip() for part in (patient_name or "", patient_last_name or "") if part and part.strip()
+        ).strip()
         if patient_label:
             return (
                 f"Hola {patient_label}, te contactaste con el consultorio del Dr. {doctor_name}. "
@@ -656,6 +666,26 @@ class ConversationService:
             "Cual es el motivo de tu consulta?\n"
             f"{self._main_reason_menu_message()}"
         )
+
+    def _assistant_registration_greeting(self, tenant: Tenant) -> str:
+        tenant_name = self._tenant_display_name(tenant)
+        return (
+            f"Hola, te contactaste con la asistente de {tenant_name}. "
+            "Para continuar, primero necesito registrarte como paciente. "
+            "Decime tu nombre."
+        )
+
+    @staticmethod
+    def _tenant_display_name(tenant: Tenant) -> str:
+        fantasy = (tenant.fantasy_name or "").strip()
+        if fantasy:
+            return fantasy
+        first = (tenant.first_name or "").strip()
+        last = (tenant.last_name or "").strip()
+        full = " ".join(part for part in (first, last) if part)
+        if full:
+            return full
+        return (tenant.nombre or "el consultorio").strip() or "el consultorio"
 
     @staticmethod
     def _main_reason_menu_message() -> str:

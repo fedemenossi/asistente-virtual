@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.models.conversacion import EstadoConversacion
+from app.models.tenant import Tenant
 from app.models.user import UserRole
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
@@ -192,6 +193,158 @@ def test_salir_resets_conversation_state(db_session):
             state_after_new_message = await repo.get_state(tenant.id, "5491171200001")
             assert state_after_new_message is not None
             assert state_after_new_message.estado_actual == ConversationState.MAIN_REASON_MENU.value
+
+    asyncio.run(run())
+
+
+def test_first_message_registered_patient_gets_personalized_welcome(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Consultorio A", "whatsapp:+720"))
+
+    async def prepare():
+        async with db_session() as session:
+            async with session.begin():
+                tenant = await session.get(Tenant, tenant_id)
+                tenant.fantasy_name = "Dra. Lopez"
+                paciente = Paciente(
+                    tenant_id=tenant_id,
+                    telefono="5491172000001",
+                    nombre="Maria",
+                    apellido="Gomez",
+                    dni="30111222",
+                    email="maria@example.com",
+                )
+                session.add(paciente)
+
+    asyncio.run(prepare())
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            reply = await service.process_message(tenant, "whatsapp:+5491172000001", "hola")
+            assert "Hola Maria Gomez" in reply
+            assert "1) Turno presencial" in reply
+
+            repo = ConversacionRepository(session)
+            state = await repo.get_state(tenant.id, "5491172000001")
+            assert state is not None
+            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+
+    asyncio.run(run())
+
+
+def test_first_message_unregistered_starts_signup_with_tenant_name(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Consultorio B", "whatsapp:+721"))
+
+    async def prepare():
+        async with db_session() as session:
+            async with session.begin():
+                tenant = await session.get(Tenant, tenant_id)
+                tenant.fantasy_name = "Consultorio Medico B"
+
+    asyncio.run(prepare())
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            reply = await service.process_message(tenant, "whatsapp:+5491172100001", "hola")
+            assert "asistente de Consultorio Medico B" in reply
+            assert "Decime tu nombre" in reply
+            assert "1) Turno presencial" not in reply
+
+            repo = ConversacionRepository(session)
+            state = await repo.get_state(tenant.id, "5491172100001")
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_FIRST_NAME.value
+
+    asyncio.run(run())
+
+
+def test_new_patient_signup_completes_and_shows_main_menu(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Consultorio C", "whatsapp:+722"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, "whatsapp:+5491172200001", "hola")
+            await service.process_message(tenant, "whatsapp:+5491172200001", "Lucia")
+            await service.process_message(tenant, "whatsapp:+5491172200001", "Suarez")
+            await service.process_message(tenant, "whatsapp:+5491172200001", "30123123")
+            await service.process_message(tenant, "whatsapp:+5491172200001", "OSDE")
+            await service.process_message(tenant, "whatsapp:+5491172200001", "A123")
+            reply = await service.process_message(tenant, "whatsapp:+5491172200001", "lucia@test.com")
+
+            assert "Hola Lucia Suarez" in reply
+            assert "1) Turno presencial" in reply
+
+            paciente = await PacienteRepository(session).get_by_phone(tenant.id, "5491172200001")
+            assert paciente is not None
+            assert paciente.nombre == "Lucia"
+            assert paciente.apellido == "Suarez"
+
+            state = await ConversacionRepository(session).get_state(tenant.id, "5491172200001")
+            assert state is not None
+            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+
+    asyncio.run(run())
+
+
+def test_active_conversation_does_not_re_evaluate_onboarding(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Consultorio D", "whatsapp:+723"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+
+    async def run():
+        async with db_session() as session:
+            await ConversacionRepository(session).upsert_state(
+                tenant.id,
+                "5491172300001",
+                ConversationState.ASK_LAST_NAME.value,
+                {"first_name": "Carlos"},
+            )
+            service = _service(session)
+            reply = await service.process_message(tenant, "whatsapp:+5491172300001", "Perez")
+            assert "Indicame tu DNI" in reply
+
+            state = await ConversacionRepository(session).get_state(tenant.id, "5491172300001")
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_DNI.value
+
+    asyncio.run(run())
+
+
+def test_phone_isolation_between_tenants(db_session):
+    tenant_a = asyncio.run(create_tenant(db_session, "Consultorio A", "whatsapp:+724"))
+    tenant_b = asyncio.run(create_tenant(db_session, "Consultorio B", "whatsapp:+725"))
+
+    async def prepare():
+        async with db_session() as session:
+            async with session.begin():
+                session.add(
+                    Paciente(
+                        tenant_id=tenant_a,
+                        telefono="5491172400001",
+                        nombre="Paciente",
+                        apellido="TenantA",
+                        dni="22333444",
+                        email="a@test.com",
+                    )
+                )
+
+    asyncio.run(prepare())
+    tenant_b_obj = asyncio.run(get_tenant(db_session, tenant_b))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            reply = await service.process_message(tenant_b_obj, "whatsapp:+5491172400001", "hola")
+            assert "asistente de" in reply.lower()
+            assert "Paciente TenantA" not in reply
+
+            state = await ConversacionRepository(session).get_state(tenant_b_obj.id, "5491172400001")
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_FIRST_NAME.value
 
     asyncio.run(run())
 
