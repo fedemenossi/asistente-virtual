@@ -51,6 +51,50 @@ def test_text_outside_menu_does_not_break_state(db_session):
     asyncio.run(run())
 
 
+def test_invalid_option_main_menu_keeps_state(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Invalid Main", "whatsapp:+710"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    asyncio.run(create_paciente(db_session, tenant_id, "5491171000001"))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, "whatsapp:+5491171000001", "hola")
+            reply = await service.process_message(tenant, "whatsapp:+5491171000001", "cualquier cosa")
+            assert "Debe seleccionar una opción válida." in reply
+            assert "1) Turno presencial" in reply
+
+            repo = ConversacionRepository(session)
+            state = await repo.get_state(tenant.id, "5491171000001")
+            assert state is not None
+            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+
+    asyncio.run(run())
+
+
+def test_invalid_option_first_time_keeps_state(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Invalid First Time", "whatsapp:+711"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    asyncio.run(create_paciente(db_session, tenant_id, "5491171100001"))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, "whatsapp:+5491171100001", "hola")
+            await service.process_message(tenant, "whatsapp:+5491171100001", "1")
+            await service.process_message(tenant, "whatsapp:+5491171100001", "1")
+            reply = await service.process_message(tenant, "whatsapp:+5491171100001", "tal vez")
+            assert "Debe seleccionar una opción válida." in reply
+            assert "Es primera vez?" in reply
+
+            repo = ConversacionRepository(session)
+            state = await repo.get_state(tenant.id, "5491171100001")
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_PRESENTIAL_FIRST_TIME.value
+
+    asyncio.run(run())
+
+
 def test_turno_presencial_sets_pending(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Pres", "whatsapp:+701"))
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
@@ -114,13 +158,40 @@ def test_otro_sets_pending(db_session):
                 "whatsapp:+5491170300001",
                 "Necesito una constancia de atencion para mi trabajo",
             )
-            assert "medico le respondera" in reply.lower()
+            assert "consulta recibida" in reply.lower()
 
             repo = ConversacionRepository(session)
             state = await repo.get_state(tenant.id, "5491170300001")
             assert state is not None
             assert state.status == "pending"
             assert state.pending_reason == "otra_consulta"
+
+    asyncio.run(run())
+
+
+def test_salir_resets_conversation_state(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Exit", "whatsapp:+712"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    asyncio.run(create_paciente(db_session, tenant_id, "5491171200001"))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, "whatsapp:+5491171200001", "hola")
+            await service.process_message(tenant, "whatsapp:+5491171200001", "1")
+
+            exit_reply = await service.process_message(tenant, "whatsapp:+5491171200001", "salir")
+            assert "Conversacion finalizada" in exit_reply
+
+            repo = ConversacionRepository(session)
+            state_after_exit = await repo.get_state(tenant.id, "5491171200001")
+            assert state_after_exit is None
+
+            next_reply = await service.process_message(tenant, "whatsapp:+5491171200001", "hola")
+            assert "Cual es el motivo de tu consulta?" in next_reply
+            state_after_new_message = await repo.get_state(tenant.id, "5491171200001")
+            assert state_after_new_message is not None
+            assert state_after_new_message.estado_actual == ConversationState.MAIN_REASON_MENU.value
 
     asyncio.run(run())
 

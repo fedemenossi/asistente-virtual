@@ -115,18 +115,8 @@ class ConversationService:
             )
 
         if lowered in EXIT_COMMANDS:
-            if paciente is None:
-                await self._conversacion_repo.upsert_state(
-                    tenant.id, normalized_phone, ConversationState.ASK_FIRST_NAME.value, {}
-                )
-                return "Perfecto, reiniciamos. Decime tu nombre."
-            await self._conversacion_repo.upsert_state(
-                tenant.id,
-                normalized_phone,
-                ConversationState.MAIN_REASON_MENU.value,
-                {"patient_id": paciente.id},
-            )
-            return self._known_patient_greeting(tenant, paciente.nombre)
+            await self._conversacion_repo.delete_state(tenant.id, normalized_phone)
+            return "Conversacion finalizada. Escribi cualquier mensaje para comenzar una conversacion nueva."
 
         if state is None:
             if paciente is None:
@@ -269,7 +259,7 @@ class ConversationService:
                     "2) Turno virtual"
                 )
             if not reason or not category:
-                return self._main_reason_retry_message()
+                return self._invalid_option_message(self._main_reason_menu_message())
             if reason == "turno_presencial":
                 await self._conversacion_repo.upsert_state(
                     tenant.id,
@@ -333,7 +323,7 @@ class ConversationService:
         if current_state == ConversationState.ASK_PRESENTIAL_FOR_WHOM.value:
             who = detect_for_whom(text)
             if not who:
-                return f"No te entendí. {self._for_whom_options()}"
+                return self._invalid_option_message(self._for_whom_options())
             context["for_whom"] = who
             if who == "self":
                 await self._conversacion_repo.upsert_state(
@@ -414,7 +404,7 @@ class ConversationService:
         if current_state == ConversationState.ASK_PRESENTIAL_FIRST_TIME.value:
             first_time = detect_yes_no(text)
             if first_time is None:
-                return f"No te entendí. {self._first_time_options()}"
+                return self._invalid_option_message(self._first_time_options())
             context["first_time"] = first_time
             summary = self._build_presential_summary(context)
             await self._set_pending(
@@ -438,7 +428,7 @@ class ConversationService:
         if current_state == ConversationState.ASK_VIRTUAL_FOR_WHOM.value:
             who = detect_for_whom(text)
             if not who:
-                return f"No te entendí. {self._for_whom_options()}"
+                return self._invalid_option_message(self._for_whom_options())
             context["for_whom"] = who
             if who == "self":
                 await self._conversacion_repo.upsert_state(
@@ -519,7 +509,7 @@ class ConversationService:
         if current_state == ConversationState.ASK_VIRTUAL_FIRST_TIME.value:
             first_time = detect_yes_no(text)
             if first_time is None:
-                return f"No te entendí. {self._first_time_options()}"
+                return self._invalid_option_message(self._first_time_options())
             context["first_time"] = first_time
             summary = self._build_virtual_summary(context)
             await self._set_pending(
@@ -540,7 +530,7 @@ class ConversationService:
         if current_state == ConversationState.ASK_RECIPE_KIND.value:
             kind = detect_prescription_subtype(text)
             if not kind:
-                return f"No te entendí. {self._recipe_kind_options()}"
+                return self._invalid_option_message(self._recipe_kind_options())
             context["recipe_kind"] = kind
             await self._conversacion_repo.upsert_state(
                 tenant.id,
@@ -678,13 +668,13 @@ class ConversationService:
         )
 
     def _main_reason_retry_message(self) -> str:
+        return self._invalid_option_message(self._main_reason_menu_message())
+
+    @staticmethod
+    def _invalid_option_message(options_text: str) -> str:
         return (
-            "Para ayudarte, elegi una opcion:\n"
-            "1) Turno presencial\n"
-            "2) Turno virtual\n"
-            "3) Receta u orden medica\n"
-            "4) Otra consulta\n"
-            "5) Hablar con una persona"
+            "Debe seleccionar una opción válida.\n"
+            f"{options_text}"
         )
 
     @staticmethod
