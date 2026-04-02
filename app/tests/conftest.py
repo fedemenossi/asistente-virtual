@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -85,18 +86,92 @@ def login(client: TestClient, email: str, password: str) -> None:
     assert result.status_code in (302, 303)
 
 
-async def create_tenant(db_session, nombre: str, whatsapp: str) -> int:
+def build_whatsapp_phone(seed: int) -> str:
+    return f"whatsapp:+54911{seed:07d}"
+
+
+async def login_as_super_admin(
+    client: TestClient,
+    db_session,
+    *,
+    email: str = "admin@example.com",
+    password: str = "change_me",
+) -> str:
+    from app.core.security import hash_password
+    from app.models.user import UserRole
+
+    await create_user(
+        db_session,
+        email,
+        hash_password(password),
+        UserRole.SUPER_ADMIN.value,
+        None,
+    )
+    login(client, email, password)
+    return email
+
+
+async def login_as_tenant_admin(
+    client: TestClient,
+    db_session,
+    tenant_id: int,
+    *,
+    email: str = "tenant@example.com",
+    password: str = "secret-123",
+) -> str:
+    from app.core.security import hash_password
+    from app.models.user import UserRole
+
+    await create_user(
+        db_session,
+        email,
+        hash_password(password),
+        UserRole.TENANT_ADMIN.value,
+        tenant_id,
+    )
+    login(client, email, password)
+    return email
+
+
+async def create_tenant(
+    db_session,
+    nombre: str,
+    whatsapp: str,
+    *,
+    activo: bool = True,
+    fantasy_name: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    **extra,
+) -> int:
     from app.models.tenant import Tenant
 
     async with db_session() as session:
         async with session.begin():
-            tenant = Tenant(nombre=nombre, whatsapp_number=whatsapp, activo=True)
+            tenant = Tenant(
+                nombre=nombre,
+                whatsapp_number=whatsapp,
+                activo=activo,
+                fantasy_name=fantasy_name,
+                first_name=first_name,
+                last_name=last_name,
+                **extra,
+            )
             session.add(tenant)
             await session.flush()
             return tenant.id
 
 
-async def create_user(db_session, email: str, password_hash: str, role: str, tenant_id: int | None) -> int:
+async def create_user(
+    db_session,
+    email: str,
+    password_hash: str,
+    role: str,
+    tenant_id: int | None,
+    *,
+    active: bool = True,
+    **extra,
+) -> int:
     from app.models.user import User
 
     async with db_session() as session:
@@ -106,14 +181,24 @@ async def create_user(db_session, email: str, password_hash: str, role: str, ten
                 password_hash=password_hash,
                 role=role,
                 tenant_id=tenant_id,
-                active=True,
+                active=active,
+                **extra,
             )
             session.add(user)
             await session.flush()
             return user.id
 
 
-async def create_consultorio(db_session, tenant_id: int, nombre: str) -> int:
+async def create_consultorio(
+    db_session,
+    tenant_id: int,
+    nombre: str,
+    *,
+    tipo=None,
+    proveedor_turnos: str | None = None,
+    configuracion_externa: dict | None = None,
+    **extra,
+) -> int:
     from app.models.consultorio import Consultorio, TipoConsultorio
 
     async with db_session() as session:
@@ -121,14 +206,29 @@ async def create_consultorio(db_session, tenant_id: int, nombre: str) -> int:
             consultorio = Consultorio(
                 tenant_id=tenant_id,
                 nombre=nombre,
-                tipo=TipoConsultorio.PRESENCIAL,
+                tipo=tipo or TipoConsultorio.PRESENCIAL,
+                proveedor_turnos=proveedor_turnos,
+                configuracion_externa=configuracion_externa,
+                **extra,
             )
             session.add(consultorio)
             await session.flush()
             return consultorio.id
 
 
-async def create_paciente(db_session, tenant_id: int, telefono: str) -> int:
+async def create_paciente(
+    db_session,
+    tenant_id: int,
+    telefono: str,
+    *,
+    nombre: str = "Juan",
+    apellido: str = "Perez",
+    dni: str = "12345678",
+    email: str = "juan@example.com",
+    obra_social: str | None = None,
+    insurance_number: str | None = None,
+    **extra,
+) -> int:
     from app.models.paciente import Paciente
 
     async with db_session() as session:
@@ -136,33 +236,170 @@ async def create_paciente(db_session, tenant_id: int, telefono: str) -> int:
             paciente = Paciente(
                 tenant_id=tenant_id,
                 telefono=telefono,
-                nombre="Juan",
-                apellido="Perez",
-                dni="12345678",
-                email="juan@example.com",
+                nombre=nombre,
+                apellido=apellido,
+                dni=dni,
+                email=email,
+                obra_social=obra_social,
+                insurance_number=insurance_number,
+                **extra,
             )
             session.add(paciente)
             await session.flush()
             return paciente.id
 
 
-async def create_turno(db_session, paciente_id: int, consultorio_id: int) -> int:
-    from datetime import datetime, timezone
-
-    from app.models.turno import Turno, TipoTurno, EstadoTurno
+async def create_turno(
+    db_session,
+    paciente_id: int,
+    consultorio_id: int,
+    *,
+    fecha_hora: datetime | None = None,
+    start_at: datetime | None = None,
+    end_at: datetime | None = None,
+    tipo=None,
+    estado=None,
+    status=None,
+    provider: str | None = None,
+    external_id: str | None = None,
+    external_status: str | None = None,
+    notes: str | None = None,
+    **extra,
+) -> int:
+    from app.models.consultorio import Consultorio
+    from app.models.turno import AppointmentStatus, EstadoTurno, TipoTurno, Turno
 
     async with db_session() as session:
         async with session.begin():
+            consultorio = await session.get(Consultorio, consultorio_id)
+            assert consultorio is not None
+            when = fecha_hora or start_at or datetime.now(timezone.utc)
             turno = Turno(
+                tenant_id=consultorio.tenant_id,
                 paciente_id=paciente_id,
                 consultorio_id=consultorio_id,
-                fecha_hora=datetime.now(timezone.utc),
-                tipo=TipoTurno.PRESENCIAL,
-                estado=EstadoTurno.PENDIENTE,
+                fecha_hora=when,
+                start_at=start_at or when,
+                end_at=end_at,
+                tipo=tipo or TipoTurno.PRESENCIAL,
+                estado=estado or EstadoTurno.PENDIENTE,
+                status=status or AppointmentStatus.DRAFT,
+                provider=provider,
+                external_id=external_id,
+                external_status=external_status,
+                notes=notes,
+                **extra,
             )
             session.add(turno)
             await session.flush()
             return turno.id
+
+
+async def create_conversation_state(
+    db_session,
+    *,
+    tenant_id: int,
+    telefono: str,
+    estado_actual: str,
+    status: str = "active",
+    contexto_json: dict | None = None,
+    pending_reason: str | None = None,
+    pending_message: str | None = None,
+    conversation_category: str | None = None,
+    conversation_subtype: str | None = None,
+    operational_category: str | None = None,
+    manual_note: str | None = None,
+    requires_human_review: bool = False,
+    has_media: bool = False,
+    last_patient_message: str | None = None,
+    media_metadata=None,
+    pending_at=None,
+    resolved_at=None,
+    resolved_by=None,
+    updated_at=None,
+) -> str:
+    from app.models.conversacion import EstadoConversacion
+
+    async with db_session() as session:
+        async with session.begin():
+            row = EstadoConversacion(
+                tenant_id=tenant_id,
+                telefono=telefono,
+                estado_actual=estado_actual,
+                status=status,
+                contexto_json=contexto_json or {},
+                pending_reason=pending_reason,
+                pending_message=pending_message,
+                conversation_category=conversation_category,
+                conversation_subtype=conversation_subtype,
+                operational_category=operational_category,
+                manual_note=manual_note,
+                requires_human_review=requires_human_review,
+                has_media=has_media,
+                last_patient_message=last_patient_message,
+                media_metadata=media_metadata,
+                pending_at=pending_at,
+                resolved_at=resolved_at,
+                resolved_by=resolved_by,
+                updated_at=updated_at or datetime.now(timezone.utc),
+            )
+            session.add(row)
+            return telefono
+
+
+async def create_conversation_history(
+    db_session,
+    *,
+    tenant_id: int,
+    telefono: str,
+    resolved_at,
+    patient_id: int | None = None,
+    estado_actual: str | None = None,
+    contexto_json: dict | None = None,
+    previous_status: str | None = None,
+    pending_reason: str | None = None,
+    pending_message: str | None = None,
+    conversation_category: str | None = None,
+    conversation_subtype: str | None = None,
+    operational_category: str | None = None,
+    manual_note: str | None = None,
+    requires_human_review: bool = False,
+    has_media: bool = False,
+    last_patient_message: str | None = None,
+    media_metadata=None,
+    pending_at=None,
+    resolved_by=None,
+    close_reason: str | None = None,
+) -> int:
+    from app.models.conversation_history import ConversationHistory
+
+    async with db_session() as session:
+        async with session.begin():
+            row = ConversationHistory(
+                tenant_id=tenant_id,
+                telefono=telefono,
+                patient_id=patient_id,
+                estado_actual=estado_actual,
+                contexto_json=contexto_json or {},
+                previous_status=previous_status,
+                pending_reason=pending_reason,
+                pending_message=pending_message,
+                conversation_category=conversation_category,
+                conversation_subtype=conversation_subtype,
+                operational_category=operational_category,
+                manual_note=manual_note,
+                requires_human_review=requires_human_review,
+                has_media=has_media,
+                last_patient_message=last_patient_message,
+                media_metadata=media_metadata,
+                pending_at=pending_at,
+                resolved_at=resolved_at,
+                resolved_by=resolved_by,
+                close_reason=close_reason,
+            )
+            session.add(row)
+            await session.flush()
+            return row.id
 
 
 async def create_payment(db_session, tenant_id: int, paciente_id: int, turno_id: int | None) -> int:

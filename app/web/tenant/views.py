@@ -91,11 +91,54 @@ def _ensure_webhook_secret(existing: str | None) -> str:
     return secrets.token_urlsafe(24)
 
 
+def _selected_day(date_str: str | None) -> tuple[str, datetime, datetime]:
+    if date_str:
+        try:
+            parsed = datetime.fromisoformat(date_str)
+        except ValueError:
+            parsed = now_ba()
+            date_str = parsed.date().isoformat()
+    else:
+        parsed = now_ba()
+        date_str = parsed.date().isoformat()
+    start = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+    return date_str, start, end
+
+
+def _turno_type_label(turno: Turno) -> str:
+    return "Virtual" if str(turno.tipo.value if hasattr(turno.tipo, "value") else turno.tipo) == "virtual" else "Presencial"
+
+
+def _turno_status_label(turno: Turno) -> tuple[str, str]:
+    status = turno.status.value if turno.status is not None and hasattr(turno.status, "value") else str(turno.status or turno.estado or "")
+    status = status.lower()
+    if status in {"confirmed", "confirmado"}:
+        return "Confirmado", "success"
+    if status in {"waiting_payment"}:
+        return "Esperando pago", "neutral"
+    if status in {"cancelled", "cancelado"}:
+        return "Cancelado", "warning"
+    if status in {"completed", "completado"}:
+        return "Completado", "success"
+    return "Borrador", "neutral"
+
+
+def _turno_provider_label(turno: Turno) -> tuple[str, str]:
+    provider = (turno.provider or turno.external_calendar_provider or "manual").strip().lower()
+    if provider == "google":
+        return "Google", "info"
+    if provider == "consultorio_movil":
+        return "Cabildo", "warning"
+    return "Manual", "neutral"
+
+
 async def dashboard(
     request: Request,
     user: CurrentUser = Depends(require_permission("tenant:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
+    today_str, today_start, today_end = _selected_day(None)
     pacientes_total = await session.scalar(
         select(func.count())
         .select_from(Paciente)
@@ -110,9 +153,42 @@ async def dashboard(
         select(func.count()).select_from(Turno)
         .join(Consultorio, Turno.consultorio_id == Consultorio.id)
         .where(
+            Turno.tenant_id == user.tenant_id,
             Consultorio.tenant_id == user.tenant_id,
             Consultorio.deleted_at.is_(None),
             Turno.deleted_at.is_(None),
+        )
+    )
+    turnos_hoy = await session.scalar(
+        select(func.count())
+        .select_from(Turno)
+        .where(
+            Turno.tenant_id == user.tenant_id,
+            Turno.deleted_at.is_(None),
+            Turno.fecha_hora >= today_start,
+            Turno.fecha_hora < today_end,
+        )
+    )
+    virtuales_hoy = await session.scalar(
+        select(func.count())
+        .select_from(Turno)
+        .where(
+            Turno.tenant_id == user.tenant_id,
+            Turno.deleted_at.is_(None),
+            Turno.fecha_hora >= today_start,
+            Turno.fecha_hora < today_end,
+            Turno.tipo == "virtual",
+        )
+    )
+    presenciales_hoy = await session.scalar(
+        select(func.count())
+        .select_from(Turno)
+        .where(
+            Turno.tenant_id == user.tenant_id,
+            Turno.deleted_at.is_(None),
+            Turno.fecha_hora >= today_start,
+            Turno.fecha_hora < today_end,
+            Turno.tipo == "presencial",
         )
     )
     conversations_result = await session.execute(
@@ -135,6 +211,66 @@ async def dashboard(
             updated = updated.replace(tzinfo=timezone.utc).astimezone(active_cutoff.tzinfo)
         if updated >= active_cutoff:
             conversaciones_abiertas += 1
+    conversaciones_pendientes = sum(
+        1 for row in conversation_rows if (row.status or "").lower() == "pending"
+    )
+    todays_result = await session.execute(
+        select(Turno, Paciente, Consultorio)
+        .join(Paciente, Turno.paciente_id == Paciente.id)
+        .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+        .where(
+            Turno.tenant_id == user.tenant_id,
+            Turno.deleted_at.is_(None),
+            Paciente.deleted_at.is_(None),
+            Consultorio.deleted_at.is_(None),
+            Turno.fecha_hora >= today_start,
+            Turno.fecha_hora < today_end,
+        )
+        .order_by(Turno.fecha_hora.asc())
+    )
+    todays_rows = list(todays_result.all())
+    upcoming_result = await session.execute(
+        select(Turno, Paciente, Consultorio)
+        .join(Paciente, Turno.paciente_id == Paciente.id)
+        .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+        .where(
+            Turno.tenant_id == user.tenant_id,
+            Turno.deleted_at.is_(None),
+            Paciente.deleted_at.is_(None),
+            Consultorio.deleted_at.is_(None),
+            Turno.fecha_hora >= now_ba(),
+        )
+        .order_by(Turno.fecha_hora.asc())
+        .limit(5)
+    )
+    upcoming_rows = list(upcoming_result.all())
+    tasks = []
+    for turno, paciente, consultorio in todays_rows:
+        status_label, status_tone = _turno_status_label(turno)
+        provider_label, provider_tone = _turno_provider_label(turno)
+        requires_action = status_label in {"Borrador", "Esperando pago"} or not (turno.start_at and turno.end_at)
+        tasks.append(
+            {
+                "turno": turno,
+                "paciente": paciente,
+                "consultorio": consultorio,
+                "type_label": _turno_type_label(turno),
+                "status_label": status_label,
+                "status_tone": status_tone,
+                "provider_label": provider_label,
+                "provider_tone": provider_tone,
+                "requires_action": requires_action,
+                "has_incomplete_data": not bool(turno.start_at and turno.timezone and turno.provider),
+            }
+        )
+    operational_summary = {
+        "today_label": today_str,
+        "turnos_hoy": turnos_hoy or 0,
+        "virtuales_hoy": virtuales_hoy or 0,
+        "presenciales_hoy": presenciales_hoy or 0,
+        "conversaciones_pendientes": conversaciones_pendientes,
+        "proximos_turnos": len(upcoming_rows),
+    }
     return _template(
         request,
         "tenant/dashboard.html",
@@ -144,7 +280,18 @@ async def dashboard(
                 "consultorios": consultorios_total or 0,
                 "turnos": turnos_total or 0,
                 "conversaciones": conversaciones_abiertas,
-            }
+            },
+            "daily_kpis": {
+                "turnos_hoy": turnos_hoy or 0,
+                "proximos_turnos": len(upcoming_rows),
+                "virtuales_hoy": virtuales_hoy or 0,
+                "presenciales_hoy": presenciales_hoy or 0,
+                "pendientes": conversaciones_pendientes,
+            },
+            "today_rows": todays_rows[:8],
+            "upcoming_rows": upcoming_rows,
+            "tasks": tasks[:8],
+            "operational_summary": operational_summary,
         },
     )
 
@@ -661,7 +808,7 @@ async def turnos_list(
         select(Turno, Paciente, Consultorio)
         .join(Paciente, Turno.paciente_id == Paciente.id)
         .join(Consultorio, Turno.consultorio_id == Consultorio.id)
-        .where(Consultorio.tenant_id == user.tenant_id)
+        .where(Turno.tenant_id == user.tenant_id, Consultorio.tenant_id == user.tenant_id)
     )
     stmt = stmt.where(
         Turno.deleted_at.is_(None),
@@ -718,7 +865,11 @@ async def turnos_detail(
         .join(Paciente, Turno.paciente_id == Paciente.id)
         .join(Consultorio, Turno.consultorio_id == Consultorio.id)
         .join(Tenant, Consultorio.tenant_id == Tenant.id)
-        .where(Turno.id == turno_id, Consultorio.tenant_id == user.tenant_id)
+        .where(
+            Turno.id == turno_id,
+            Turno.tenant_id == user.tenant_id,
+            Consultorio.tenant_id == user.tenant_id,
+        )
     )
     stmt = stmt.where(
         Turno.deleted_at.is_(None),
@@ -732,99 +883,83 @@ async def turnos_detail(
     return _template(request, "tenant/turno_detail.html", {"row": row})
 
 
-async def conversation_states(
+async def _conversation_listing_context(
     request: Request,
-    user: CurrentUser = Depends(require_permission("conversation:read")),
-    session: AsyncSession = Depends(get_async_session),
-) -> Response:
-    selected_queue = (request.query_params.get("queue") or "all_pending").strip().lower()
-    selected_category = (request.query_params.get("category") or "").strip().upper()
+    session: AsyncSession,
+    *,
+    tenant_id: int | None,
+    scope_prefix: str,
+    show_tenant: bool,
+) -> dict:
+    legacy_queue = (request.query_params.get("queue") or "").strip().lower()
+    selected_status = (request.query_params.get("status") or "").strip().lower()
+    selected_category = _normalize_operational_category(request.query_params.get("category"))
+    if request.query_params.get("category") in (None, ""):
+        selected_category = ""
+    # Compatibilidad con filtros legacy del panel anterior.
+    if legacy_queue:
+        queue_to_status = {
+            "all_pending": "pending",
+            "finished": "resolved",
+        }
+        queue_to_category = {
+            "turno_presencial": "turno_presencial",
+            "turno_virtual": "turno_virtual",
+            "receta_orden": "receta_orden",
+            "otra_consulta": "otra_consulta",
+            "derivacion_humana": "derivacion_humana",
+        }
+        if not selected_status:
+            selected_status = queue_to_status.get(legacy_queue, "pending")
+        if not selected_category and legacy_queue in queue_to_category:
+            selected_category = queue_to_category[legacy_queue]
+    if selected_status not in {"pending", "resolved", "all"}:
+        selected_status = "pending"
     selected_subtype = (request.query_params.get("subtype") or "").strip().upper()
     media_only = (request.query_params.get("media_only") or "").strip() == "1"
     human_only = (request.query_params.get("human_only") or "").strip() == "1"
-    allowed_queues = {
-        "turno_presencial",
-        "turno_virtual",
-        "receta_orden",
-        "otra_consulta",
-        "all_pending",
-        "finished",
-    }
-    if selected_queue not in allowed_queues:
-        selected_queue = "all_pending"
-    allowed_categories = {
-        "",
-        ConversationCategory.PRESENTIAL_APPOINTMENT,
-        ConversationCategory.VIRTUAL_APPOINTMENT,
-        ConversationCategory.PRESCRIPTION_OR_ORDER,
-        ConversationCategory.OTHER_QUERY,
-        ConversationCategory.HUMAN_HANDOFF,
-    }
-    if selected_category not in allowed_categories:
-        selected_category = ""
+    time_window = (request.query_params.get("time_window") or "").strip().lower()
+    if time_window not in {"", "today", "last24h"}:
+        time_window = ""
+    start_date = (request.query_params.get("start_date") or "").strip()
+    end_date = (request.query_params.get("end_date") or "").strip()
+    tenant_filter = (request.query_params.get("tenant_id") or "").strip()
+    selected_tenant_id = int(tenant_filter) if show_tenant and tenant_filter.isdigit() else None
 
-    result = await session.execute(
-        select(EstadoConversacion)
-        .where(EstadoConversacion.tenant_id == user.tenant_id)
-        .order_by(EstadoConversacion.updated_at.desc())
-    )
-    states = list(result.scalars().all())
-    history_result = await session.execute(
-        select(ConversationHistory)
-        .where(ConversationHistory.tenant_id == user.tenant_id)
-        .order_by(ConversationHistory.resolved_at.desc(), ConversationHistory.id.desc())
-    )
-    history_states = list(history_result.scalars().all())
-    pacientes_result = await session.execute(
-        select(Paciente).where(
-            Paciente.tenant_id == user.tenant_id,
-            Paciente.deleted_at.is_(None),
-        )
-    )
-    pacientes = list(pacientes_result.scalars().all())
-    pacientes_by_phone = {_sanitize_phone(p.telefono): p for p in pacientes}
+    state_stmt = select(EstadoConversacion).order_by(EstadoConversacion.updated_at.desc())
+    history_stmt = select(ConversationHistory).order_by(ConversationHistory.resolved_at.desc(), ConversationHistory.id.desc())
+    paciente_stmt = select(Paciente).where(Paciente.deleted_at.is_(None))
+    tenant_stmt = select(Tenant).where(Tenant.deleted_at.is_(None))
+    if tenant_id is not None:
+        state_stmt = state_stmt.where(EstadoConversacion.tenant_id == tenant_id)
+        history_stmt = history_stmt.where(ConversationHistory.tenant_id == tenant_id)
+        paciente_stmt = paciente_stmt.where(Paciente.tenant_id == tenant_id)
+        tenant_stmt = tenant_stmt.where(Tenant.id == tenant_id)
+    elif selected_tenant_id is not None:
+        state_stmt = state_stmt.where(EstadoConversacion.tenant_id == selected_tenant_id)
+        history_stmt = history_stmt.where(ConversationHistory.tenant_id == selected_tenant_id)
+        paciente_stmt = paciente_stmt.where(Paciente.tenant_id == selected_tenant_id)
+        tenant_stmt = tenant_stmt.where(Tenant.id == selected_tenant_id)
+
+    states = list((await session.execute(state_stmt)).scalars().all())
+    history_states = list((await session.execute(history_stmt)).scalars().all())
+    pacientes = list((await session.execute(paciente_stmt)).scalars().all())
+    tenants = list((await session.execute(tenant_stmt)).scalars().all())
+
+    pacientes_by_phone = {(p.tenant_id, _sanitize_phone(p.telefono)): p for p in pacientes}
     pacientes_by_id = {p.id: p for p in pacientes}
+    tenants_by_id = {t.id: t for t in tenants}
 
-    pending_by_reason: dict[str, list[EstadoConversacion]] = {
-        "turno_presencial": [],
-        "turno_virtual": [],
-        "receta_orden": [],
-        "otra_consulta": [],
-    }
-    all_pending_states: list[EstadoConversacion] = []
-    finished_states: list[ConversationHistory] = history_states
-    active_states: list[EstadoConversacion] = []
-    active_cutoff = now_ba() - timedelta(minutes=30)
-    for state in states:
-        status = (state.status or "active").lower()
-        if status == "pending":
-            reason = (state.pending_reason or "otra_consulta").lower()
-            if reason not in pending_by_reason:
-                reason = "otra_consulta"
-            pending_by_reason[reason].append(state)
-            all_pending_states.append(state)
-        elif status == "finished":
-            # Finalized conversations are persisted in conversaciones_historial.
-            # Keep state row focused on the current active/pending context.
-            continue
-        else:
-            updated = state.updated_at
-            if updated is None:
-                continue
-            if updated.tzinfo is None:
-                updated = updated.replace(tzinfo=timezone.utc).astimezone(active_cutoff.tzinfo)
-            if updated >= active_cutoff:
-                active_states.append(state)
+    unresolved_states = [state for state in states if (state.status or "active").lower() != "finished"]
 
-    if selected_queue == "finished":
-        filtered_states = finished_states
-    elif selected_queue == "all_pending":
-        filtered_states = all_pending_states
-    else:
-        filtered_states = pending_by_reason.get(selected_queue, [])
-
-    def _match_filters(item) -> bool:
-        if selected_category and (getattr(item, "conversation_category", "") or "") != selected_category:
+    def _matches_common(item, *, resolved: bool) -> bool:
+        operational_category = _resolve_operational_category(
+            getattr(item, "operational_category", None),
+            getattr(item, "conversation_category", None),
+            getattr(item, "pending_reason", None),
+            bool(getattr(item, "requires_human_review", False)),
+        )
+        if selected_category and operational_category != selected_category:
             return False
         if selected_subtype and (getattr(item, "conversation_subtype", "") or "") != selected_subtype:
             return False
@@ -832,13 +967,108 @@ async def conversation_states(
             return False
         if human_only and not bool(getattr(item, "requires_human_review", False)):
             return False
+        time_value = getattr(item, "resolved_at", None) if resolved else getattr(item, "updated_at", None)
+        if not _within_operational_window(time_value, time_window, start_date, end_date):
+            return False
         return True
 
-    filtered_states = [state for state in filtered_states if _match_filters(state)]
+    filtered_current = [state for state in unresolved_states if _matches_common(state, resolved=False)]
+    filtered_history = [item for item in history_states if _matches_common(item, resolved=True)]
 
-    category_counts = {
-        key: len([s for s in all_pending_states if (s.conversation_category or "") == key])
-        for key in CATEGORY_LABELS.keys()
+    rows = []
+    if selected_status in {"pending", "all"}:
+        for state in filtered_current:
+            paciente = pacientes_by_phone.get((state.tenant_id, _sanitize_phone(state.telefono)))
+            operational_category = _resolve_operational_category(
+                state.operational_category,
+                state.conversation_category,
+                state.pending_reason,
+                bool(state.requires_human_review),
+            )
+            status_label, status_tone = _status_meta(state.status)
+            tenant = tenants_by_id.get(state.tenant_id)
+            rows.append(
+                {
+                    "source": "state",
+                    "telefono": state.telefono,
+                    "tenant_id": state.tenant_id,
+                    "tenant_nombre": tenant.nombre if tenant else "-",
+                    "updated_at": state.updated_at,
+                    "summary_text": state.pending_message or state.last_patient_message or "-",
+                    "pending_reason": state.pending_reason or "sin_clasificar",
+                    "pending_reason_label": OPERATIONAL_CATEGORY_LABELS.get(_normalize_operational_category(state.pending_reason), state.pending_reason or "-"),
+                    "has_media": bool(state.has_media),
+                    "requires_human_review": bool(state.requires_human_review),
+                    "paciente_nombre": f"{paciente.nombre} {paciente.apellido}".strip() if paciente else "-",
+                    "operational_category": operational_category,
+                    "operational_label": OPERATIONAL_CATEGORY_LABELS.get(operational_category, "Sin clasificar"),
+                    "operational_tone": _operational_tone(operational_category),
+                    "category_label": CATEGORY_LABELS.get(state.conversation_category or "", "-"),
+                    "subtype_label": SUBTYPE_LABELS.get(state.conversation_subtype or "", state.conversation_subtype or "-"),
+                    "whatsapp_link": _build_whatsapp_link(state.telefono),
+                    "detail_href": f"{scope_prefix}/conversation-states/{state.telefono}",
+                    "resolve_href": f"{scope_prefix}/conversation-states/{state.telefono}/resolve",
+                    "status_label": status_label,
+                    "status_tone": status_tone,
+                    "is_recent": _is_recent_interaction(state.updated_at),
+                    "is_stale": _is_stale_pending(state.updated_at, state.status),
+                }
+            )
+    if selected_status in {"resolved", "all"}:
+        for item in filtered_history:
+            paciente = pacientes_by_id.get(item.patient_id) if item.patient_id else pacientes_by_phone.get((item.tenant_id, _sanitize_phone(item.telefono)))
+            operational_category = _resolve_operational_category(
+                item.operational_category,
+                item.conversation_category,
+                item.pending_reason,
+                bool(item.requires_human_review),
+            )
+            tenant = tenants_by_id.get(item.tenant_id)
+            rows.append(
+                {
+                    "source": "history",
+                    "telefono": item.telefono,
+                    "tenant_id": item.tenant_id,
+                    "tenant_nombre": tenant.nombre if tenant else "-",
+                    "updated_at": item.resolved_at,
+                    "summary_text": item.pending_message or item.last_patient_message or "-",
+                    "pending_reason": item.pending_reason or "sin_clasificar",
+                    "pending_reason_label": OPERATIONAL_CATEGORY_LABELS.get(_normalize_operational_category(item.pending_reason), item.pending_reason or "-"),
+                    "has_media": bool(item.has_media),
+                    "requires_human_review": bool(item.requires_human_review),
+                    "paciente_nombre": f"{paciente.nombre} {paciente.apellido}".strip() if paciente else "-",
+                    "operational_category": operational_category,
+                    "operational_label": OPERATIONAL_CATEGORY_LABELS.get(operational_category, "Sin clasificar"),
+                    "operational_tone": _operational_tone(operational_category),
+                    "category_label": CATEGORY_LABELS.get(item.conversation_category or "", "-"),
+                    "subtype_label": SUBTYPE_LABELS.get(item.conversation_subtype or "", item.conversation_subtype or "-"),
+                    "whatsapp_link": _build_whatsapp_link(item.telefono),
+                    "detail_href": f"{scope_prefix}/conversation-states/history/{item.id}",
+                    "resolve_href": None,
+                    "status_label": "Resuelta",
+                    "status_tone": "success",
+                    "is_recent": _is_recent_interaction(item.resolved_at),
+                    "is_stale": False,
+                }
+            )
+
+    rows.sort(key=lambda item: item["updated_at"] or now_ba(), reverse=True)
+
+    unresolved_counts = {
+        key: len(
+            [
+                state
+                for state in unresolved_states
+                if _resolve_operational_category(
+                    state.operational_category,
+                    state.conversation_category,
+                    state.pending_reason,
+                    bool(state.requires_human_review),
+                )
+                == key
+            ]
+        )
+        for key in OPERATIONAL_CATEGORY_LABELS.keys()
     }
     subtype_values = sorted(
         {
@@ -851,8 +1081,6 @@ async def conversation_states(
         }
     )
 
-    from urllib.parse import urlencode
-
     base_filter_pairs = []
     if selected_category:
         base_filter_pairs.append(("category", selected_category))
@@ -862,98 +1090,64 @@ async def conversation_states(
         base_filter_pairs.append(("media_only", "1"))
     if human_only:
         base_filter_pairs.append(("human_only", "1"))
+    if time_window:
+        base_filter_pairs.append(("time_window", time_window))
+    if start_date:
+        base_filter_pairs.append(("start_date", start_date))
+    if end_date:
+        base_filter_pairs.append(("end_date", end_date))
+    if selected_tenant_id is not None:
+        base_filter_pairs.append(("tenant_id", str(selected_tenant_id)))
 
-    def _queue_url(queue: str) -> str:
-        params = [("queue", queue), *base_filter_pairs]
-        return f"/t/conversation-states?{urlencode(params)}"
+    def _status_url(value: str) -> str:
+        params = [("status", value), *base_filter_pairs]
+        return f"{scope_prefix}/conversation-states?{urlencode(params)}"
 
-    queue_urls = {queue: _queue_url(queue) for queue in allowed_queues}
+    status_urls = {value: _status_url(value) for value in {"pending", "resolved", "all"}}
+    kpis = {
+        "pending": len(unresolved_states),
+        "resolved": len(history_states),
+        "human": unresolved_counts["derivacion_humana"],
+        "presential": unresolved_counts["turno_presencial"],
+        "virtual": unresolved_counts["turno_virtual"],
+        "prescription": unresolved_counts["receta_orden"],
+    }
+    return {
+        "rows": rows,
+        "selected_status": selected_status,
+        "selected_category": selected_category,
+        "selected_subtype": selected_subtype,
+        "media_only": media_only,
+        "human_only": human_only,
+        "time_window": time_window,
+        "start_date": start_date,
+        "end_date": end_date,
+        "selected_tenant_id": selected_tenant_id,
+        "subtype_values": subtype_values,
+        "subtype_labels": SUBTYPE_LABELS,
+        "operational_category_labels": OPERATIONAL_CATEGORY_LABELS,
+        "counts": kpis,
+        "status_urls": status_urls,
+        "category_counts": unresolved_counts,
+        "show_tenant": show_tenant,
+        "tenants": tenants,
+        "scope_prefix": scope_prefix,
+    }
 
-    rows = []
-    if selected_queue == "finished":
-        for item in filtered_states:
-            paciente = pacientes_by_id.get(item.patient_id) if item.patient_id else None
-            if paciente is None:
-                paciente = pacientes_by_phone.get(_sanitize_phone(item.telefono))
-            rows.append(
-                {
-                    "is_history": True,
-                    "is_pending": False,
-                    "telefono": item.telefono,
-                    "updated_at": item.resolved_at,
-                    "pending_message": item.pending_message,
-                    "has_media": bool(item.has_media),
-                    "requires_human_review": bool(item.requires_human_review),
-                    "paciente_nombre": (
-                        f"{paciente.nombre} {paciente.apellido}".strip()
-                        if paciente is not None
-                        else "-"
-                    ),
-                    "category_label": CATEGORY_LABELS.get(item.conversation_category or "", "-"),
-                    "subtype_label": SUBTYPE_LABELS.get(
-                        item.conversation_subtype or "", item.conversation_subtype or "-"
-                    ),
-                    "whatsapp_link": _build_whatsapp_link(item.telefono),
-                    "detail_href": None,
-                    "resolve_href": None,
-                }
-            )
-    else:
-        for state in filtered_states:
-            paciente = pacientes_by_phone.get(_sanitize_phone(state.telefono))
-            rows.append(
-                {
-                    "is_history": False,
-                    "is_pending": (state.status or "active").lower() == "pending",
-                    "telefono": state.telefono,
-                    "updated_at": state.updated_at,
-                    "pending_message": state.pending_message,
-                    "has_media": bool(state.has_media),
-                    "requires_human_review": bool(state.requires_human_review),
-                    "paciente_nombre": (
-                        f"{paciente.nombre} {paciente.apellido}".strip()
-                        if paciente is not None
-                        else "-"
-                    ),
-                    "category_label": CATEGORY_LABELS.get(state.conversation_category or "", "-"),
-                    "subtype_label": SUBTYPE_LABELS.get(
-                        state.conversation_subtype or "", state.conversation_subtype or "-"
-                    ),
-                    "whatsapp_link": _build_whatsapp_link(state.telefono),
-                    "detail_href": f"/t/conversation-states/{state.telefono}",
-                    "resolve_href": f"/t/conversation-states/{state.telefono}/resolve",
-                }
-            )
 
-    return _template(
+async def conversation_states(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("conversation:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    context = await _conversation_listing_context(
         request,
-        "tenant/conversation_states.html",
-        {
-            "rows": rows,
-            "selected_queue": selected_queue,
-            "pending_states": all_pending_states,
-            "finished_states": finished_states,
-            "active_states": active_states,
-            "queue_urls": queue_urls,
-            "selected_category": selected_category,
-            "selected_subtype": selected_subtype,
-            "media_only": media_only,
-            "human_only": human_only,
-            "category_labels": CATEGORY_LABELS,
-            "subtype_labels": SUBTYPE_LABELS,
-            "category_counts": category_counts,
-            "subtype_values": subtype_values,
-            "counts": {
-                "pending": len(all_pending_states),
-                "finished": len(finished_states),
-                "active": len(active_states),
-                "turno_presencial": len(pending_by_reason["turno_presencial"]),
-                "turno_virtual": len(pending_by_reason["turno_virtual"]),
-                "receta_orden": len(pending_by_reason["receta_orden"]),
-                "otra_consulta": len(pending_by_reason["otra_consulta"]),
-            },
-        },
+        session,
+        tenant_id=user.tenant_id,
+        scope_prefix="/t",
+        show_tenant=False,
     )
+    return _template(request, "tenant/conversation_states.html", context)
 
 
 def _sanitize_phone(value: str | None) -> str:
@@ -982,6 +1176,133 @@ def _format_local_time(value: datetime | None) -> str:
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
     return current.astimezone(tz).strftime("%Y-%m-%d %H:%M")
+
+
+OPERATIONAL_CATEGORY_LABELS = {
+    "turno_presencial": "Turno presencial",
+    "turno_virtual": "Turno virtual",
+    "receta_orden": "Receta / orden",
+    "otra_consulta": "Otra consulta",
+    "derivacion_humana": "Derivacion humana",
+    "sin_clasificar": "Sin clasificar",
+}
+
+OPERATIONAL_FROM_CATEGORY = {
+    ConversationCategory.PRESENTIAL_APPOINTMENT: "turno_presencial",
+    ConversationCategory.VIRTUAL_APPOINTMENT: "turno_virtual",
+    ConversationCategory.PRESCRIPTION_OR_ORDER: "receta_orden",
+    ConversationCategory.OTHER_QUERY: "otra_consulta",
+    ConversationCategory.HUMAN_HANDOFF: "derivacion_humana",
+}
+
+
+def _normalize_operational_category(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    legacy_map = {
+        "presential_appointment": "turno_presencial",
+        "virtual_appointment": "turno_virtual",
+        "prescription_or_order": "receta_orden",
+        "other_query": "otra_consulta",
+        "human_handoff": "derivacion_humana",
+    }
+    if normalized in legacy_map:
+        return legacy_map[normalized]
+    return normalized if normalized in OPERATIONAL_CATEGORY_LABELS else "sin_clasificar"
+
+
+def _resolve_operational_category(
+    operational_category: str | None,
+    conversation_category: str | None,
+    pending_reason: str | None,
+    requires_human_review: bool = False,
+) -> str:
+    if operational_category and operational_category.strip().lower() in OPERATIONAL_CATEGORY_LABELS:
+        return operational_category.strip().lower()
+    pending = (pending_reason or "").strip().lower()
+    if pending in OPERATIONAL_CATEGORY_LABELS:
+        return pending
+    if pending == "humano":
+        return "derivacion_humana"
+    if conversation_category:
+        mapped = OPERATIONAL_FROM_CATEGORY.get(conversation_category)
+        if mapped:
+            return mapped
+    if requires_human_review:
+        return "derivacion_humana"
+    return "sin_clasificar"
+
+
+def _operational_tone(value: str) -> str:
+    return {
+        "turno_presencial": "success",
+        "turno_virtual": "info",
+        "receta_orden": "warning",
+        "otra_consulta": "neutral",
+        "derivacion_humana": "warning",
+        "sin_clasificar": "neutral",
+    }.get(value, "neutral")
+
+
+def _status_meta(status_value: str | None) -> tuple[str, str]:
+    status = (status_value or "active").strip().lower()
+    if status == "pending":
+        return "Pendiente", "warning"
+    if status == "finished":
+        return "Resuelta", "success"
+    return "Activa", "info"
+
+
+def _is_recent_interaction(value: datetime | None) -> bool:
+    if value is None:
+        return False
+    current = value
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current >= now_ba() - timedelta(hours=24)
+
+
+def _is_stale_pending(value: datetime | None, status: str | None) -> bool:
+    if (status or "").lower() != "pending" or value is None:
+        return False
+    current = value
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    return current < now_ba() - timedelta(hours=24)
+
+
+def _within_operational_window(
+    value: datetime | None,
+    time_window: str,
+    start_date: str,
+    end_date: str,
+) -> bool:
+    if value is None:
+        return False
+    current = value
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    local_now = now_ba()
+    if time_window == "today":
+        start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        return start <= current < end
+    if time_window == "last24h":
+        return current >= local_now - timedelta(hours=24)
+    if start_date:
+        try:
+            start = datetime.fromisoformat(start_date).replace(hour=0, minute=0, second=0, microsecond=0)
+            if current < start:
+                return False
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            end = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59, microsecond=999999)
+            if current > end:
+                return False
+        except ValueError:
+            pass
+    return True
 
 
 async def conversation_state_detail(
@@ -1017,15 +1338,73 @@ async def conversation_state_detail(
         request,
         "tenant/conversation_state_detail.html",
         {
-            "state": state,
+            "record": state,
+            "is_history": False,
             "paciente": paciente,
+            "tenant": await get_entity_or_404(session, Tenant, user.tenant_id),
             "contexto_pretty": contexto_pretty,
             "status": status,
             "category_label": CATEGORY_LABELS.get(state.conversation_category or "", "-"),
             "subtype_label": SUBTYPE_LABELS.get(
                 state.conversation_subtype or "", state.conversation_subtype or "-"
             ),
+            "operational_category": _resolve_operational_category(
+                state.operational_category,
+                state.conversation_category,
+                state.pending_reason,
+                bool(state.requires_human_review),
+            ),
+            "operational_labels": OPERATIONAL_CATEGORY_LABELS,
             "whatsapp_link": _build_whatsapp_link(state.telefono),
+            "scope_prefix": "/t",
+        },
+    )
+
+
+async def conversation_history_detail(
+    request: Request,
+    history_id: int,
+    user: CurrentUser = Depends(require_permission("conversation:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    history = await session.get(ConversationHistory, history_id)
+    if history is None or history.tenant_id != user.tenant_id:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+    paciente = None
+    if history.patient_id:
+        paciente = await session.get(Paciente, history.patient_id)
+    if paciente is None:
+        paciente_result = await session.execute(
+            select(Paciente).where(
+                Paciente.tenant_id == user.tenant_id,
+                Paciente.deleted_at.is_(None),
+            )
+        )
+        pacientes = list(paciente_result.scalars().all())
+        paciente = next((item for item in pacientes if _sanitize_phone(item.telefono) == _sanitize_phone(history.telefono)), None)
+    return _template(
+        request,
+        "tenant/conversation_state_detail.html",
+        {
+            "record": history,
+            "is_history": True,
+            "paciente": paciente,
+            "tenant": await get_entity_or_404(session, Tenant, user.tenant_id),
+            "contexto_pretty": json.dumps(history.contexto_json or {}, ensure_ascii=True, indent=2),
+            "status": "finished",
+            "category_label": CATEGORY_LABELS.get(history.conversation_category or "", "-"),
+            "subtype_label": SUBTYPE_LABELS.get(
+                history.conversation_subtype or "", history.conversation_subtype or "-"
+            ),
+            "operational_category": _resolve_operational_category(
+                history.operational_category,
+                history.conversation_category,
+                history.pending_reason,
+                bool(history.requires_human_review),
+            ),
+            "operational_labels": OPERATIONAL_CATEGORY_LABELS,
+            "whatsapp_link": _build_whatsapp_link(history.telefono),
+            "scope_prefix": "/t",
         },
     )
 
@@ -1060,7 +1439,60 @@ async def conversation_state_resolve(
             },
         )
     add_flash(request, "success", "Conversacion marcada como finalizada")
-    return RedirectResponse("/t/conversation-states?queue=finished", status_code=303)
+    return RedirectResponse("/t/conversation-states?status=resolved", status_code=303)
+
+
+async def conversation_state_review_update(
+    request: Request,
+    telefono: str,
+    operational_category: str = Form(""),
+    manual_note: str = Form(""),
+    status_action: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("conversation:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    repo = ConversacionRepository(session)
+    operational_category = _normalize_operational_category(operational_category)
+    async with session.begin_nested():
+        state = await repo.update_operational_review(
+            user.tenant_id,
+            telefono,
+            operational_category=operational_category,
+            manual_note=(manual_note or "").strip() or None,
+        )
+        if state is None:
+            raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+        if status_action == "pending":
+            state = await repo.mark_pending_manual(user.tenant_id, telefono)
+            audit_action = "conversation_marked_pending"
+        elif status_action == "resolved":
+            state = await repo.mark_resolved(
+                user.tenant_id,
+                telefono,
+                resolved_by=user.id,
+                close_reason="manual_review_resolve",
+            )
+            audit_action = "conversation_resolved"
+        else:
+            audit_action = "conversation_review_updated"
+        await audit_log(
+            session,
+            request,
+            user,
+            action=audit_action,
+            entity="conversation_state",
+            metadata={
+                "telefono": telefono,
+                "tenant_id": user.tenant_id,
+                "operational_category": operational_category,
+                "manual_note": (manual_note or "").strip() or None,
+                "status_action": status_action or None,
+            },
+        )
+    add_flash(request, "success", "Revision de conversacion actualizada")
+    return RedirectResponse(f"/t/conversation-states/{telefono}", status_code=303)
 
 
 async def settings_get(
@@ -1547,12 +1979,17 @@ async def appointments_list(
     date_str = request.query_params.get("date", "").strip()
     status_filter = request.query_params.get("status", "").strip()
     consultorio_id = request.query_params.get("consultorio_id", "").strip()
+    date_str, start, end = _selected_day(date_str)
 
     stmt = (
         select(Turno, Paciente, Consultorio)
         .join(Paciente, Turno.paciente_id == Paciente.id)
         .join(Consultorio, Turno.consultorio_id == Consultorio.id)
-        .where(Consultorio.tenant_id == user.tenant_id, Turno.deleted_at.is_(None))
+        .where(
+            Turno.tenant_id == user.tenant_id,
+            Consultorio.tenant_id == user.tenant_id,
+            Turno.deleted_at.is_(None),
+        )
     )
     if status_filter:
         try:
@@ -1565,13 +2002,7 @@ async def appointments_list(
         except ValueError:
             consultorio_id = ""
     if date_str:
-        try:
-            parsed = datetime.fromisoformat(date_str)
-            start = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
-            end = start + timedelta(days=1)
-            stmt = stmt.where(Turno.fecha_hora >= start, Turno.fecha_hora < end)
-        except ValueError:
-            date_str = ""
+        stmt = stmt.where(Turno.fecha_hora >= start, Turno.fecha_hora < end)
 
     result = await session.execute(stmt.order_by(Turno.fecha_hora.desc()))
     rows = list(result.all())
@@ -1587,6 +2018,11 @@ async def appointments_list(
         .scalars()
         .all()
     )
+    daily_summary = {
+        "count": len(rows),
+        "virtuales": sum(1 for turno, _, _ in rows if _turno_type_label(turno) == "Virtual"),
+        "presenciales": sum(1 for turno, _, _ in rows if _turno_type_label(turno) == "Presencial"),
+    }
     return _template(
         request,
         "tenant/appointments_list.html",
@@ -1596,6 +2032,7 @@ async def appointments_list(
             "status_filter": status_filter,
             "consultorio_id": consultorio_id,
             "date": date_str,
+            "daily_summary": daily_summary,
         },
     )
 
@@ -1607,16 +2044,30 @@ async def appointment_detail(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     stmt = (
-        select(Turno, Paciente, Consultorio)
+        select(Turno, Paciente, Consultorio, Tenant)
         .join(Paciente, Turno.paciente_id == Paciente.id)
         .join(Consultorio, Turno.consultorio_id == Consultorio.id)
-        .where(Turno.id == turno_id, Consultorio.tenant_id == user.tenant_id)
+        .join(Tenant, Turno.tenant_id == Tenant.id)
+        .where(
+            Turno.id == turno_id,
+            Turno.tenant_id == user.tenant_id,
+            Consultorio.tenant_id == user.tenant_id,
+        )
     )
     result = await session.execute(stmt)
     row = result.first()
     if row is None:
         raise HTTPException(status_code=404, detail="Turno no encontrado")
-    return _template(request, "tenant/appointment_detail.html", {"row": row})
+    return _template(
+        request,
+        "tenant/appointment_detail.html",
+        {
+            "row": row,
+            "status_meta": _turno_status_label(row[0]),
+            "provider_meta": _turno_provider_label(row[0]),
+            "type_label": _turno_type_label(row[0]),
+        },
+    )
 
 
 async def appointment_cancel(
@@ -1631,7 +2082,11 @@ async def appointment_cancel(
         select(Turno, Consultorio, Tenant)
         .join(Consultorio, Turno.consultorio_id == Consultorio.id)
         .join(Tenant, Consultorio.tenant_id == Tenant.id)
-        .where(Turno.id == turno_id, Consultorio.tenant_id == user.tenant_id)
+        .where(
+            Turno.id == turno_id,
+            Turno.tenant_id == user.tenant_id,
+            Consultorio.tenant_id == user.tenant_id,
+        )
     )
     result = await session.execute(stmt)
     row = result.first()
@@ -1652,10 +2107,15 @@ async def appointment_resend(
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
     stmt = (
-        select(Turno, Paciente, Consultorio)
+        select(Turno, Paciente, Consultorio, Tenant)
         .join(Paciente, Turno.paciente_id == Paciente.id)
         .join(Consultorio, Turno.consultorio_id == Consultorio.id)
-        .where(Turno.id == turno_id, Consultorio.tenant_id == user.tenant_id)
+        .join(Tenant, Consultorio.tenant_id == Tenant.id)
+        .where(
+            Turno.id == turno_id,
+            Turno.tenant_id == user.tenant_id,
+            Consultorio.tenant_id == user.tenant_id,
+        )
     )
     result = await session.execute(stmt)
     row = result.first()

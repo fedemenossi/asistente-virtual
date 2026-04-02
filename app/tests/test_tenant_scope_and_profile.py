@@ -85,6 +85,23 @@ def test_tenant_appointments_are_isolated(client, db_session):
     assert detail.status_code == 404
 
 
+def test_turno_keeps_direct_tenant_id(client, db_session):
+    data = _setup_two_tenants(db_session)
+    _create_users(db_session, data["tenant_1"], data["tenant_2"])
+
+    async def _fetch():
+        from app.models.turno import Turno
+
+        async with db_session() as session:
+            turno_1 = await session.get(Turno, data["turno_1"])
+            turno_2 = await session.get(Turno, data["turno_2"])
+            return turno_1, turno_2
+
+    turno_1, turno_2 = asyncio.run(_fetch())
+    assert turno_1 is not None and turno_1.tenant_id == data["tenant_1"]
+    assert turno_2 is not None and turno_2.tenant_id == data["tenant_2"]
+
+
 def test_super_admin_sees_all_payments_and_appointments(client, db_session):
     data = _setup_two_tenants(db_session)
     _create_users(db_session, data["tenant_1"], data["tenant_2"])

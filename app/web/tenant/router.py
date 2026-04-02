@@ -165,8 +165,21 @@ router.add_api_route(
     dependencies=[Depends(require_feature("conversaciones"))],
 )
 router.add_api_route(
+    "/conversation-states/history/{history_id}",
+    views.conversation_history_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("conversaciones"))],
+)
+router.add_api_route(
     "/conversation-states/{telefono}/resolve",
     views.conversation_state_resolve,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("conversaciones"))],
+)
+router.add_api_route(
+    "/conversation-states/{telefono}/review",
+    views.conversation_state_review_update,
     methods=["POST"],
     dependencies=[Depends(require_feature("conversaciones"))],
 )

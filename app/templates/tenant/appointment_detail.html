@@ -8,11 +8,15 @@
   {% set turno = row[0] %}
   {% set paciente = row[1] %}
   {% set consultorio = row[2] %}
-  {% set status = turno.status.value if turno.status is not none else turno.estado %}
+  {% set tenant = row[3] %}
+  {% set status_label = status_meta[0] %}
+  {% set status_tone = status_meta[1] %}
+  {% set provider_label = provider_meta[0] %}
+  {% set provider_tone = provider_meta[1] %}
 
   <div class="mb-6">
     <h1 class="text-2xl font-semibold text-slate-900">Turno #{{ turno.id }}</h1>
-    <p class="text-sm text-slate-600">Detalle del turno.</p>
+    <p class="text-sm text-slate-600">Detalle operativo del turno.</p>
   </div>
 
   <div class="card p-6 space-y-4">
@@ -22,25 +26,37 @@
         <p class="text-sm font-medium text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</p>
       </div>
       <div>
+        <p class="text-xs text-slate-500">Tenant</p>
+        <p class="text-sm font-medium text-slate-900">{{ tenant.nombre }}</p>
+      </div>
+      <div>
         <p class="text-xs text-slate-500">Consultorio</p>
         <p class="text-sm font-medium text-slate-900">{{ consultorio.nombre }}</p>
       </div>
       <div>
-        <p class="text-xs text-slate-500">Fecha</p>
+        <p class="text-xs text-slate-500">Fecha y hora</p>
         {% set fecha = turno.start_at if turno.start_at else turno.fecha_hora %}
         <p class="text-sm font-medium text-slate-900">{{ fecha|format_ba('%Y-%m-%d %H:%M') }}</p>
       </div>
       <div>
+        <p class="text-xs text-slate-500">Tipo</p>
+        {{ badge(type_label, "info" if type_label == "Virtual" else "success") }}
+      </div>
+      <div>
         <p class="text-xs text-slate-500">Estado</p>
-        {% if status in ['confirmed', 'confirmado'] %}
-          {{ badge("Confirmado", "success") }}
-        {% elif status in ['waiting_payment'] %}
-          {{ badge("Esperando pago", "neutral") }}
-        {% elif status in ['cancelled', 'cancelado'] %}
-          {{ badge("Cancelado", "warning") }}
-        {% else %}
-          {{ badge("Borrador", "neutral") }}
-        {% endif %}
+        {{ badge(status_label, status_tone) }}
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Proveedor</p>
+        {{ badge(provider_label, provider_tone) }}
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">External ID</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.external_id or turno.external_event_id or "-" }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">External status</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.external_status or "-" }}</p>
       </div>
       <div>
         <p class="text-xs text-slate-500">Calendar ID</p>
@@ -57,6 +73,30 @@
         {% else %}
           <p class="text-sm font-medium text-slate-900">-</p>
         {% endif %}
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Timezone</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.timezone or "-" }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Creado</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.created_at|format_ba('%Y-%m-%d %H:%M') if turno.created_at else "-" }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Actualizado</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.updated_at|format_ba('%Y-%m-%d %H:%M') if turno.updated_at else "-" }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Cancelado</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.cancelled_at|format_ba('%Y-%m-%d %H:%M') if turno.cancelled_at else "-" }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Motivo de cancelacion</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.cancellation_reason or "-" }}</p>
+      </div>
+      <div class="md:col-span-2">
+        <p class="text-xs text-slate-500">Notas</p>
+        <p class="text-sm font-medium text-slate-900">{{ turno.notes or "-" }}</p>
       </div>
     </div>
     <div class="flex flex-wrap gap-3">

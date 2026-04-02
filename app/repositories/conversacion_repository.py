@@ -35,6 +35,8 @@ class ConversacionRepository:
         has_media: bool | None = None,
         last_patient_message: str | None = None,
         media_metadata: list[dict] | None = None,
+        operational_category: str | None = None,
+        manual_note: str | None = None,
     ) -> EstadoConversacion:
         safe_context = dict(contexto_json or {})
         state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
@@ -62,6 +64,8 @@ class ConversacionRepository:
                     state.resolved_by = None
                     state.conversation_category = None
                     state.conversation_subtype = None
+                    state.operational_category = None
+                    state.manual_note = None
                     state.requires_human_review = False
                     state.has_media = False
                     state.last_patient_message = None
@@ -71,6 +75,10 @@ class ConversacionRepository:
             state.conversation_category = conversation_category
         if conversation_subtype is not None:
             state.conversation_subtype = conversation_subtype
+        if operational_category is not None:
+            state.operational_category = operational_category
+        if manual_note is not None:
+            state.manual_note = manual_note
         if requires_human_review is not None:
             state.requires_human_review = requires_human_review
         if has_media is not None:
@@ -102,6 +110,8 @@ class ConversacionRepository:
         has_media: bool = False,
         last_patient_message: str | None = None,
         media_metadata: list[dict] | None = None,
+        operational_category: str | None = None,
+        manual_note: str | None = None,
     ) -> EstadoConversacion:
         state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
         if state is None:
@@ -117,6 +127,10 @@ class ConversacionRepository:
         state.pending_message = message
         state.conversation_category = category
         state.conversation_subtype = subtype
+        if operational_category is not None:
+            state.operational_category = operational_category
+        if manual_note is not None:
+            state.manual_note = manual_note
         state.requires_human_review = requires_human_review
         state.has_media = has_media
         if last_patient_message is not None:
@@ -127,6 +141,41 @@ class ConversacionRepository:
         state.pending_at = now_ba()
         state.resolved_at = None
         state.resolved_by = None
+        await self._session.flush()
+        return state
+
+    async def mark_pending_manual(
+        self,
+        tenant_id: int,
+        telefono: str,
+        pending_reason: str | None = None,
+    ) -> EstadoConversacion | None:
+        state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
+        if state is None:
+            return None
+        state.status = "pending"
+        state.pending_reason = pending_reason or state.pending_reason or "sin_clasificar"
+        state.pending_at = state.pending_at or now_ba()
+        state.resolved_at = None
+        state.resolved_by = None
+        await self._session.flush()
+        return state
+
+    async def update_operational_review(
+        self,
+        tenant_id: int,
+        telefono: str,
+        *,
+        operational_category: str | None = None,
+        manual_note: str | None = None,
+    ) -> EstadoConversacion | None:
+        state = await self.get_state(tenant_id=tenant_id, telefono=telefono)
+        if state is None:
+            return None
+        if operational_category is not None:
+            state.operational_category = operational_category
+        if manual_note is not None:
+            state.manual_note = manual_note
         await self._session.flush()
         return state
 
@@ -155,6 +204,8 @@ class ConversacionRepository:
                 pending_message=state.pending_message,
                 conversation_category=state.conversation_category,
                 conversation_subtype=state.conversation_subtype,
+                operational_category=state.operational_category,
+                manual_note=state.manual_note,
                 requires_human_review=bool(state.requires_human_review),
                 has_media=bool(state.has_media),
                 last_patient_message=state.last_patient_message,

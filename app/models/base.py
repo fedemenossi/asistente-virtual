@@ -18,6 +18,7 @@ def utc_now() -> datetime:
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(default=utc_now, onupdate=utc_now)
 
 
 class SoftDeleteMixin:

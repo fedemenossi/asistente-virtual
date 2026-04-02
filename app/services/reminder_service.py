@@ -55,6 +55,10 @@ class ReminderService:
                     paciente.email, "Recordatorio de turno", message
                 )
             turno.reminder_sent_at = now
+            if hours_before >= 20:
+                turno.reminder_24h_sent = True
+            elif hours_before <= 3:
+                turno.reminder_2h_sent = True
             await create_notification(
                 self._session,
                 title="Recordatorio enviado",

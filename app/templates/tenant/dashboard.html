@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/card.html" import card %}
+{% from "layout/partials/components/badge.html" import badge %}
 
 {% set title = "Dashboard" %}
 {% set breadcrumb = "Tenant" %}
@@ -22,6 +23,130 @@
     {% call card("Conversaciones") %}
       <div class="text-3xl font-semibold text-slate-900">{{ kpis.conversaciones }}</div>
     {% endcall %}
+  </div>
+
+  <div class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+    {% call card("Turnos de hoy") %}
+      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.turnos_hoy }}</div>
+    {% endcall %}
+    {% call card("Proximos") %}
+      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.proximos_turnos }}</div>
+    {% endcall %}
+    {% call card("Virtuales hoy") %}
+      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.virtuales_hoy }}</div>
+    {% endcall %}
+    {% call card("Presenciales hoy") %}
+      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.presenciales_hoy }}</div>
+    {% endcall %}
+    {% call card("Pendientes") %}
+      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.pendientes }}</div>
+    {% endcall %}
+  </div>
+
+  <div class="mt-6 grid gap-6 xl:grid-cols-[1.2fr,0.8fr]">
+    <div class="space-y-6">
+      <div class="card">
+        <div class="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <p class="text-sm text-slate-600">Resumen operativo del dia</p>
+            <h2 class="text-xl font-semibold text-slate-900">Hoy {{ operational_summary.today_label }}</h2>
+          </div>
+          <a class="btn btn-secondary" href="/t/appointments?date={{ operational_summary.today_label }}">Ver agenda</a>
+        </div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-xs uppercase tracking-wide text-slate-500">Turnos de hoy</p>
+            <p class="mt-2 text-2xl font-semibold text-slate-900">{{ operational_summary.turnos_hoy }}</p>
+          </div>
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <p class="text-xs uppercase tracking-wide text-slate-500">Conversaciones pendientes</p>
+            <p class="mt-2 text-2xl font-semibold text-slate-900">{{ operational_summary.conversaciones_pendientes }}</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="mb-4">
+          <p class="text-sm text-slate-600">Lista de tareas</p>
+          <h2 class="text-xl font-semibold text-slate-900">Tareas del dia</h2>
+        </div>
+        {% if tasks %}
+          <div class="space-y-3">
+            {% for item in tasks %}
+              <div class="flex flex-col gap-3 rounded-2xl border border-slate-200 p-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                  <p class="text-sm font-semibold text-slate-900">{{ item.paciente.nombre }} {{ item.paciente.apellido }}</p>
+                  <p class="text-sm text-slate-600">{{ item.consultorio.nombre }} · {{ (item.turno.start_at or item.turno.fecha_hora)|format_ba('%H:%M') }}</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  {{ badge(item.type_label, "info" if item.type_label == "Virtual" else "success") }}
+                  {{ badge(item.status_label, item.status_tone) }}
+                  {{ badge(item.provider_label, item.provider_tone) }}
+                  {% if item.requires_action %}
+                    {{ badge("Requiere accion", "warning") }}
+                  {% endif %}
+                  {% if item.has_incomplete_data %}
+                    {{ badge("Datos incompletos", "warning") }}
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-slate-600">No hay tareas operativas para hoy.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="space-y-6">
+      <div class="card">
+        <div class="mb-4">
+          <p class="text-sm text-slate-600">Agenda del dia</p>
+          <h2 class="text-xl font-semibold text-slate-900">Turnos de hoy</h2>
+        </div>
+        {% if today_rows %}
+          <div class="space-y-3">
+            {% for row in today_rows %}
+              {% set turno = row[0] %}
+              {% set paciente = row[1] %}
+              {% set consultorio = row[2] %}
+              <a href="/t/appointments/{{ turno.id }}" class="block rounded-2xl border border-slate-200 p-4 hover:bg-slate-50">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <p class="text-sm font-semibold text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</p>
+                    <p class="text-sm text-slate-600">{{ consultorio.nombre }}</p>
+                  </div>
+                  <p class="text-sm font-semibold text-slate-900">{{ (turno.start_at or turno.fecha_hora)|format_ba('%H:%M') }}</p>
+                </div>
+              </a>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-slate-600">No hay turnos cargados para hoy.</p>
+        {% endif %}
+      </div>
+
+      <div class="card">
+        <div class="mb-4">
+          <p class="text-sm text-slate-600">Proximos turnos</p>
+          <h2 class="text-xl font-semibold text-slate-900">Siguientes atenciones</h2>
+        </div>
+        {% if upcoming_rows %}
+          <div class="space-y-3">
+            {% for row in upcoming_rows %}
+              {% set turno = row[0] %}
+              {% set paciente = row[1] %}
+              <div class="rounded-2xl border border-slate-200 p-4">
+                <p class="text-sm font-semibold text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</p>
+                <p class="text-sm text-slate-600">{{ (turno.start_at or turno.fecha_hora)|format_ba('%d/%m %H:%M') }}</p>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-slate-600">No hay proximos turnos.</p>
+        {% endif %}
+      </div>
+    </div>
   </div>
 {% endblock %}
 

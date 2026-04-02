@@ -20,6 +20,8 @@ class EstadoConversacion(Base):
     pending_message: Mapped[str | None] = mapped_column(String(500))
     conversation_category: Mapped[str | None] = mapped_column(String(64))
     conversation_subtype: Mapped[str | None] = mapped_column(String(64))
+    operational_category: Mapped[str | None] = mapped_column(String(32))
+    manual_note: Mapped[str | None] = mapped_column(String(1000))
     requires_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
     has_media: Mapped[bool] = mapped_column(Boolean, default=False)
     last_patient_message: Mapped[str | None] = mapped_column(String(1000))

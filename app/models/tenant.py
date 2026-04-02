@@ -26,4 +26,5 @@ class Tenant(Base, TimestampMixin, SoftDeleteMixin):
 
     consultorios = relationship("Consultorio", back_populates="tenant")
     pacientes = relationship("Paciente", back_populates="tenant")
+    turnos = relationship("Turno", back_populates="tenant")
     payments = relationship("Payment", back_populates="tenant")

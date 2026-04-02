@@ -56,16 +56,38 @@ router.add_api_route(
     methods=["GET"],
     response_class=HTMLResponse,
 )
-router.add_api_route("/payments", views.payments_list, methods=["GET"], response_class=HTMLResponse)
 router.add_api_route(
-    "/payments/{payment_id}",
-    views.payment_detail,
+    "/conversation-states",
+    views.conversation_states,
     methods=["GET"],
     response_class=HTMLResponse,
 )
 router.add_api_route(
-    "/settings/payments",
-    views.payments_settings,
+    "/conversation-states/{tenant_id}/{telefono}",
+    views.conversation_state_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/conversation-states/history/{history_id}",
+    views.conversation_history_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/conversation-states/{tenant_id}/{telefono}/resolve",
+    views.conversation_state_resolve,
+    methods=["POST"],
+)
+router.add_api_route(
+    "/conversation-states/{tenant_id}/{telefono}/review",
+    views.conversation_state_review_update,
+    methods=["POST"],
+)
+router.add_api_route("/payments", views.payments_list, methods=["GET"], response_class=HTMLResponse)
+router.add_api_route(
+    "/payments/{payment_id}",
+    views.payment_detail,
     methods=["GET"],
     response_class=HTMLResponse,
 )

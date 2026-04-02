@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import re
 from urllib.parse import urlencode
@@ -16,7 +17,7 @@ from app.core.csrf import validate_csrf
 from app.core.db import get_async_session
 from app.core.features import FEATURE_REGISTRY
 from app.core.notifications import mark_notification_read
-from app.core.security import CurrentUser, hash_password, require_permission
+from app.core.security import CurrentUser, hash_password, require_permission, require_super_admin
 from app.core.templates import base_context, templates
 from app.core.timezone import now_ba
 from app.core.ui import add_flash
@@ -24,6 +25,7 @@ from app.core.tenancy import get_entity_or_404, set_current_tenant_id
 from app.models.audit_log import AuditLog
 from app.models.consultorio import Consultorio
 from app.models.conversacion import EstadoConversacion
+from app.models.conversation_history import ConversationHistory
 from app.models.paciente import Paciente
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
@@ -38,6 +40,7 @@ from app.repositories.tenant_repository import TenantRepository
 from app.services.conversation_service import ConversationService
 from app.services.tenant_feature_service import TenantFeatureService
 from app.services.tenant_service import TenantService
+from app.web.tenant import views as tenant_conversation_views
 
 
 def _template(request: Request, name: str, context: dict) -> Response:
@@ -905,17 +908,6 @@ async def payment_detail(
     )
 
 
-async def payments_settings(
-    request: Request,
-    user: CurrentUser = Depends(require_permission("tenant:read")),
-) -> Response:
-    return _template(
-        request,
-        "admin/settings_payments.html",
-        {},
-    )
-
-
 async def notifications_settings(
     request: Request,
     user: CurrentUser = Depends(require_permission("tenant:read")),
@@ -1190,6 +1182,198 @@ async def appointments_list(
             "date": date_str,
         },
     )
+
+
+async def conversation_states(
+    request: Request,
+    user: CurrentUser = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    context = await tenant_conversation_views._conversation_listing_context(
+        request,
+        session,
+        tenant_id=None,
+        scope_prefix="/admin",
+        show_tenant=True,
+    )
+    return _template(request, "tenant/conversation_states.html", context)
+
+
+async def conversation_state_detail(
+    request: Request,
+    tenant_id: int,
+    telefono: str,
+    user: CurrentUser = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    result = await session.execute(
+        select(EstadoConversacion).where(
+            EstadoConversacion.tenant_id == tenant_id,
+            EstadoConversacion.telefono == telefono,
+        )
+    )
+    state = result.scalar_one_or_none()
+    if state is None:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+    paciente_result = await session.execute(
+        select(Paciente).where(Paciente.tenant_id == tenant_id, Paciente.deleted_at.is_(None))
+    )
+    pacientes = list(paciente_result.scalars().all())
+    paciente = next(
+        (item for item in pacientes if tenant_conversation_views._sanitize_phone(item.telefono) == tenant_conversation_views._sanitize_phone(state.telefono)),
+        None,
+    )
+    tenant = await get_entity_or_404(session, Tenant, tenant_id)
+    return _template(
+        request,
+        "tenant/conversation_state_detail.html",
+        {
+            "record": state,
+            "is_history": False,
+            "paciente": paciente,
+            "tenant": tenant,
+            "contexto_pretty": json.dumps(state.contexto_json or {}, ensure_ascii=True, indent=2),
+            "status": (state.status or "active").lower(),
+            "category_label": tenant_conversation_views.CATEGORY_LABELS.get(state.conversation_category or "", "-"),
+            "subtype_label": tenant_conversation_views.SUBTYPE_LABELS.get(
+                state.conversation_subtype or "", state.conversation_subtype or "-"
+            ),
+            "operational_category": tenant_conversation_views._resolve_operational_category(
+                state.operational_category,
+                state.conversation_category,
+                state.pending_reason,
+                bool(state.requires_human_review),
+            ),
+            "operational_labels": tenant_conversation_views.OPERATIONAL_CATEGORY_LABELS,
+            "whatsapp_link": tenant_conversation_views._build_whatsapp_link(state.telefono),
+            "scope_prefix": "/admin",
+        },
+    )
+
+
+async def conversation_history_detail(
+    request: Request,
+    history_id: int,
+    user: CurrentUser = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    history = await session.get(ConversationHistory, history_id)
+    if history is None:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+    paciente = await session.get(Paciente, history.patient_id) if history.patient_id else None
+    if paciente is None:
+        paciente_result = await session.execute(
+            select(Paciente).where(Paciente.tenant_id == history.tenant_id, Paciente.deleted_at.is_(None))
+        )
+        pacientes = list(paciente_result.scalars().all())
+        paciente = next(
+            (item for item in pacientes if tenant_conversation_views._sanitize_phone(item.telefono) == tenant_conversation_views._sanitize_phone(history.telefono)),
+            None,
+        )
+    tenant = await get_entity_or_404(session, Tenant, history.tenant_id)
+    return _template(
+        request,
+        "tenant/conversation_state_detail.html",
+        {
+            "record": history,
+            "is_history": True,
+            "paciente": paciente,
+            "tenant": tenant,
+            "contexto_pretty": json.dumps(history.contexto_json or {}, ensure_ascii=True, indent=2),
+            "status": "finished",
+            "category_label": tenant_conversation_views.CATEGORY_LABELS.get(history.conversation_category or "", "-"),
+            "subtype_label": tenant_conversation_views.SUBTYPE_LABELS.get(
+                history.conversation_subtype or "", history.conversation_subtype or "-"
+            ),
+            "operational_category": tenant_conversation_views._resolve_operational_category(
+                history.operational_category,
+                history.conversation_category,
+                history.pending_reason,
+                bool(history.requires_human_review),
+            ),
+            "operational_labels": tenant_conversation_views.OPERATIONAL_CATEGORY_LABELS,
+            "whatsapp_link": tenant_conversation_views._build_whatsapp_link(history.telefono),
+            "scope_prefix": "/admin",
+        },
+    )
+
+
+async def conversation_state_resolve(
+    request: Request,
+    tenant_id: int,
+    telefono: str,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    repo = ConversacionRepository(session)
+    async with session.begin_nested():
+        state = await repo.mark_resolved(
+            tenant_id,
+            telefono,
+            resolved_by=user.id,
+            close_reason="admin_manual_resolve",
+        )
+        await audit_log(
+            session,
+            request,
+            user,
+            action="conversation_resolved",
+            entity="conversation_state",
+            metadata={"telefono": telefono, "tenant_id": tenant_id, "pending_reason": getattr(state, "pending_reason", None)},
+        )
+    add_flash(request, "success", "Conversacion marcada como finalizada")
+    return RedirectResponse("/admin/conversation-states?status=resolved", status_code=303)
+
+
+async def conversation_state_review_update(
+    request: Request,
+    tenant_id: int,
+    telefono: str,
+    operational_category: str = Form(""),
+    manual_note: str = Form(""),
+    status_action: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    repo = ConversacionRepository(session)
+    operational_category = tenant_conversation_views._normalize_operational_category(operational_category)
+    async with session.begin_nested():
+        state = await repo.update_operational_review(
+            tenant_id,
+            telefono,
+            operational_category=operational_category,
+            manual_note=(manual_note or "").strip() or None,
+        )
+        if state is None:
+            raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+        if status_action == "pending":
+            await repo.mark_pending_manual(tenant_id, telefono)
+            action = "conversation_marked_pending"
+        elif status_action == "resolved":
+            await repo.mark_resolved(tenant_id, telefono, resolved_by=user.id, close_reason="admin_review_resolve")
+            action = "conversation_resolved"
+        else:
+            action = "conversation_review_updated"
+        await audit_log(
+            session,
+            request,
+            user,
+            action=action,
+            entity="conversation_state",
+            metadata={
+                "telefono": telefono,
+                "tenant_id": tenant_id,
+                "operational_category": operational_category,
+                "manual_note": (manual_note or "").strip() or None,
+                "status_action": status_action or None,
+            },
+        )
+    add_flash(request, "success", "Revision de conversacion actualizada")
+    return RedirectResponse(f"/admin/conversation-states/{tenant_id}/{telefono}", status_code=303)
 
 
 async def tenant_features_list(

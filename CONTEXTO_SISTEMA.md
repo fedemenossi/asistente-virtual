@@ -283,11 +283,21 @@ Reglas:
   - intenta reservar en Cabildo
   - refleja turno local en DB
   - manejo de errores + audit.
+- Virtual:
+  - la infraestructura de turnos local + sincronizacion Google existe en `AppointmentService` / `CalendarService`
+  - pero no todo pedido conversacional por WhatsApp dispara reserva automatica; parte del manejo sigue en bandeja operativa/manual
 
 Conversaciones pendientes/finalizadas:
 - Bandeja en `/t/conversation-states`.
+- Vista tenant y vista global super admin (`/admin/conversation-states`).
+- Filtros operativos por estado, categoria, subtipo, adjuntos y ventana temporal.
 - Detalle incluye link para responder por WhatsApp.
-- Accion manual para resolver y pasar a `finished`.
+- Acciones manuales:
+  - marcar resuelta
+  - volver a pendiente
+  - cambiar categoria operativa
+  - guardar nota interna breve
+- El historial cerrado queda en `conversaciones_historial` y no se elimina.
 
 ## 9) Integracion WhatsApp por tenant (Twilio)
 ### Inbound

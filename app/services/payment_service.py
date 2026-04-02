@@ -195,12 +195,15 @@ class PaymentService:
                     else:
                         turno.estado = EstadoTurno.CONFIRMADO
                         turno.status = AppointmentStatus.CONFIRMED
+                        turno.external_status = turno.external_status or "confirmed"
                 elif new_status in {PaymentStatus.REJECTED, PaymentStatus.CANCELLED}:
                     turno.estado = EstadoTurno.PAYMENT_FAILED
                     turno.status = AppointmentStatus.CANCELLED
+                    turno.external_status = "payment_failed"
                 else:
                     turno.estado = EstadoTurno.WAITING_PAYMENT
                     turno.status = AppointmentStatus.WAITING_PAYMENT
+                    turno.external_status = "waiting_payment"
         await self._session.commit()
 
     async def _emit_payment_notifications(

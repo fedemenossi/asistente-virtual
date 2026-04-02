@@ -33,7 +33,13 @@ SOFT_DELETE_COLUMNS = {
 }
 
 EXTRA_COLUMNS = {
+    "users": {
+        "created_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
+    },
     "tenants": {
+        "created_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
         "payment_settings": "JSON NULL",
         "calendar_settings": "JSON NULL",
         "whatsapp_settings": "JSON NULL",
@@ -51,6 +57,8 @@ EXTRA_COLUMNS = {
         "pending_message": "VARCHAR(500) NULL",
         "conversation_category": "VARCHAR(64) NULL",
         "conversation_subtype": "VARCHAR(64) NULL",
+        "operational_category": "VARCHAR(32) NULL",
+        "manual_note": "VARCHAR(1000) NULL",
         "requires_human_review": "BOOLEAN NOT NULL DEFAULT FALSE",
         "has_media": "BOOLEAN NOT NULL DEFAULT FALSE",
         "last_patient_message": "VARCHAR(1000) NULL",
@@ -61,11 +69,24 @@ EXTRA_COLUMNS = {
     },
     "conversaciones_historial": {
         "patient_id": "INT NULL",
+        "operational_category": "VARCHAR(32) NULL",
+        "manual_note": "VARCHAR(1000) NULL",
     },
     "turnos": {
+        "tenant_id": "INT NULL",
         "start_at": "DATETIME NULL",
         "end_at": "DATETIME NULL",
         "timezone": "VARCHAR(64) NULL",
+        "provider": "VARCHAR(50) NULL",
+        "external_id": "VARCHAR(200) NULL",
+        "external_status": "VARCHAR(100) NULL",
+        "notes": "TEXT NULL",
+        "reminder_24h_sent": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "reminder_2h_sent": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "created_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
+        "cancelled_at": "DATETIME NULL",
+        "cancellation_reason": "VARCHAR(255) NULL",
         "external_calendar_provider": "VARCHAR(50) NULL",
         "external_calendar_id": "VARCHAR(200) NULL",
         "external_event_id": "VARCHAR(200) NULL",
@@ -73,7 +94,13 @@ EXTRA_COLUMNS = {
         "status": "VARCHAR(32) NULL",
     },
     "pacientes": {
+        "created_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
         "insurance_number": "VARCHAR(100) NULL",
+    },
+    "push_subscriptions": {
+        "created_at": "DATETIME NULL",
+        "updated_at": "DATETIME NULL",
     },
 }
 
@@ -96,6 +123,14 @@ async def _column_exists(conn, db_name: str, table: str, column: str) -> bool:
 
 async def _add_column(conn, table: str, column: str, ddl: str) -> None:
     await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
+
+
+async def _timestamp_column_exists(
+    conn,
+    db_name: str,
+    table: str,
+) -> bool:
+    return await _column_exists(conn, db_name, table, "updated_at")
 
 
 async def upgrade(db_engine: AsyncEngine) -> None:
@@ -122,6 +157,62 @@ async def upgrade(db_engine: AsyncEngine) -> None:
                     if exists:
                         continue
                     await _add_column(conn, table, column, ddl)
+
+            if await _column_exists(conn, db_name, "turnos", "tenant_id"):
+                await conn.execute(
+                    text(
+                        """
+                        UPDATE turnos
+                        SET tenant_id = (
+                            SELECT consultorios.tenant_id
+                            FROM consultorios
+                            WHERE consultorios.id = turnos.consultorio_id
+                        )
+                        WHERE tenant_id IS NULL
+                        """
+                    )
+                )
+                await conn.execute(
+                    text(
+                        """
+                        UPDATE turnos
+                        SET provider = COALESCE(provider, external_calendar_provider, 'manual'),
+                            external_id = COALESCE(external_id, external_event_id, referencia_externa),
+                            external_status = COALESCE(
+                                external_status,
+                                CASE
+                                    WHEN status IS NOT NULL THEN status
+                                    WHEN estado IS NOT NULL THEN estado
+                                    ELSE 'draft'
+                                END
+                            ),
+                            created_at = COALESCE(created_at, fecha_hora, CURRENT_TIMESTAMP),
+                            updated_at = COALESCE(updated_at, created_at, fecha_hora, CURRENT_TIMESTAMP),
+                            reminder_24h_sent = COALESCE(reminder_24h_sent, FALSE),
+                            reminder_2h_sent = COALESCE(reminder_2h_sent, FALSE)
+                        """
+                    )
+                )
+
+            for table in ("users", "tenants", "pacientes", "push_subscriptions"):
+                if await _timestamp_column_exists(conn, db_name, table):
+                    await conn.execute(
+                        text(
+                            f"""
+                            UPDATE {table}
+                            SET updated_at = COALESCE(updated_at, created_at, CURRENT_TIMESTAMP)
+                            """
+                        )
+                    )
+                    if await _column_exists(conn, db_name, table, "created_at"):
+                        await conn.execute(
+                            text(
+                                f"""
+                                UPDATE {table}
+                                SET created_at = COALESCE(created_at, updated_at, CURRENT_TIMESTAMP)
+                                """
+                            )
+                        )
     finally:
         await db_engine.dispose()
 
