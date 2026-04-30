@@ -2,7 +2,7 @@ README Turnos
 
 Objetivo
 - La base propia pasa a ser la fuente operativa de los turnos.
-- Google Calendar y Consultorio Movil/Cabildo quedan como proveedores externos sincronizados.
+- Google Calendar y Consultorio Movil quedan como proveedores externos sincronizados.
 
 Modelo operativo
 - Tabla principal: `turnos`
@@ -56,7 +56,7 @@ Estado actual real
 - Reserva automatizada ya soportada:
   - flujo local de turnos via `AppointmentService`
   - confirmacion post-pago via `PaymentService.handle_mp_webhook(...)` -> `AppointmentService.confirm_after_payment(...)`
-  - sincronizacion con Google o Cabildo segun `consultorio.proveedor_turnos`
+- sincronizacion con Google o Consultorio Movil segun `consultorio.proveedor_turnos`
 - Panel tenant ya soporta:
   - dashboard operativo del dia (`/t/dashboard`)
   - agenda por fecha (`/t/appointments`)
@@ -71,8 +71,8 @@ Matriz de sincronizacion
   - pensado para turnos virtuales o slots gestionados en Google Calendar
   - reserva/cancelacion via `CalendarService` + `GoogleCalendarProvider`
 - `provider=consultorio_movil`
-  - pensado para turnos presenciales en Cabildo/Consultorio Movil
-  - reserva via `CalendarService` + `CabildoProvider`
+- pensado para turnos presenciales en Consultorio Movil
+- reserva via `CalendarService` + proveedor de Consultorio Movil
 - `provider=manual`
   - reservado para carga/seguimiento local sin proveedor externo
 
@@ -84,7 +84,7 @@ Pruebas manuales
 3. Crear tenant, consultorio y paciente.
 4. Configurar el consultorio:
    - `proveedor_turnos=google` o `consultorio_movil`
-   - settings/calendario o configuracion Cabildo segun corresponda
+   - settings/calendario o configuracion de Consultorio Movil segun corresponda
 5. Generar un turno por el flujo actual soportado:
    - draft local + confirmacion por pago/webhook, o
    - flujo operativo/manual que ya use `AppointmentService`

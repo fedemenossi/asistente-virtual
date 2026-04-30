@@ -5,7 +5,7 @@ Sistema SaaS multi-tenant para consultorios medicos que:
 - Atiende conversaciones por WhatsApp (bot + derivacion humana).
 - Gestiona pacientes, consultorios, turnos y pagos.
 - Integra Google Calendar para disponibilidad/reserva de slots.
-- Integra Consultorio Movil (Cabildo) para turnos presenciales.
+- Integra Consultorio Movil para turnos presenciales.
 - Integra Mercado Pago para cobros y webhooks.
 - Incluye panel web SSR para `SUPER_ADMIN` y `TENANT_ADMIN`.
 - Incluye notificaciones in-app + push web (PWA).
@@ -31,7 +31,7 @@ Dependencias principales: `requirements.txt`, `package.json`.
 - `app/models`: modelos SQLAlchemy.
 - `app/repositories`: acceso a datos (repositorios).
 - `app/services`: logica de negocio.
-- `app/integrations`: clientes externos (Google, Mercado Pago, Cabildo).
+- `app/integrations`: clientes externos (Google, Mercado Pago, Consultorio Movil).
 - `app/api/routes`: endpoints API/webhooks/internos.
 - `app/web/*`: vistas SSR admin/tenant/auth.
 - `app/templates`: UI Jinja2.
@@ -261,7 +261,7 @@ Estados:
 - Registro: `ask_first_name`, `ask_last_name`, `ask_dni`, `ask_email`.
 - Menu: `main_menu`.
 - Turnos: `ask_appointment_for`, `ask_other_dni`, `ask_other_confirm`, `first_time_check`.
-- Presencial Cabildo: `ask_presential_slot`, `ask_presential_dni`.
+- Presencial Consultorio Movil: `ask_presential_slot`, `ask_presential_dni`.
 - Derivaciones: `other_detail`, `human_reason`.
 
 Reglas:
@@ -280,7 +280,7 @@ Reglas:
 - Presencial:
   - consulta disponibilidad en Consultorio Movil
   - usuario elige slot
-  - intenta reservar en Cabildo
+  - intenta reservar en Consultorio Movil
   - refleja turno local en DB
   - manejo de errores + audit.
 - Virtual:
@@ -343,7 +343,7 @@ UI:
 - `/t/settings/calendar`
 - Boton "Probar conexion" abre modal con grilla de slots desde `/t/settings/calendar/test`.
 
-## 11) Integracion Consultorio Movil (Cabildo)
+## 11) Integracion Consultorio Movil
 Archivo: `app/integrations/consultorio_movil.py`.
 
 Funciones:
@@ -467,7 +467,7 @@ Nota: si los tests quedan en passed y no vuelve prompt, revisar recursos/event l
 2. Crear usuario `TENANT_ADMIN`.
 3. Configurar Twilio por tenant en `/t/settings` (SID/token/numero).
 4. Configurar Google Calendar en `/t/settings/calendar`.
-5. Configurar consultorio(s) y, si aplica, Cabildo.
+5. Configurar consultorio(s) y, si aplica, Consultorio Movil.
 6. Configurar pagos en `/t/settings/payments`.
 7. Probar:
    - webhook WhatsApp (mensaje real o chat simulator admin),

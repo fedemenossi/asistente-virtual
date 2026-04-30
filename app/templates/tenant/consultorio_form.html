@@ -43,7 +43,7 @@
         <option value="">Manual</option>
         {% set selected_cab = (form.proveedor_turnos is defined and form.proveedor_turnos == 'consultorio_movil') or (consultorio and consultorio.proveedor_turnos == 'consultorio_movil') %}
         <option value="consultorio_movil" {% if selected_cab %}selected{% endif %}>
-          Consultorio Movil (Cabildo)
+          Consultorio Movil
         </option>
         {% set selected_google = (form.proveedor_turnos is defined and form.proveedor_turnos == 'google') or (consultorio and consultorio.proveedor_turnos == 'google') %}
         <option value="google" {% if selected_google %}selected{% endif %}>
@@ -154,4 +154,3 @@
     })();
   </script>
 {% endblock %}
-

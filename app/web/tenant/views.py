@@ -129,7 +129,7 @@ def _turno_provider_label(turno: Turno) -> tuple[str, str]:
     if provider == "google":
         return "Google", "info"
     if provider == "consultorio_movil":
-        return "Cabildo", "warning"
+        return "Consultorio Movil", "warning"
     return "Manual", "neutral"
 
 
