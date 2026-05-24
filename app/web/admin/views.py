@@ -38,6 +38,13 @@ from app.repositories.notification_repository import NotificationRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.services.conversation_service import ConversationService
+from app.services.ai_intent_classifier import SUPPORTED_INTENTS
+from app.services.tenant_ai_settings_service import (
+    AI_SETTINGS_DEFAULTS,
+    get_effective_ai_settings,
+    mask_api_key,
+    validate_ai_settings,
+)
 from app.services.tenant_feature_service import TenantFeatureService
 from app.services.tenant_service import TenantService
 from app.web.tenant import views as tenant_conversation_views
@@ -70,6 +77,66 @@ def _collect_tenant_profile_changes(tenant: Tenant, updates: dict[str, str | Non
         if old != value:
             changes[key] = {"from": old, "to": value}
     return changes
+
+
+def _tenant_form_context(
+    request: Request,
+    tenant: Tenant | None,
+    errors: dict[str, str],
+    form_data: dict,
+) -> dict:
+    ai_settings = form_data.get("ai_settings")
+    if not isinstance(ai_settings, dict):
+        ai_settings = get_effective_ai_settings(tenant) if tenant is not None else dict(AI_SETTINGS_DEFAULTS)
+    return {
+        "tenant": tenant,
+        "errors": errors,
+        "form_data": form_data,
+        "ai_settings": ai_settings,
+        "ai_api_key_masked": mask_api_key(ai_settings.get("api_key")),
+        "ai_allowed_intents": sorted(SUPPORTED_INTENTS),
+    }
+
+
+async def _parse_ai_settings_form(
+    request: Request,
+    *,
+    existing_settings: dict | None = None,
+) -> tuple[dict, str | None]:
+    form = await request.form()
+    selected_intents = [
+        str(value)
+        for value in form.getlist("ai_allowed_intents")
+        if str(value).strip()
+    ]
+    data = {
+        "enabled": form.get("ai_enabled") == "1",
+        "provider": form.get("ai_provider") or "openai",
+        "api_key": (form.get("ai_api_key") or "").strip(),
+        "model": form.get("ai_model") or AI_SETTINGS_DEFAULTS["model"],
+        "min_confidence": form.get("ai_min_confidence") or AI_SETTINGS_DEFAULTS["min_confidence"],
+        "timeout_seconds": form.get("ai_timeout_seconds") or AI_SETTINGS_DEFAULTS["timeout_seconds"],
+        "agent_name": form.get("ai_agent_name") or AI_SETTINGS_DEFAULTS["agent_name"],
+        "system_prompt": form.get("ai_system_prompt") or "",
+        "personality": form.get("ai_personality") or AI_SETTINGS_DEFAULTS["personality"],
+        "allowed_intents": selected_intents or list(AI_SETTINGS_DEFAULTS["allowed_intents"]),
+        "handoff_on_low_confidence": form.get("ai_handoff_on_low_confidence") == "1",
+        "max_tokens": form.get("ai_max_tokens") or AI_SETTINGS_DEFAULTS["max_tokens"],
+        "temperature": form.get("ai_temperature") or AI_SETTINGS_DEFAULTS["temperature"],
+    }
+    try:
+        cleaned = validate_ai_settings(
+            data,
+            existing_settings=existing_settings,
+            allow_global_fallback=True,
+        )
+    except ValueError as exc:
+        fallback = dict(AI_SETTINGS_DEFAULTS)
+        fallback.update(data)
+        if existing_settings and not fallback.get("api_key"):
+            fallback["api_key"] = existing_settings.get("api_key", "")
+        return fallback, str(exc)
+    return cleaned, None
 
 
 def _resolve_timezone(name: str) -> timezone | None:
@@ -194,7 +261,7 @@ async def tenants_new_get(
     return _template(
         request,
         "admin/tenant_form.html",
-        {"tenant": None, "errors": {}, "form_data": {}},
+        _tenant_form_context(request, None, {}, {}),
     )
 
 
@@ -216,6 +283,9 @@ async def tenants_new_post(
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
     errors: dict[str, str] = {}
+    ai_settings, ai_error = await _parse_ai_settings_form(request)
+    if ai_error:
+        errors["ai_settings"] = ai_error
     cleaned = {
         "nombre": nombre.strip(),
         "whatsapp_number": whatsapp_number.strip(),
@@ -232,10 +302,11 @@ async def tenants_new_post(
     if not cleaned["whatsapp_number"]:
         errors["whatsapp_number"] = "El numero de WhatsApp es obligatorio."
     if errors:
+        cleaned["ai_settings"] = ai_settings
         return _template(
             request,
             "admin/tenant_form.html",
-            {"tenant": None, "errors": errors, "form_data": cleaned},
+            _tenant_form_context(request, None, errors, cleaned),
         )
     tenant = Tenant(
         nombre=cleaned["nombre"],
@@ -248,6 +319,7 @@ async def tenants_new_post(
         address=cleaned["address"],
         postal_code=cleaned["postal_code"],
         phone=cleaned["phone"],
+        ai_settings=ai_settings,
     )
     async with session.begin_nested():
         exists_stmt = select(Tenant.id).where(
@@ -257,10 +329,11 @@ async def tenants_new_post(
         exists = await session.execute(exists_stmt)
         if exists.scalar_one_or_none() is not None:
             errors["whatsapp_number"] = "Ese WhatsApp ya esta registrado."
+            cleaned["ai_settings"] = ai_settings
             return _template(
                 request,
                 "admin/tenant_form.html",
-                {"tenant": None, "errors": errors, "form_data": cleaned},
+                _tenant_form_context(request, None, errors, cleaned),
             )
         session.add(tenant)
         await session.flush()
@@ -325,7 +398,7 @@ async def tenants_edit_get(
     return _template(
         request,
         "admin/tenant_form.html",
-        {"tenant": tenant, "errors": {}, "form_data": {}},
+        _tenant_form_context(request, tenant, {}, {}),
     )
 
 
@@ -348,28 +421,35 @@ async def tenants_edit_post(
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
     errors: dict[str, str] = {}
-    cleaned = {
-        "nombre": nombre.strip(),
-        "whatsapp_number": whatsapp_number.strip(),
-        "fantasy_name": _strip_optional(fantasy_name),
-        "first_name": _strip_optional(first_name),
-        "last_name": _strip_optional(last_name),
-        "cuil": _validate_digits(cuil, "cuil", errors),
-        "address": _strip_optional(address),
-        "postal_code": _validate_digits(postal_code, "postal_code", errors),
-        "phone": _validate_digits(phone, "phone", errors),
-    }
-    if not cleaned["nombre"]:
-        errors["nombre"] = "El nombre es obligatorio."
-    if not cleaned["whatsapp_number"]:
-        errors["whatsapp_number"] = "El numero de WhatsApp es obligatorio."
     async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, tenant_id)
+        ai_settings, ai_error = await _parse_ai_settings_form(
+            request,
+            existing_settings=tenant.ai_settings or {},
+        )
+        if ai_error:
+            errors["ai_settings"] = ai_error
+        cleaned = {
+            "nombre": nombre.strip(),
+            "whatsapp_number": whatsapp_number.strip(),
+            "fantasy_name": _strip_optional(fantasy_name),
+            "first_name": _strip_optional(first_name),
+            "last_name": _strip_optional(last_name),
+            "cuil": _validate_digits(cuil, "cuil", errors),
+            "address": _strip_optional(address),
+            "postal_code": _validate_digits(postal_code, "postal_code", errors),
+            "phone": _validate_digits(phone, "phone", errors),
+            "ai_settings": ai_settings,
+        }
+        if not cleaned["nombre"]:
+            errors["nombre"] = "El nombre es obligatorio."
+        if not cleaned["whatsapp_number"]:
+            errors["whatsapp_number"] = "El numero de WhatsApp es obligatorio."
         if errors:
             return _template(
                 request,
                 "admin/tenant_form.html",
-                {"tenant": tenant, "errors": errors, "form_data": cleaned},
+                _tenant_form_context(request, tenant, errors, cleaned),
             )
         if cleaned["whatsapp_number"]:
             exists_stmt = select(Tenant.id).where(
@@ -383,7 +463,7 @@ async def tenants_edit_post(
                 return _template(
                     request,
                     "admin/tenant_form.html",
-                    {"tenant": tenant, "errors": errors, "form_data": cleaned},
+                    _tenant_form_context(request, tenant, errors, cleaned),
                 )
         changes = _collect_tenant_profile_changes(tenant, cleaned)
         tenant.nombre = cleaned["nombre"]
@@ -396,6 +476,7 @@ async def tenants_edit_post(
         tenant.postal_code = cleaned["postal_code"]
         tenant.phone = cleaned["phone"]
         tenant.activo = bool(activo)
+        tenant.ai_settings = ai_settings
         await audit_log(
             session,
             request,
@@ -403,7 +484,7 @@ async def tenants_edit_post(
             action="update_profile",
             entity="tenant",
             entity_id=tenant.id,
-            metadata=changes,
+            metadata={**changes, "ai_settings_updated": True},
         )
     add_flash(request, "success", "Tenant actualizado")
     return RedirectResponse(f"/admin/tenants/{tenant_id}", status_code=303)

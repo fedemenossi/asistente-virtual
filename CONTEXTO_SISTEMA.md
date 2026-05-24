@@ -315,6 +315,100 @@ Conversaciones pendientes/finalizadas:
   - guardar nota interna breve
 - El historial cerrado queda en `conversaciones_historial` y no se elimina.
 
+### 8.1) Clasificador IA de intencion - Etapa 1
+Archivos:
+- `app/services/ai_intent_classifier.py`
+- `app/services/tenant_ai_settings_service.py`
+- Configuracion persistida en `tenants.ai_settings` (JSON).
+
+Objetivo:
+- Mejorar comprension de texto libre en `main_reason_menu` / `main_menu`.
+- Devolver intencion normalizada, confianza, datos detectados y fuente (`rules`, `ai`, `fallback`).
+- Mantener el flujo existente como respaldo.
+
+Intents soportados:
+- `book_presential_appointment`
+- `book_virtual_appointment`
+- `recipe_or_order`
+- `other_medical_query`
+- `human_handoff`
+- `cancel_appointment`
+- `reschedule_appointment`
+- `greeting`
+- `exit`
+- `unknown`
+
+Estado actual:
+- Por defecto corre solo con reglas locales.
+- La IA real se configura por tenant y viene desactivada por defecto con `ai_settings.enabled=false`.
+- El `SUPER_ADMIN` puede configurar el agente en alta/edicion de tenant.
+- Cada tenant puede tener su propia `api_key`, modelo, umbral de confianza, timeout, prompt, personalidad e intents permitidos.
+- Si se activa IA y no hay API key del tenant, se permite fallback global explicito con `OPENAI_API_KEY` si existe.
+- Si no hay API key disponible o falla la llamada, vuelve a reglas/fallback.
+- La respuesta IA se pide como JSON estricto y no se envia al paciente.
+- La API key no se muestra completa en templates ni se loguea; en edicion se muestra enmascarada.
+
+Que NO hace esta etapa:
+- No reserva turnos.
+- No consulta Calendar.
+- No llama Consultorio Movil.
+- No crea pagos.
+- No cancela ni reprograma turnos.
+- No modifica entidades criticas.
+
+Mapeo actual en menu principal si `confidence >= ai_settings.min_confidence`:
+- `book_presential_appointment` -> inicia flujo presencial existente.
+- `book_virtual_appointment` -> inicia flujo virtual existente.
+- `recipe_or_order` -> inicia flujo receta/orden existente.
+- `other_medical_query` -> inicia flujo de otra consulta existente.
+- `human_handoff` -> deriva a humano como el flujo existente.
+- `exit` -> finaliza/reinicia conversacion como el flujo existente.
+- `cancel_appointment`, `reschedule_appointment`, `greeting`, `unknown` -> no ejecutan acciones; se pide elegir una opcion valida.
+
+Configuracion del Agente de IA por tenant:
+```json
+{
+  "enabled": false,
+  "provider": "openai",
+  "api_key": "",
+  "model": "gpt-4o-mini",
+  "min_confidence": 0.75,
+  "timeout_seconds": 8,
+  "agent_name": "Asistente virtual",
+  "system_prompt": "",
+  "personality": "cordial, clara, profesional y breve",
+  "allowed_intents": [
+    "book_presential_appointment",
+    "book_virtual_appointment",
+    "recipe_or_order",
+    "other_medical_query",
+    "human_handoff",
+    "cancel_appointment",
+    "reschedule_appointment",
+    "greeting",
+    "exit",
+    "unknown"
+  ],
+  "handoff_on_low_confidence": true,
+  "max_tokens": 400,
+  "temperature": 0.0
+}
+```
+
+Seguridad:
+- Preferir `ai_settings.api_key` por tenant.
+- `OPENAI_API_KEY` global queda solo como fallback explicito.
+- No exponer `api_key` completa en HTML, logs ni respuestas.
+- `TENANT_ADMIN` no edita `ai_settings` en esta etapa; solo `SUPER_ADMIN`.
+- `allowed_intents` limita las intenciones que puede devolver la IA.
+
+Prueba manual rapida:
+1. Con un paciente registrado, enviar "hola" para entrar al menu.
+2. Enviar texto libre como "necesito turno en consultorio".
+3. Debe continuar por el flujo de turno presencial existente, sin crear turno ni llamar proveedores externos.
+4. Para IA real, habilitar el agente en `/admin/tenants/{tenant_id}/edit` y cargar API key/modelo.
+5. Ejecutar `.\.venv\Scripts\python -m pytest -q`.
+
 ## 9) Integracion WhatsApp por tenant (Twilio)
 ### Inbound
 - `POST /webhook/whatsapp`:

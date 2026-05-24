@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from enum import Enum
+import logging
 import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,6 +20,15 @@ from app.services.conversation_intents import (
     detect_prescription_subtype,
     detect_yes_no,
 )
+from app.services.ai_intent_classifier import (
+    AIIntent,
+    AIIntentClassifier,
+    AIIntentResult,
+    normalize_message,
+)
+from app.services.tenant_ai_settings_service import get_effective_ai_settings
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationState(str, Enum):
@@ -63,7 +73,7 @@ class ConversationState(str, Enum):
 
 
 INACTIVITY_TIMEOUT_MINUTES = 30
-EXIT_COMMANDS = {"salir", "cancelar", "exit", "reiniciar"}
+EXIT_COMMANDS = {"salir", "cancelar", "exit", "reiniciar", "menu"}
 
 
 class ConversationService:
@@ -79,6 +89,7 @@ class ConversationService:
         self._paciente_repo = paciente_repo
         self._conversacion_repo = conversacion_repo
         self._notification_repo = notification_repo
+        self._ai_intent_classifier = AIIntentClassifier()
 
     async def process_message(
         self,
@@ -141,6 +152,7 @@ class ConversationService:
 
         context = state.contexto_json or {}
         current_state = state.estado_actual
+        ai_settings = get_effective_ai_settings(tenant)
 
         if current_state == ConversationState.ASK_FIRST_NAME.value:
             if not text:
@@ -256,7 +268,32 @@ class ConversationService:
             return self._known_patient_greeting(tenant, paciente.nombre, paciente.apellido)
 
         if current_state in {ConversationState.MAIN_REASON_MENU.value, ConversationState.MAIN_MENU.value}:
-            intent = classify_main_intent(text)
+            if self._is_direct_main_menu_option(text):
+                intent = classify_main_intent(text)
+            else:
+                ai_result = await self._ai_intent_classifier.classify(
+                    text,
+                    tenant=tenant,
+                    ai_settings=ai_settings,
+                    conversation_state=current_state,
+                    context=context,
+                )
+                self._log_ai_intent(
+                    tenant_id=tenant.id,
+                    phone=normalized_phone,
+                    current_state=current_state,
+                    message=text,
+                    result=ai_result,
+                )
+                if (
+                    ai_result.intent == AIIntent.EXIT
+                    and ai_result.confidence >= ai_settings["min_confidence"]
+                ):
+                    await self._conversacion_repo.mark_resolved(
+                        tenant.id, normalized_phone, close_reason="exit_command"
+                    )
+                    return "Conversacion finalizada. Escribi cualquier mensaje para comenzar una conversacion nueva."
+                intent = self._intent_from_ai_result(ai_result, min_confidence=ai_settings["min_confidence"])
             reason = intent.pending_reason
             category = intent.category
             if intent.requires_clarification:
@@ -766,4 +803,46 @@ class ConversationService:
         if value.tzinfo is None:
             value = value.replace(tzinfo=get_ba_tz())
         return now - value > timedelta(minutes=INACTIVITY_TIMEOUT_MINUTES)
+
+    @staticmethod
+    def _is_direct_main_menu_option(value: str | None) -> bool:
+        return normalize_message(value) in {"1", "2", "3", "4", "5", "a", "b", "c", "d", "e"}
+
+    def _intent_from_ai_result(self, result: AIIntentResult, *, min_confidence: float):
+        from app.services.conversation_intents import IntentResult
+
+        if result.confidence < min_confidence:
+            return IntentResult(None, None)
+        if result.intent == AIIntent.BOOK_PRESENTIAL_APPOINTMENT:
+            return IntentResult("turno_presencial", ConversationCategory.PRESENTIAL_APPOINTMENT)
+        if result.intent == AIIntent.BOOK_VIRTUAL_APPOINTMENT:
+            return IntentResult("turno_virtual", ConversationCategory.VIRTUAL_APPOINTMENT)
+        if result.intent == AIIntent.RECIPE_OR_ORDER:
+            return IntentResult("receta_orden", ConversationCategory.PRESCRIPTION_OR_ORDER)
+        if result.intent == AIIntent.OTHER_MEDICAL_QUERY:
+            return IntentResult("otra_consulta", ConversationCategory.OTHER_QUERY)
+        if result.intent == AIIntent.HUMAN_HANDOFF:
+            return IntentResult("humano", ConversationCategory.HUMAN_HANDOFF)
+        return IntentResult(None, None)
+
+    @staticmethod
+    def _log_ai_intent(
+        *,
+        tenant_id: int,
+        phone: str,
+        current_state: str,
+        message: str,
+        result: AIIntentResult,
+    ) -> None:
+        logger.info(
+            "ai_intent_classified tenant_id=%s telefono=%s estado_actual=%s mensaje_normalizado=%s intent=%s confidence=%.3f source=%s error=%s",
+            tenant_id,
+            phone,
+            current_state,
+            normalize_message(message),
+            result.intent,
+            result.confidence,
+            result.source,
+            result.error or "",
+        )
 

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     public_base_url: str | None = Field(default=None, alias="PUBLIC_BASE_URL")
     google_credentials_json: str | None = Field(default=None, alias="GOOGLE_CREDENTIALS_JSON")
     google_delegated_user: str | None = Field(default=None, alias="GOOGLE_DELEGATED_USER")
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     internal_job_token: str | None = Field(default=None, alias="INTERNAL_JOB_TOKEN")
     vapid_public_key: str | None = Field(default=None, alias="VAPID_PUBLIC_KEY")
     vapid_private_key: str | None = Field(default=None, alias="VAPID_PRIVATE_KEY")

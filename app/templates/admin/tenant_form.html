@@ -81,6 +81,82 @@
       <input type="checkbox" name="activo" value="1" {% if tenant and tenant.activo %}checked{% endif %} />
       Tenant activo
     </label>
+
+    <div class="border-t border-slate-200 pt-6">
+      <h2 class="text-sm font-semibold text-slate-900">Agente de IA</h2>
+      <p class="text-xs text-slate-500 mt-1">El agente de IA en esta etapa solo clasifica la intencion del mensaje. No agenda turnos, no cobra pagos y no ejecuta acciones automaticas.</p>
+      {% if errors.ai_settings %}<p class="text-xs text-rose-600 mt-2">{{ errors.ai_settings }}</p>{% endif %}
+      {% if ai_settings.enabled and not ai_settings.api_key %}
+        <div class="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+          IA habilitada sin API key propia. Se intentara usar el fallback global si esta configurado.
+        </div>
+      {% endif %}
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+          <input type="checkbox" name="ai_enabled" value="1" {% if ai_settings.enabled %}checked{% endif %} />
+          Habilitar agente IA
+        </label>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Proveedor</label>
+          <select class="select mt-1" name="ai_provider">
+            <option value="openai" {% if ai_settings.provider == 'openai' %}selected{% endif %}>OpenAI</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">API Key</label>
+          <input class="input mt-1" type="password" name="ai_api_key" value="" autocomplete="off" placeholder="{% if ai_api_key_masked %}{{ ai_api_key_masked }}{% else %}sk-...{% endif %}" />
+          {% if ai_api_key_masked %}<p class="text-xs text-slate-500 mt-1">Actual: {{ ai_api_key_masked }}. Dejar vacio para conservarla.</p>{% endif %}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Modelo</label>
+          <input class="input mt-1" name="ai_model" value="{{ ai_settings.model }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Confianza minima</label>
+          <input class="input mt-1" type="number" step="0.01" min="0" max="1" name="ai_min_confidence" value="{{ ai_settings.min_confidence }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Timeout segundos</label>
+          <input class="input mt-1" type="number" min="1" max="30" name="ai_timeout_seconds" value="{{ ai_settings.timeout_seconds }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Nombre del agente</label>
+          <input class="input mt-1" name="ai_agent_name" value="{{ ai_settings.agent_name }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Temperatura</label>
+          <input class="input mt-1" type="number" step="0.1" min="0" max="1" name="ai_temperature" value="{{ ai_settings.temperature }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Maximo tokens</label>
+          <input class="input mt-1" type="number" min="50" max="2000" name="ai_max_tokens" value="{{ ai_settings.max_tokens }}" />
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm font-medium text-slate-700">Personalidad</label>
+          <textarea class="textarea mt-1" name="ai_personality" rows="2">{{ ai_settings.personality }}</textarea>
+        </div>
+        <div class="md:col-span-2">
+          <label class="block text-sm font-medium text-slate-700">System prompt</label>
+          <textarea class="textarea mt-1" name="ai_system_prompt" rows="4">{{ ai_settings.system_prompt }}</textarea>
+        </div>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-600 md:col-span-2">
+          <input type="checkbox" name="ai_handoff_on_low_confidence" value="1" {% if ai_settings.handoff_on_low_confidence %}checked{% endif %} />
+          Derivar/revisar cuando la confianza sea baja
+        </label>
+      </div>
+      <div class="mt-4">
+        <p class="text-sm font-medium text-slate-700">Intenciones permitidas</p>
+        <div class="mt-2 grid gap-2 md:grid-cols-2">
+          {% for intent in ai_allowed_intents %}
+            <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+              <input type="checkbox" name="ai_allowed_intents" value="{{ intent }}" {% if intent in ai_settings.allowed_intents %}checked{% endif %} />
+              {{ intent }}
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
     <div class="flex items-center gap-3">
       <button class="btn btn-primary" type="submit">Guardar</button>
       <a class="btn btn-secondary" href="/admin/tenants">Cancelar</a>

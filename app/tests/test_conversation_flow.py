@@ -75,6 +75,139 @@ def test_invalid_option_main_menu_keeps_state(db_session):
     asyncio.run(run())
 
 
+def test_main_menu_numeric_options_keep_existing_flow(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Menu Options", "whatsapp:+713"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phones = [f"549117130000{index}" for index in range(1, 6)]
+    for phone in phones:
+        asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            repo = ConversacionRepository(session)
+            cases = [
+                (phones[0], "1", ConversationState.ASK_PRESENTIAL_FOR_WHOM.value, None),
+                (phones[1], "2", ConversationState.ASK_VIRTUAL_FOR_WHOM.value, None),
+                (phones[2], "3", ConversationState.ASK_RECIPE_KIND.value, None),
+                (phones[3], "4", ConversationState.ASK_OTHER_QUERY.value, None),
+                (phones[4], "5", ConversationState.MAIN_REASON_MENU.value, "pending"),
+            ]
+            for phone, option, expected_state, expected_status in cases:
+                await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+                await service.process_message(tenant, f"whatsapp:+{phone}", option)
+                state = await repo.get_state(tenant.id, phone)
+                assert state is not None
+                assert state.estado_actual == expected_state
+                if expected_status:
+                    assert state.status == expected_status
+
+    asyncio.run(run())
+
+
+def test_free_text_main_menu_routes_with_ai_rules(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Free Text", "whatsapp:+714"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491171400001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "necesito turno en consultorio",
+            )
+
+            assert "El turno presencial es:" in reply
+            repo = ConversacionRepository(session)
+            state = await repo.get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_PRESENTIAL_FOR_WHOM.value
+            assert state.status == "active"
+            assert state.pending_reason is None
+
+    asyncio.run(run())
+
+
+def test_free_text_low_confidence_returns_menu(db_session):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant High Confidence",
+            "whatsapp:+715",
+            ai_settings={"enabled": False, "min_confidence": 0.95},
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491171500001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "necesito turno en consultorio",
+            )
+
+            assert "Debe seleccionar" in reply
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+
+    asyncio.run(run())
+
+
+def test_ai_settings_are_isolated_between_tenants(db_session):
+    tenant_a_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant IA Alto",
+            "whatsapp:+716",
+            ai_settings={"enabled": False, "min_confidence": 0.95},
+        )
+    )
+    tenant_b_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant IA Normal",
+            "whatsapp:+717",
+            ai_settings={"enabled": False, "min_confidence": 0.75},
+        )
+    )
+    tenant_a = asyncio.run(get_tenant(db_session, tenant_a_id))
+    tenant_b = asyncio.run(get_tenant(db_session, tenant_b_id))
+    phone = "5491171600001"
+    asyncio.run(create_paciente(db_session, tenant_a_id, phone))
+    asyncio.run(create_paciente(db_session, tenant_b_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant_a, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant_b, f"whatsapp:+{phone}", "hola")
+            reply_a = await service.process_message(
+                tenant_a, f"whatsapp:+{phone}", "necesito turno en consultorio"
+            )
+            reply_b = await service.process_message(
+                tenant_b, f"whatsapp:+{phone}", "necesito turno en consultorio"
+            )
+
+            assert "Debe seleccionar" in reply_a
+            assert "El turno presencial es:" in reply_b
+            repo = ConversacionRepository(session)
+            state_a = await repo.get_state(tenant_a.id, phone)
+            state_b = await repo.get_state(tenant_b.id, phone)
+            assert state_a.estado_actual == ConversationState.MAIN_REASON_MENU.value
+            assert state_b.estado_actual == ConversationState.ASK_PRESENTIAL_FOR_WHOM.value
+
+    asyncio.run(run())
+
+
 def test_invalid_option_first_time_keeps_state(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Invalid First Time", "whatsapp:+711"))
     tenant = asyncio.run(get_tenant(db_session, tenant_id))

@@ -23,6 +23,7 @@ class Tenant(Base, TimestampMixin, SoftDeleteMixin):
     payment_settings: Mapped[dict | None] = mapped_column(JSON)
     calendar_settings: Mapped[dict | None] = mapped_column(JSON)
     whatsapp_settings: Mapped[dict | None] = mapped_column(JSON)
+    ai_settings: Mapped[dict | None] = mapped_column(JSON)
 
     consultorios = relationship("Consultorio", back_populates="tenant")
     pacientes = relationship("Paciente", back_populates="tenant")
