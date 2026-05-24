@@ -31,6 +31,11 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    if settings.app_env.lower() != "test":
+        from app.core.db import engine
+        from scripts.upgrade_schema import upgrade
+
+        await upgrade(engine, dispose=False)
     async with AsyncSessionLocal() as session:
         async with session.begin():
             await ensure_super_admin(session)

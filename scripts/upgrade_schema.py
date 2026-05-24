@@ -134,7 +134,7 @@ async def _timestamp_column_exists(
     return await _column_exists(conn, db_name, table, "updated_at")
 
 
-async def upgrade(db_engine: AsyncEngine) -> None:
+async def upgrade(db_engine: AsyncEngine, *, dispose: bool = True) -> None:
     url = make_url(db_engine.url)
     db_name = url.database
     if not db_name:
@@ -215,7 +215,8 @@ async def upgrade(db_engine: AsyncEngine) -> None:
                             )
                         )
     finally:
-        await db_engine.dispose()
+        if dispose:
+            await db_engine.dispose()
 
 
 if __name__ == "__main__":

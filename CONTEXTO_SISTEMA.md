@@ -527,6 +527,11 @@ Importante:
 - `scripts/seed_admin.py`: crea super admin si no existe.
 - `scripts/seed_demo.py`: crea tenant/consultorio demo.
 
+Startup:
+- En entornos distintos de `test`, `app.main` ejecuta `scripts.upgrade_schema.upgrade(...)` al iniciar antes de crear/sincronizar usuarios/features.
+- Esto evita errores por columnas nuevas faltantes, por ejemplo `tenants.ai_settings`, despues de deploys sin migracion manual.
+- `scripts/upgrade_schema.py` sigue pudiendo ejecutarse manualmente y es idempotente.
+
 ## 17) Comandos para correr local
 ### Windows PowerShell
 1. Crear/activar venv:
