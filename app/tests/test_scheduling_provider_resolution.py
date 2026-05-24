@@ -4,10 +4,14 @@ import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
 from app.integrations.interfaces import CalendarSlot
+from app.models.turno import AppointmentStatus
 from app.services.appointment_service import AppointmentService
 from app.services.calendar_service import CalendarService
-from app.tests.conftest import create_consultorio, create_paciente, create_tenant
+from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_turno
 
 
 def test_calendar_service_uses_google_by_default(db_session, monkeypatch):
@@ -113,3 +117,53 @@ def test_appointment_service_create_draft_uses_consultorio_provider(db_session):
     turno = asyncio.run(_run())
     assert turno.external_calendar_provider == "consultorio_movil"
     assert turno.external_calendar_id == "88"
+
+
+def test_consultorio_movil_cancel_fails_without_marking_local_cancelled(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cancel Cabildo", "whatsapp:+994"))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Consultorio Cancel Cabildo",
+            proveedor_turnos="consultorio_movil",
+            configuracion_externa={
+                "cabildo": {"user": "u", "password": "p", "staff_id": "99", "days": 21}
+            },
+        )
+    )
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+9941"))
+    turno_id = asyncio.run(
+        create_turno(
+            db_session,
+            paciente_id,
+            consultorio_id,
+            status=AppointmentStatus.CONFIRMED,
+            external_calendar_provider="consultorio_movil",
+            external_event_id="cabildo-123",
+        )
+    )
+
+    async def _run():
+        from app.models.consultorio import Consultorio
+        from app.models.tenant import Tenant
+        from app.models.turno import Turno
+
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            consultorio = await session.get(Consultorio, consultorio_id)
+            turno = await session.get(Turno, turno_id)
+            request = SimpleNamespace(client=None, headers={})
+            with pytest.raises(HTTPException) as exc_info:
+                await AppointmentService(session).cancel_turno(
+                    request,
+                    tenant,
+                    consultorio,
+                    turno,
+                )
+            await session.refresh(turno)
+            return exc_info.value.status_code, turno.status
+
+    status_code, turno_status = asyncio.run(_run())
+    assert status_code == 501
+    assert turno_status == AppointmentStatus.CONFIRMED

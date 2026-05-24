@@ -57,6 +57,7 @@ Estado actual real
   - flujo local de turnos via `AppointmentService`
   - confirmacion post-pago via `PaymentService.handle_mp_webhook(...)` -> `AppointmentService.confirm_after_payment(...)`
 - sincronizacion con Google o Consultorio Movil segun `consultorio.proveedor_turnos`
+- `turnos.tenant_id` existe como campo directo y debe mantenerse alineado con `consultorio.tenant_id`
 - Panel tenant ya soporta:
   - dashboard operativo del dia (`/t/dashboard`)
   - agenda por fecha (`/t/appointments`)
@@ -71,10 +72,16 @@ Matriz de sincronizacion
   - pensado para turnos virtuales o slots gestionados en Google Calendar
   - reserva/cancelacion via `CalendarService` + `GoogleCalendarProvider`
 - `provider=consultorio_movil`
-- pensado para turnos presenciales en Consultorio Movil
-- reserva via `CalendarService` + proveedor de Consultorio Movil
+  - pensado para turnos presenciales en Consultorio Movil
+  - listar/reservar via `CalendarService` + `CabildoProvider`
+  - cancelacion/update externo todavia pendiente; la cancelacion externa se bloquea con error explicito para no marcar localmente un turno que sigue activo afuera
 - `provider=manual`
   - reservado para carga/seguimiento local sin proveedor externo
+
+Riesgos actuales
+- Conviven vistas legacy `/t/turnos` y agenda real `/t/appointments`.
+- El bot de WhatsApp no debe tratarse como agenda automatica end-to-end: hoy deriva la mayoria de solicitudes a bandeja operativa.
+- `ReminderService` tiene flags `reminder_24h_sent` / `reminder_2h_sent`, pero tambien usa `reminder_sent_at` unico; revisar antes de activar dos ventanas de recordatorio en produccion.
 
 Pruebas manuales
 1. Ejecutar migracion:

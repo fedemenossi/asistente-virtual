@@ -132,6 +132,8 @@ class PaymentService:
         payment_settings = tenant.payment_settings if tenant else {}
         access_token, webhook_secret = resolve_mp_credentials(payment_settings)
         signature = request.headers.get("x-signature", "")
+        if webhook_secret and not signature:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
         if webhook_secret and signature:
             if not MercadoPagoService.verify_webhook_signature(raw_body, signature, webhook_secret):
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
@@ -147,10 +149,10 @@ class PaymentService:
 
         new_status = MercadoPagoService.map_mp_status_to_internal(status_value)
         event_repo = PaymentEventRepository(self._session)
+        if mp_payment_id and not payment.external_payment_id:
+            payment.external_payment_id = str(mp_payment_id)
         if await event_repo.exists(payment.id, event_type, str(mp_payment_id) if mp_payment_id else None):
-            if mp_payment_id and not payment.external_payment_id:
-                payment.external_payment_id = str(mp_payment_id)
-                await self._session.commit()
+            await self._session.commit()
             return
 
         event = PaymentEvent(

@@ -76,3 +76,56 @@ def test_webhook_by_tenant_rejects_invalid_secret(client, db_session):
         headers={"X-Twilio-Signature": "test-signature"},
     )
     assert response.status_code == 403
+
+
+def test_whatsapp_webhook_falls_back_to_global_twilio_token(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(db_session, "Tenant Global Token", "whatsapp:+14155238886")
+    )
+
+    async def _configure():
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            async with session.begin():
+                current = await session.get(Tenant, tenant_id)
+                current.whatsapp_settings = {
+                    "twilio_account_sid": "AC_TENANT",
+                    "twilio_whatsapp_number": "whatsapp:+14155238886",
+                }
+
+    asyncio.run(_configure())
+
+    captured = {}
+
+    class _FakeValidator:
+        def __init__(self, token: str) -> None:
+            captured["token"] = token
+
+        def validate(self, url, form, signature):
+            return True
+
+    monkeypatch.setattr("app.api.routes.webhook.RequestValidator", _FakeValidator)
+
+    async def _fake_process(self, tenant, from_phone, body, media_items=None):
+        return "ok-global-token"
+
+    monkeypatch.setattr(
+        "app.services.conversation_service.ConversationService.process_message",
+        _fake_process,
+    )
+
+    response = client.post(
+        "/webhook/whatsapp",
+        data={
+            "From": "whatsapp:+5491111111111",
+            "To": "whatsapp:+14155238886",
+            "Body": "hola",
+            "MessageSid": "SM789",
+        },
+        headers={"X-Twilio-Signature": "test-signature"},
+    )
+
+    assert response.status_code == 200
+    assert "ok-global-token" in response.text
+    assert captured["token"] == "test"

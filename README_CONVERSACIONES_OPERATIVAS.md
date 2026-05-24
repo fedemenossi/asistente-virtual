@@ -18,6 +18,8 @@ La categoria operativa puede venir del flujo conversacional o ajustarse manualme
 - Tenant detalle activo: `/t/conversation-states/{telefono}`
 - Tenant detalle historico: `/t/conversation-states/history/{history_id}`
 - Super admin global: `/admin/conversation-states`
+- Super admin detalle activo: `/admin/conversation-states/{tenant_id}/{telefono}`
+- Super admin detalle historico: `/admin/conversation-states/history/{history_id}`
 
 ## Filtros disponibles
 - estado: pendientes, resueltas, todas
@@ -35,6 +37,12 @@ La categoria operativa puede venir del flujo conversacional o ajustarse manualme
 - volver a pendiente
 - cambiar categoria operativa
 - guardar nota interna breve
+
+Rutas de accion:
+- Tenant: `POST /t/conversation-states/{telefono}/resolve`
+- Tenant review/reapertura: `POST /t/conversation-states/{telefono}/review`
+- Admin: `POST /admin/conversation-states/{tenant_id}/{telefono}/resolve`
+- Admin review/reapertura: `POST /admin/conversation-states/{tenant_id}/{telefono}/review`
 
 Las acciones dejan trazabilidad en audit log y preservan aislamiento multi-tenant.
 
@@ -70,3 +78,8 @@ Snapshot de la conversacion al cerrarse, incluyendo categoria operativa y nota i
 4. Ajustar categoria operativa si hace falta.
 5. Guardar nota interna breve.
 6. Marcar como resuelta o volver a pendiente segun corresponda.
+
+Estado actual real
+- El bot clasifica solicitudes entrantes y las deja en `pending` para gestion operativa.
+- No asumir que una solicitud de turno por WhatsApp crea automaticamente un `turno` local.
+- El historial cerrado se conserva en `conversaciones_historial`; no se elimina al resolver.

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from twilio.request_validator import RequestValidator
 from twilio.twiml.messaging_response import MessagingResponse
 
+from app.core.config import get_settings
 from app.core.db import get_async_session
 from app.core.tenancy import set_current_tenant_id
 from app.repositories.conversacion_repository import ConversacionRepository
@@ -139,7 +140,11 @@ async def _process_whatsapp_webhook(
         return _twilio_response("Numero no reconocido.")
 
     tenant_whatsapp = tenant.whatsapp_settings or {}
-    auth_token = (tenant_whatsapp.get("twilio_auth_token") or "").strip()
+    settings = get_settings()
+    auth_token = (
+        (tenant_whatsapp.get("twilio_auth_token") or "").strip()
+        or (settings.twilio_auth_token or "").strip()
+    )
     if not auth_token:
         logger.warning(
             "whatsapp_webhook_tenant_missing_auth_token tenant_id=%s to=%s from=%s",
@@ -147,7 +152,7 @@ async def _process_whatsapp_webhook(
             _mask_phone(payload.to_number),
             _mask_phone(payload.from_number),
         )
-        raise HTTPException(status_code=403, detail="Token Twilio no configurado para el tenant")
+        raise HTTPException(status_code=403, detail="Token Twilio no configurado")
     using_tenant_token = bool(tenant_whatsapp.get("twilio_auth_token"))
     logger.info(
         "whatsapp_webhook_tenant_resolved tenant_id=%s tenant_active=%s using_tenant_token=%s to=%s from=%s",

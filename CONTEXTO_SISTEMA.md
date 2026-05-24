@@ -1,5 +1,12 @@
 # Contexto del Sistema - Asistente Virtual Medico (FastAPI SSR Multi-tenant)
 
+Revision actual: 2026-05-24.
+
+Nota de estado real:
+- En la raiz actual no existen `README.md` ni `REBUILD.md`; los README vigentes son especificos por modulo.
+- La suite actual corre verde con `.\.venv\Scripts\python -m pytest -q` (`71 passed` al 2026-05-24).
+- Este documento refleja el codigo actual, no solo la arquitectura objetivo.
+
 ## 1) Proposito del producto
 Sistema SaaS multi-tenant para consultorios medicos que:
 - Atiende conversaciones por WhatsApp (bot + derivacion humana).
@@ -76,11 +83,12 @@ Nota:
   - `/admin/tenants`
   - `/admin/users`
   - `/admin/appointments`
+  - `/admin/conversation-states`
   - `/admin/calendars`
   - `/admin/payments`
-  - `/admin/settings/payments`
   - `/admin/settings/notifications`
   - `/admin/chat-simulator`
+  - `/admin/tenant-features`
   - `/admin/audit-logs`
   - `/admin/notifications`
 
@@ -120,7 +128,7 @@ Campos clave:
 - Soft delete.
 
 ### Turno (`turnos`)
-- FK a paciente y consultorio.
+- `tenant_id` directo + FK a paciente y consultorio.
 - `fecha_hora`, `start_at`, `end_at`, `timezone`.
 - Estado legacy `estado` + estado moderno `status`.
 - Campos de integracion externa (calendar/cabildo).
@@ -152,6 +160,7 @@ Multi-tenant:
 - En panel tenant, siempre filtrar por tenant autenticado.
 - En panel admin, vista global.
 - Webhook WhatsApp resuelve tenant por numero destino (`To`).
+- `Turno` tiene `tenant_id` directo y las vistas tambien validan relacion con `Consultorio.tenant_id`.
 
 ## 7) Endpoints y paneles principales
 ### Public/infra
@@ -191,7 +200,9 @@ Multi-tenant:
 - `GET /t/payments/{payment_id}`
 - `GET /t/conversation-states`
 - `GET /t/conversation-states/{telefono}`
+- `GET /t/conversation-states/history/{history_id}`
 - `POST /t/conversation-states/{telefono}/resolve`
+- `POST /t/conversation-states/{telefono}/review`
 - `GET /t/audit-logs`
 - `GET /t/notifications`
 - `POST /t/notifications/{notification_id}/read`
@@ -224,15 +235,22 @@ Multi-tenant:
 - `GET /admin/audit-logs`
 - `GET /admin/calendars`
 - `GET /admin/appointments`
+- `GET /admin/conversation-states`
+- `GET /admin/conversation-states/{tenant_id}/{telefono}`
+- `GET /admin/conversation-states/history/{history_id}`
+- `POST /admin/conversation-states/{tenant_id}/{telefono}/resolve`
+- `POST /admin/conversation-states/{tenant_id}/{telefono}/review`
 - `GET /admin/payments`
 - `GET /admin/payments/{payment_id}`
-- `GET /admin/settings/payments`
 - `GET /admin/settings/notifications`
 - `GET /admin/chat-simulator`
 - `POST /admin/chat-simulator/send`
 - `POST /admin/chat-simulator/api`
 - `GET /admin/chat-simulator/patients`
 - `POST /admin/chat-simulator/reset`
+- `GET /admin/tenant-features`
+- `GET /admin/tenant-features/{tenant_id}`
+- `POST /admin/tenant-features/{tenant_id}`
 - `GET /admin/notifications`
 - `POST /admin/notifications/{notification_id}/read`
 
@@ -258,34 +276,32 @@ Multi-tenant:
 Archivo central: `app/services/conversation_service.py`.
 
 Estados:
-- Registro: `ask_first_name`, `ask_last_name`, `ask_dni`, `ask_email`.
-- Menu: `main_menu`.
-- Turnos: `ask_appointment_for`, `ask_other_dni`, `ask_other_confirm`, `first_time_check`.
-- Presencial Consultorio Movil: `ask_presential_slot`, `ask_presential_dni`.
-- Derivaciones: `other_detail`, `human_reason`.
+- Registro actual: `ask_first_name`, `ask_last_name`, `ask_dni`, `ask_insurance`, `ask_insurance_number`, `ask_email`.
+- Menu actual: `main_reason_menu` (se conserva `main_menu` como compatibilidad legacy).
+- Turno presencial: `ask_presential_for_whom`, datos de otra persona si aplica, `ask_presential_first_time`.
+- Turno virtual: `ask_virtual_for_whom`, datos de otra persona si aplica, `ask_virtual_first_time`.
+- Receta/orden: `ask_recipe_kind`, `ask_recipe_detail`.
+- Otras consultas: `ask_other_query`.
+- Estados legacy conservados: `ask_appointment_for`, `ask_other_dni`, `ask_other_confirm`, `ask_presential_slot`, `ask_presential_dni`, `first_time_check`, `other_detail`, `human_reason`.
 
 Reglas:
 - Timeout de inactividad: 30 min (`INACTIVITY_TIMEOUT_MINUTES`).
 - Comandos de salida: `salir|cancelar|exit|reiniciar|menu`.
 - Menu principal:
-  - A/1: turno presencial
-  - B/2: turno virtual
-  - C/3: otra consulta
-  - D/4: humano
-- Si consulta/humano:
+  - 1: turno presencial
+  - 2: turno virtual
+  - 3: solicitar receta u orden medica
+  - 4: otra consulta
+  - 5: hablar con una persona
+- Si consulta/turno/receta/humano:
   - marca `status=pending`
   - guarda motivo/mensaje
   - crea notificacion tenant
-  - vuelve a `main_menu`
-- Presencial:
-  - consulta disponibilidad en Consultorio Movil
-  - usuario elige slot
-  - intenta reservar en Consultorio Movil
-  - refleja turno local en DB
-  - manejo de errores + audit.
-- Virtual:
-  - la infraestructura de turnos local + sincronizacion Google existe en `AppointmentService` / `CalendarService`
-  - pero no todo pedido conversacional por WhatsApp dispara reserva automatica; parte del manejo sigue en bandeja operativa/manual
+  - queda en bandeja operativa para gestion manual/semi-manual
+- Turnos:
+  - la infraestructura local y la sincronizacion externa existen en `AppointmentService` / `CalendarService`
+  - el bot actual NO agenda automaticamente la mayoria de pedidos por WhatsApp
+  - las solicitudes de turno presencial/virtual quedan como conversaciones pendientes clasificadas
 
 Conversaciones pendientes/finalizadas:
 - Bandeja en `/t/conversation-states`.
@@ -351,6 +367,10 @@ Funciones:
 - usa timezone por defecto `America/Argentina/Buenos_Aires`.
 - requiere config por consultorio en `configuracion_externa.cabildo`:
   - user, password, staff_id, days, timezone.
+- Estado actual:
+  - listar y reservar slots esta implementado via `CabildoProvider`.
+  - cancelar turno externo en Consultorio Movil esta pendiente y el servicio lo bloquea con `501` para evitar desincronizar el turno local.
+  - `sync_cabildo_cancel` y `sync_cabildo_update` existen como placeholders `NotImplemented`.
 
 ## 12) Integracion Mercado Pago
 Archivos:
@@ -368,6 +388,11 @@ Flujo:
 
 Credenciales:
 - global `.env` o por tenant en `payment_settings`.
+
+Observaciones actuales:
+- El webhook acepta `payment_id` por query para resolver el pago local.
+- Si existe `mp_webhook_secret`, la firma `x-signature` es obligatoria.
+- El webhook persiste `external_payment_id` cuando viene `data.id`.
 
 ## 13) Seguridad y auditoria
 - CSRF en formularios SSR (`csrf_token`).
@@ -400,6 +425,7 @@ Principales:
 Importante:
 - No subir secretos reales al repositorio.
 - Preferir configuracion por tenant para entornos multi-cliente.
+- El fallback global de Twilio aplica a outbound y tambien a validacion inbound si el tenant no tiene token propio.
 
 ## 16) Scripts operativos
 - `scripts/init_db.py`: crea tablas.
@@ -451,14 +477,20 @@ Coberturas destacadas:
 
 Comando:
 ```powershell
-pytest -q
+.\.venv\Scripts\python -m pytest -q
 ```
 
 Nota: si los tests quedan en passed y no vuelve prompt, revisar recursos/event loop abiertos o procesos colgados de entorno local.
 
 ## 19) Riesgos/observaciones actuales (para IA y equipo)
-- `Turno` no tiene `tenant_id` directo; el tenant se obtiene via `Turno -> Consultorio -> tenant_id`. Evitar helpers que asuman `model.tenant_id` en `Turno`.
-- En `appointment_resend` de tenant view, validar seleccion/indice de columnas al leer filas de SQLAlchemy para evitar errores por index fuera de rango.
+- `Turno` SI tiene `tenant_id` directo. Mantenerlo sincronizado con `Consultorio.tenant_id` y conservar validaciones cruzadas para aislamiento.
+- Conviven `/t/turnos` legacy y `/t/appointments` agenda real; evitar duplicar logica nueva en ambos sin decidir estrategia.
+- El bot conversacional actual clasifica y deriva a bandeja; no asumir agenda automatica end-to-end desde WhatsApp.
+- Inbound Twilio usa token por tenant y fallback global.
+- Consultorio Movil reserva, pero cancelacion/update externo estan pendientes; la cancelacion externa se bloquea explicitamente para evitar falsas cancelaciones locales.
+- `ReminderService` usa `reminder_sent_at` unico junto con flags `reminder_24h_sent` y `reminder_2h_sent`; revisar antes de depender de dos recordatorios independientes.
+- Mercado Pago webhook exige firma si hay secret y persiste `external_payment_id`.
+- APIs REST admin (`/api/admin/*`) usan Basic Auth y algunas operaciones hacen delete fisico; SSR admin usa soft delete. No mezclar supuestos.
 - `whatsapp_number` en tenant es unico global; manejar colisiones con validacion previa y errores amigables.
 - Google Calendar puede devolver `403 accessNotConfigured` si API no esta habilitada en GCP.
 
