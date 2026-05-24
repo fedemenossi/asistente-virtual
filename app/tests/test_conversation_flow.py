@@ -132,6 +132,93 @@ def test_free_text_main_menu_routes_with_ai_rules(db_session):
     asyncio.run(run())
 
 
+def test_free_text_main_menu_saves_extracted_context_and_skips_known_child_data(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant IA Extract", "whatsapp:+718"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491171800001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "quiero un turno virtual para mi hijo Juan Perez DNI 40111222, el martes a la tarde",
+            )
+
+            assert "turno es para Juan Perez" in reply
+            assert "Es primera vez?" in reply
+            repo = ConversacionRepository(session)
+            state = await repo.get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_VIRTUAL_FIRST_TIME.value
+            assert state.contexto_json["for_whom"] == "other"
+            assert state.contexto_json["other_first_name"] == "Juan"
+            assert state.contexto_json["other_last_name"] == "Perez"
+            assert state.contexto_json["other_dni"] == "40111222"
+            assert state.contexto_json["appointment"]["preferred_day"] == "martes"
+            assert state.contexto_json["appointment"]["preferred_time_range"] == "tarde"
+            assert state.contexto_json["ai"]["last_intent"] == "book_virtual_appointment"
+
+    asyncio.run(run())
+
+
+def test_free_text_recipe_uses_extracted_detail(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Recipe Extract", "whatsapp:+719"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491171900001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "Necesito receta para mi medicacion habitual",
+            )
+
+            assert "Ya tengo el detalle" in reply
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.status == "pending"
+            assert state.pending_reason == "receta_orden"
+            assert "mi medicacion habitual" in state.pending_message
+            assert state.contexto_json["recipe_order"]["type"] == "receta"
+
+    asyncio.run(run())
+
+
+def test_free_text_high_urgency_derives_to_human(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Urgency Extract", "whatsapp:+729"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491172900001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "tengo dolor fuerte en el pecho, es urgente",
+            )
+
+            assert "guardia" in reply.lower()
+            assert "emergencias" in reply.lower()
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.status == "pending"
+            assert state.pending_reason == "humano"
+            assert state.requires_human_review is True
+
+    asyncio.run(run())
+
+
 def test_free_text_low_confidence_returns_menu(db_session):
     tenant_id = asyncio.run(
         create_tenant(

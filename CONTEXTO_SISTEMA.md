@@ -346,9 +346,10 @@ Estado actual:
 - Si se activa IA y no hay API key del tenant, se permite fallback global explicito con `OPENAI_API_KEY` si existe.
 - Si no hay API key disponible o falla la llamada, vuelve a reglas/fallback.
 - La respuesta IA se pide como JSON estricto y no se envia al paciente.
+- Desde Etapa 2 tambien extrae datos estructurados y los guarda en `EstadoConversacion.contexto_json`.
 - La API key no se muestra completa en templates ni se loguea; en edicion se muestra enmascarada.
 
-Que NO hace esta etapa:
+Que NO hace el agente en estas etapas:
 - No reserva turnos.
 - No consulta Calendar.
 - No llama Consultorio Movil.
@@ -408,6 +409,65 @@ Prueba manual rapida:
 3. Debe continuar por el flujo de turno presencial existente, sin crear turno ni llamar proveedores externos.
 4. Para IA real, habilitar el agente en `/admin/tenants/{tenant_id}/edit` y cargar API key/modelo.
 5. Ejecutar `.\.venv\Scripts\python -m pytest -q`.
+
+### 8.2) Etapa 2 IA - Extraccion de datos
+Archivos:
+- `app/services/ai_extraction_service.py`
+- `app/services/ai_intent_classifier.py`
+- `app/services/conversation_service.py`
+
+Objetivo:
+- Extraer datos utiles del mensaje libre del paciente y persistirlos en `EstadoConversacion.contexto_json`.
+- Evitar preguntas repetidas cuando el paciente ya dio datos claros.
+- Mantener el flujo stateful actual: la IA no ejecuta acciones, solo mejora comprension y contexto.
+
+Datos que puede extraer:
+- Datos del paciente: nombre, apellido, DNI, email, obra social y numero de afiliado.
+- Turnos: tipo presencial/virtual, si es para el paciente u otra persona, nombre/DNI de otra persona, primera vez, dia/fecha/hora/franja preferida.
+- Recetas/ordenes: tipo de solicitud y detalle expresado.
+- Operacion: nivel de urgencia y si conviene derivar a humano.
+
+Persistencia sugerida/actual:
+```json
+{
+  "ai": {
+    "last_intent": "book_virtual_appointment",
+    "last_confidence": 0.91,
+    "last_source": "rules",
+    "extracted": {},
+    "missing_fields": ["is_first_time"]
+  },
+  "appointment": {
+    "type": "virtual",
+    "for": "other",
+    "preferred_day": "martes",
+    "preferred_time_range": "tarde"
+  },
+  "other_patient": {
+    "name": "Juan Perez",
+    "dni": "40111222"
+  },
+  "recipe_order": {
+    "type": "receta",
+    "detail": "medicacion habitual"
+  }
+}
+```
+
+Reglas de seguridad:
+- No pisa datos existentes confiables con valores vacios/null.
+- Normaliza DNI a solo numeros y email a minusculas.
+- Si detecta `urgency_level=high` o `needs_human=true`, deriva a bandeja humana prioritaria y responde sin consejo medico.
+- No loguea API keys ni envia secrets al frontend.
+
+Ejemplos:
+- "Quiero un turno virtual para mi hijo Juan Perez DNI 40111222, el martes a la tarde" -> guarda turno virtual, otra persona, nombre/DNI y preferencia; pregunta solo si es primera vez.
+- "Necesito receta para mi medicacion habitual" -> guarda tipo receta y detalle; deja la solicitud pendiente sin pedir el detalle otra vez.
+
+Comando de validacion:
+```powershell
+.\.venv\Scripts\python -m pytest -q
+```
 
 ## 9) Integracion WhatsApp por tenant (Twilio)
 ### Inbound

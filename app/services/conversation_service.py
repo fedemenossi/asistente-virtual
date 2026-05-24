@@ -15,10 +15,16 @@ from app.repositories.notification_repository import NotificationRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.services.conversation_intents import (
     ConversationCategory,
+    PrescriptionSubtype,
     classify_main_intent,
     detect_for_whom,
     detect_prescription_subtype,
     detect_yes_no,
+)
+from app.services.ai_extraction_service import (
+    get_missing_fields_for_intent,
+    merge_extracted_into_context,
+    should_handoff_by_extraction,
 )
 from app.services.ai_intent_classifier import (
     AIIntent,
@@ -285,6 +291,33 @@ class ConversationService:
                     message=text,
                     result=ai_result,
                 )
+                context = self._context_with_ai_result(context, ai_result)
+                if should_handoff_by_extraction(ai_result.extracted):
+                    await self._conversacion_repo.upsert_state(
+                        tenant.id,
+                        normalized_phone,
+                        current_state,
+                        context,
+                        conversation_category=ConversationCategory.HUMAN_HANDOFF,
+                    )
+                    await self._set_pending(
+                        tenant=tenant,
+                        phone=normalized_phone,
+                        reason="humano",
+                        message=text or "Posible urgencia detectada por agente IA.",
+                        title="Derivacion prioritaria a humano",
+                        category=ConversationCategory.HUMAN_HANDOFF,
+                        subtype=None,
+                        requires_human_review=True,
+                        has_media=has_media,
+                        last_patient_message=text,
+                        media_items=media_items,
+                    )
+                    return (
+                        "Por lo que me comentas, es mejor que lo revise una persona del consultorio. "
+                        "Ya dejo tu mensaje como prioridad para que te contacten. "
+                        "Si es una urgencia medica, acudi a una guardia o llama a emergencias."
+                    )
                 if (
                     ai_result.intent == AIIntent.EXIT
                     and ai_result.confidence >= ai_settings["min_confidence"]
@@ -305,40 +338,40 @@ class ConversationService:
             if not reason or not category:
                 return self._invalid_option_message(self._main_reason_menu_message())
             if reason == "turno_presencial":
-                await self._conversacion_repo.upsert_state(
-                    tenant.id,
-                    normalized_phone,
-                    ConversationState.ASK_PRESENTIAL_FOR_WHOM.value,
-                    {"reason": reason, "patient_id": getattr(paciente, "id", None)},
-                    conversation_category=category,
-                )
-                return (
-                    "El turno presencial es:\n"
-                    f"{self._for_whom_options()}"
+                return await self._start_appointment_flow_from_context(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    context=context,
+                    patient_id=getattr(paciente, "id", None),
+                    reason=reason,
+                    category=category,
+                    appointment_type="presential",
+                    original_text=text,
+                    has_media=has_media,
+                    media_items=media_items,
                 )
             if reason == "turno_virtual":
-                await self._conversacion_repo.upsert_state(
-                    tenant.id,
-                    normalized_phone,
-                    ConversationState.ASK_VIRTUAL_FOR_WHOM.value,
-                    {"reason": reason, "patient_id": getattr(paciente, "id", None)},
-                    conversation_category=category,
-                )
-                return (
-                    "El turno virtual es:\n"
-                    f"{self._for_whom_options()}"
+                return await self._start_appointment_flow_from_context(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    context=context,
+                    patient_id=getattr(paciente, "id", None),
+                    reason=reason,
+                    category=category,
+                    appointment_type="virtual",
+                    original_text=text,
+                    has_media=has_media,
+                    media_items=media_items,
                 )
             if reason == "receta_orden":
-                await self._conversacion_repo.upsert_state(
-                    tenant.id,
-                    normalized_phone,
-                    ConversationState.ASK_RECIPE_KIND.value,
-                    {"reason": reason, "patient_id": getattr(paciente, "id", None)},
-                    conversation_category=category,
-                )
-                return (
-                    "Tu solicitud de receta/orden es:\n"
-                    f"{self._recipe_kind_options()}"
+                return await self._start_recipe_flow_from_context(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    context=context,
+                    patient_id=getattr(paciente, "id", None),
+                    original_text=text,
+                    has_media=has_media,
+                    media_items=media_items,
                 )
             if reason == "humano":
                 await self._set_pending(
@@ -638,6 +671,175 @@ class ConversationService:
         )
         return self._main_reason_retry_message()
 
+    async def _start_appointment_flow_from_context(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        context: dict,
+        patient_id: int | None,
+        reason: str,
+        category: str,
+        appointment_type: str,
+        original_text: str,
+        has_media: bool,
+        media_items: list[dict],
+    ) -> str:
+        context = dict(context or {})
+        context["reason"] = reason
+        context["patient_id"] = patient_id
+        appointment = context.get("appointment") if isinstance(context.get("appointment"), dict) else {}
+        appointment["type"] = appointment_type
+        context["appointment"] = appointment
+
+        prefix = f"Perfecto, entiendo que queres un turno {'virtual' if appointment_type == 'virtual' else 'presencial'}."
+        state_prefix = "VIRTUAL" if appointment_type == "virtual" else "PRESENTIAL"
+        for_whom_state = getattr(ConversationState, f"ASK_{state_prefix}_FOR_WHOM").value
+        other_first_name_state = getattr(ConversationState, f"ASK_{state_prefix}_OTHER_FIRST_NAME").value
+        other_last_name_state = getattr(ConversationState, f"ASK_{state_prefix}_OTHER_LAST_NAME").value
+        other_dni_state = getattr(ConversationState, f"ASK_{state_prefix}_OTHER_DNI").value
+        first_time_state = getattr(ConversationState, f"ASK_{state_prefix}_FIRST_TIME").value
+
+        who = context.get("for_whom") or appointment.get("for")
+        if not who:
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                phone,
+                for_whom_state,
+                context,
+                conversation_category=category,
+            )
+            label = "virtual" if appointment_type == "virtual" else "presencial"
+            return f"{prefix}\nEl turno {label} es:\n{self._for_whom_options()}"
+
+        context["for_whom"] = who
+        if who == "other":
+            if not context.get("other_first_name"):
+                await self._conversacion_repo.upsert_state(
+                    tenant.id, phone, other_first_name_state, context, conversation_category=category
+                )
+                return f"{prefix} Indica nombre de la otra persona."
+            if not context.get("other_last_name"):
+                await self._conversacion_repo.upsert_state(
+                    tenant.id, phone, other_last_name_state, context, conversation_category=category
+                )
+                return f"{prefix} Ya tengo el nombre. Ahora el apellido."
+            if not self._is_valid_dni(str(context.get("other_dni") or "")):
+                await self._conversacion_repo.upsert_state(
+                    tenant.id, phone, other_dni_state, context, conversation_category=category
+                )
+                return "Ya tengo para quien es el turno. Indica DNI de la otra persona."
+
+        if context.get("first_time") is None:
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                phone,
+                first_time_state,
+                context,
+                conversation_category=category,
+            )
+            if who == "other":
+                name = " ".join(
+                    part for part in (context.get("other_first_name"), context.get("other_last_name")) if part
+                )
+                if name:
+                    return f"Perfecto, entiendo que el turno es para {name}. {self._first_time_options()}"
+            return f"{prefix} {self._first_time_options()}"
+
+        summary = self._build_virtual_summary(context) if appointment_type == "virtual" else self._build_presential_summary(context)
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            first_time_state,
+            context,
+            conversation_category=category,
+        )
+        await self._set_pending(
+            tenant=tenant,
+            phone=phone,
+            reason=reason,
+            message=summary,
+            title="Solicitud de turno virtual" if appointment_type == "virtual" else "Solicitud de turno presencial",
+            category=category,
+            subtype=None,
+            requires_human_review=False,
+            has_media=has_media,
+            last_patient_message=original_text,
+            media_items=media_items,
+        )
+        if appointment_type == "virtual":
+            return "Gracias. Aguarde que a la brevedad se le estaran informando los turnos virtuales disponibles."
+        return (
+            "Gracias por la informacion. Aguarde que a la brevedad se le respondera "
+            "con los turnos presenciales disponibles."
+        )
+
+    async def _start_recipe_flow_from_context(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        context: dict,
+        patient_id: int | None,
+        original_text: str,
+        has_media: bool,
+        media_items: list[dict],
+    ) -> str:
+        context = dict(context or {})
+        context["reason"] = "receta_orden"
+        context["patient_id"] = patient_id
+        recipe_order = context.get("recipe_order") if isinstance(context.get("recipe_order"), dict) else {}
+        recipe_type = recipe_order.get("type")
+        detail = recipe_order.get("detail")
+        subtype = self._recipe_type_to_subtype(recipe_type)
+        if subtype:
+            context["recipe_kind"] = subtype
+
+        if not subtype:
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                phone,
+                ConversationState.ASK_RECIPE_KIND.value,
+                context,
+                conversation_category=ConversationCategory.PRESCRIPTION_OR_ORDER,
+            )
+            return f"Perfecto, entiendo que necesitas una receta u orden.\n{self._recipe_kind_options()}"
+
+        if not detail:
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                phone,
+                ConversationState.ASK_RECIPE_DETAIL.value,
+                context,
+                conversation_category=ConversationCategory.PRESCRIPTION_OR_ORDER,
+                conversation_subtype=subtype,
+            )
+            return "Perfecto. Escribi el detalle del medicamento u orden, o envia foto/documento."
+
+        summary = f"subtipo={subtype}; detalle={detail}; adjuntos={len(media_items)}"
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.ASK_RECIPE_DETAIL.value,
+            context,
+            conversation_category=ConversationCategory.PRESCRIPTION_OR_ORDER,
+            conversation_subtype=subtype,
+        )
+        await self._set_pending(
+            tenant=tenant,
+            phone=phone,
+            reason="receta_orden",
+            message=summary,
+            title="Solicitud de receta u orden",
+            category=ConversationCategory.PRESCRIPTION_OR_ORDER,
+            subtype=subtype,
+            requires_human_review=has_media,
+            has_media=has_media,
+            last_patient_message=original_text,
+            media_items=media_items,
+        )
+        return "Gracias. Ya tengo el detalle de la solicitud y se le respondera a la brevedad."
+
     async def _set_pending(
         self,
         tenant: Tenant,
@@ -765,6 +967,34 @@ class ConversationService:
             "4) Orden/pedido medico\n"
             "5) Otra solicitud de receta u orden"
         )
+
+    @staticmethod
+    def _context_with_ai_result(context: dict, result: AIIntentResult) -> dict:
+        merged = merge_extracted_into_context(context, result.extracted)
+        ai_context = merged.setdefault("ai", {})
+        ai_context["last_intent"] = result.intent
+        ai_context["last_confidence"] = result.confidence
+        ai_context["last_source"] = result.source
+        missing_fields = result.missing_fields or get_missing_fields_for_intent(result.intent, merged)
+        ai_context["missing_fields"] = missing_fields
+        return merged
+
+    @staticmethod
+    def _recipe_type_to_subtype(recipe_type: str | None) -> str | None:
+        normalized = normalize_message(recipe_type)
+        if not normalized:
+            return None
+        if "orden" in normalized or "pedido" in normalized:
+            return PrescriptionSubtype.MEDICAL_ORDER
+        if "renov" in normalized:
+            return PrescriptionSubtype.RENEW_PRESCRIPTION
+        if "venc" in normalized:
+            return PrescriptionSubtype.EXPIRED_PRESCRIPTION
+        if "nueva" in normalized:
+            return PrescriptionSubtype.NEW_PRESCRIPTION
+        if "receta" in normalized or "medic" in normalized:
+            return PrescriptionSubtype.OTHER_PRESCRIPTION_RELATED
+        return PrescriptionSubtype.OTHER_PRESCRIPTION_RELATED
 
     @staticmethod
     def _build_presential_summary(context: dict) -> str:
