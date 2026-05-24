@@ -44,7 +44,18 @@ def _build_database_url() -> str:
 
 database_url = _build_database_url()
 
-engine = create_async_engine(database_url, pool_pre_ping=True)
+
+def _engine_options(url: str) -> dict:
+    options: dict = {"pool_pre_ping": True}
+    if url.startswith("mysql+aiomysql://"):
+        # SQLAlchemy's MySQL pre-ping path can call aiomysql's ping without the
+        # required reconnect argument in some dependency combinations.
+        options["pool_pre_ping"] = False
+        options["pool_recycle"] = 1800
+    return options
+
+
+engine = create_async_engine(database_url, **_engine_options(database_url))
 
 AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
 
