@@ -18,6 +18,43 @@ from app.tests.conftest import create_paciente, create_tenant, create_user, get_
 from app.models.paciente import Paciente
 
 
+def _tools_ai_settings(**overrides):
+    data = {
+        "enabled": True,
+        "tools_enabled": True,
+        "availability_lookup_enabled": True,
+        "max_offered_slots": 3,
+        "require_confirmation_before_booking": True,
+    }
+    data.update(overrides)
+    return data
+
+
+async def _fake_availability_slots(session, *, tenant_id, consultorio_type, patient_context, preferences, limit=5):
+    return {
+        "ok": True,
+        "source": "calendar" if consultorio_type == "virtual" else "consultorio_movil",
+        "consultorio_type": consultorio_type,
+        "slots": [
+            {
+                "slot_id": f"slot-{tenant_id}-{index}",
+                "label": label,
+                "start_at": f"2026-05-2{index}T18:30:00-03:00",
+                "end_at": f"2026-05-2{index}T19:00:00-03:00",
+                "timezone": "America/Argentina/Buenos_Aires",
+                "provider": "google_calendar",
+                "metadata": {},
+            }
+            for index, label in enumerate(
+                ["Martes 28/05 a las 18:30", "Miercoles 29/05 a las 10:00", "Jueves 30/05 a las 16:30"],
+                start=1,
+            )
+        ][:limit],
+        "message": None,
+        "error": None,
+    }
+
+
 def _service(session):
     return ConversationService(
         session=session,
@@ -217,6 +254,226 @@ def test_free_text_high_urgency_derives_to_human(db_session):
             assert state.requires_human_review is True
 
     asyncio.run(run())
+
+
+def test_tools_disabled_keeps_previous_free_text_flow(db_session):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Tools Disabled",
+            "whatsapp:+730",
+            ai_settings=_tools_ai_settings(tools_enabled=False),
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491173000001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "Necesito turno virtual para mi, es primera vez",
+            )
+
+            assert "turnos virtuales disponibles" in reply.lower()
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.status == "pending"
+            assert state.estado_actual != ConversationState.ASK_AI_SLOT_SELECTION.value
+
+    asyncio.run(run())
+
+
+def test_tools_enabled_free_text_offers_virtual_slots(monkeypatch, db_session):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Tools Virtual",
+            "whatsapp:+731",
+            ai_settings=_tools_ai_settings(),
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491173100001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+    monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", _fake_availability_slots)
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "Quiero turno virtual para mi, es primera vez el martes a la tarde",
+            )
+
+            assert "Encontre estos turnos virtuales disponibles" in reply
+            assert "1) Martes 28/05 a las 18:30" in reply
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_AI_SLOT_SELECTION.value
+            offered = state.contexto_json["appointment"]["offered_slots"]
+            assert len(offered) == 3
+            assert offered[0]["slot_id"] == f"slot-{tenant_id}-1"
+            assert state.contexto_json["appointment"]["awaiting_slot_selection"] is True
+
+    asyncio.run(run())
+
+
+def test_tools_enabled_missing_data_asks_before_lookup(monkeypatch, db_session):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Tools Missing",
+            "whatsapp:+732",
+            ai_settings=_tools_ai_settings(),
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491173200001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def fail_lookup(*args, **kwargs):
+        raise AssertionError("No debe consultar disponibilidad con datos incompletos")
+
+    monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", fail_lookup)
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "Quiero turno virtual",
+            )
+
+            assert "El turno virtual es:" in reply
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state.estado_actual == ConversationState.ASK_VIRTUAL_FOR_WHOM.value
+
+    asyncio.run(run())
+
+
+def test_slot_selection_and_confirmation_do_not_book(monkeypatch, db_session):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Tools Select",
+            "whatsapp:+733",
+            ai_settings=_tools_ai_settings(),
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491173300001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+    monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", _fake_availability_slots)
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            repo = ConversacionRepository(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "Quiero turno virtual para mi, es primera vez")
+
+            invalid = await service.process_message(tenant, f"whatsapp:+{phone}", "9")
+            assert "Debe seleccionar una opcion valida" in invalid
+
+            selected_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "Confirmas que queres reservarlo" in selected_reply
+            state = await repo.get_state(tenant.id, phone)
+            assert state.estado_actual == ConversationState.ASK_AI_BOOKING_CONFIRMATION.value
+            assert state.contexto_json["appointment"]["selected_slot"]["option"] == 1
+
+            final_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "dejo registrada tu seleccion" in final_reply
+            state = await repo.get_state(tenant.id, phone)
+            assert state.status == "pending"
+            assert "reserva_real=no" in state.pending_message
+
+    asyncio.run(run())
+
+
+def test_tools_high_urgency_does_not_lookup(monkeypatch, db_session):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Tools Urgency",
+            "whatsapp:+734",
+            ai_settings=_tools_ai_settings(),
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491173400001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def fail_lookup(*args, **kwargs):
+        raise AssertionError("No debe consultar disponibilidad ante urgencia")
+
+    monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", fail_lookup)
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(tenant, f"whatsapp:+{phone}", "dolor fuerte en el pecho urgente")
+
+            assert "guardia" in reply.lower()
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state.status == "pending"
+            assert state.pending_reason == "humano"
+
+    asyncio.run(run())
+
+
+def test_tools_slots_are_tenant_isolated(monkeypatch, db_session):
+    tenant_a_id = asyncio.run(
+        create_tenant(db_session, "Tenant Tools A", "whatsapp:+735", ai_settings=_tools_ai_settings())
+    )
+    tenant_b_id = asyncio.run(
+        create_tenant(db_session, "Tenant Tools B", "whatsapp:+736", ai_settings=_tools_ai_settings(max_offered_slots=1))
+    )
+    tenant_a = asyncio.run(get_tenant(db_session, tenant_a_id))
+    tenant_b = asyncio.run(get_tenant(db_session, tenant_b_id))
+    phone = "5491173500001"
+    asyncio.run(create_paciente(db_session, tenant_a_id, phone))
+    asyncio.run(create_paciente(db_session, tenant_b_id, phone))
+    calls = []
+
+    async def fake_slots(session, *, tenant_id, consultorio_type, patient_context, preferences, limit=5):
+        calls.append((tenant_id, limit))
+        return await _fake_availability_slots(
+            session,
+            tenant_id=tenant_id,
+            consultorio_type=consultorio_type,
+            patient_context=patient_context,
+            preferences=preferences,
+            limit=limit,
+        )
+
+    monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", fake_slots)
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant_a, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant_b, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant_a, f"whatsapp:+{phone}", "turno virtual para mi, es primera vez")
+            await service.process_message(tenant_b, f"whatsapp:+{phone}", "turno virtual para mi, es primera vez")
+            repo = ConversacionRepository(session)
+            state_a = await repo.get_state(tenant_a.id, phone)
+            state_b = await repo.get_state(tenant_b.id, phone)
+            assert len(state_a.contexto_json["appointment"]["offered_slots"]) == 3
+            assert len(state_b.contexto_json["appointment"]["offered_slots"]) == 1
+
+    asyncio.run(run())
+    assert (tenant_a_id, 3) in calls
+    assert (tenant_b_id, 1) in calls
 
 
 def test_free_text_low_confidence_returns_menu(db_session):

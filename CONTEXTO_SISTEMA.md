@@ -469,6 +469,164 @@ Comando de validacion:
 .\.venv\Scripts\python -m pytest -q
 ```
 
+### 8.3) Etapa 2.5 IA - Visibilidad y auditoria
+Archivos:
+- `app/services/ai_conversation_summary_service.py`
+- `app/templates/tenant/conversation_states.html`
+- `app/templates/tenant/conversation_state_detail.html`
+- vistas tenant/admin de conversaciones.
+
+Objetivo:
+- Mostrar en la bandeja operativa lo que el agente entendio del mensaje.
+- Ayudar al equipo humano a auditar clasificacion, confianza, datos extraidos y campos faltantes.
+- No cambia la logica conversacional ni ejecuta acciones automaticas.
+
+Se muestra en listados:
+- Intencion detectada.
+- Confianza y nivel (`Alta`, `Media`, `Baja`).
+- Fuente (`rules`, `ai`, `fallback`).
+- Datos resumidos extraidos.
+- Campos faltantes.
+- Badges de `Requiere humano` y `Urgencia posible` cuando aplica.
+- En listados se enmascaran datos sensibles como DNI.
+
+Se muestra en detalle:
+- Seccion `Interpretacion de IA`.
+- Intencion, confianza, fuente, urgencia y necesidad de humano.
+- Datos extraidos completos necesarios para operacion del consultorio.
+- Campos faltantes.
+- Correccion humana de intencion y nota sobre interpretacion IA si se cargan.
+
+Persistencia:
+- La interpretacion viene de `EstadoConversacion.contexto_json.ai`.
+- La revision humana se guarda en:
+```json
+{
+  "ai_review": {
+    "human_corrected_intent": "recipe_or_order",
+    "review_note": "La IA lo tomo como turno, pero era pedido de receta.",
+    "reviewed_by": 1,
+    "reviewed_at": "..."
+  }
+}
+```
+
+Seguridad:
+- No se muestra `raw_response` en listados ni detalle.
+- No se muestran prompts internos ni API keys.
+- El detalle admin global respeta tenant por URL; el tenant admin solo ve su tenant.
+
+Que NO hace esta etapa:
+- No reserva turnos.
+- No consulta Google Calendar.
+- No llama Consultorio Movil.
+- No crea pagos.
+- No cancela ni reprograma turnos reales.
+
+Comando de validacion:
+```powershell
+.\.venv\Scripts\python -m pytest -q
+```
+
+### 8.4) Etapa 3 IA - Tools controladas de disponibilidad
+Archivos:
+- `app/services/ai_tools/base.py`
+- `app/services/ai_tools/appointment_availability_tool.py`
+- `app/services/conversation_service.py`
+- `app/services/tenant_ai_settings_service.py`
+
+Objetivo:
+- Permitir consulta controlada de disponibilidad real desde servicios internos.
+- Ofrecer opciones numeradas al paciente y guardar esas opciones en `contexto_json`.
+- Pedir seleccion y confirmacion, sin reservar automaticamente.
+
+Activacion por tenant:
+```json
+{
+  "enabled": true,
+  "tools_enabled": true,
+  "availability_lookup_enabled": true,
+  "max_offered_slots": 5,
+  "require_confirmation_before_booking": true
+}
+```
+
+Defaults seguros:
+- `tools_enabled=false`
+- `availability_lookup_enabled=false`
+- `max_offered_slots=5`
+- `require_confirmation_before_booking=true`
+
+Tool disponible:
+- `get_available_appointment_slots(...)`
+- Devuelve slots normalizados con `slot_id` opaco, label, inicio/fin, timezone, provider y metadata segura.
+- No devuelve tokens, credenciales ni IDs externos sensibles.
+
+Disponibilidad:
+- Virtual: usa `CalendarService` / proveedor Google configurado por tenant y consultorio virtual.
+- Presencial: usa Consultorio Movil/Cabildo si el consultorio presencial esta configurado.
+- Si falla proveedor o falta configuracion, devuelve error controlado y deriva a revision manual.
+
+Estados conversacionales nuevos:
+- `ask_ai_slot_selection`: espera numero de opcion ofrecida.
+- `ask_ai_booking_confirmation`: espera confirmacion del paciente.
+
+Estructura en `contexto_json`:
+```json
+{
+  "appointment": {
+    "type": "virtual",
+    "for": "self",
+    "is_first_time": true,
+    "preferences": {
+      "preferred_day": "martes",
+      "preferred_time_range": "tarde"
+    },
+    "offered_slots": [
+      {
+        "option": 1,
+        "slot_id": "opaque-id",
+        "label": "Martes 28/05 a las 18:30",
+        "start_at": "2026-05-28T18:30:00-03:00",
+        "end_at": "2026-05-28T19:00:00-03:00",
+        "provider": "google_calendar",
+        "metadata": {}
+      }
+    ],
+    "selected_slot": null,
+    "awaiting_slot_selection": true,
+    "awaiting_booking_confirmation": false
+  }
+}
+```
+
+Flujo:
+1. Paciente pide turno por texto libre o completa el flujo existente.
+2. Si faltan datos minimos, se pregunta el dato faltante.
+3. Si tools estan habilitadas, se consulta disponibilidad.
+4. Se ofrecen opciones numeradas.
+5. El paciente selecciona una opcion.
+6. El bot pide confirmacion.
+7. En esta etapa la confirmacion deja la seleccion como pendiente para revision manual.
+
+Que NO hace esta etapa:
+- No reserva turnos reales.
+- No crea pagos.
+- No cancela ni reprograma turnos.
+- No crea confirmaciones finales.
+- No modifica eventos externos.
+- No inventa horarios.
+
+Seguridad:
+- Si la IA detecta urgencia (`urgency_level=high` o `needs_human=true`), no consulta disponibilidad y deriva a humano.
+- Logs de tool incluyen tenant, telefono, intent, tool, cantidad de slots, provider y error controlado.
+- No se loguean credenciales ni secretos.
+
+Comando de validacion:
+```powershell
+.\.venv\Scripts\python -m pytest -q
+```
+
 ## 9) Integracion WhatsApp por tenant (Twilio)
 ### Inbound
 - `POST /webhook/whatsapp`:

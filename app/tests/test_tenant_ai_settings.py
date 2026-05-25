@@ -38,6 +38,8 @@ def _base_tenant_form(csrf: str, **extra) -> dict:
         "ai_temperature": "0",
         "ai_max_tokens": "400",
         "ai_handoff_on_low_confidence": "1",
+        "ai_max_offered_slots": "5",
+        "ai_require_confirmation_before_booking": "1",
         "ai_allowed_intents": sorted(
             [
                 AIIntent.BOOK_PRESENTIAL_APPOINTMENT,
@@ -83,6 +85,10 @@ def test_effective_ai_settings_defaults_when_empty(db_session):
     assert settings["provider"] == "openai"
     assert settings["model"] == "gpt-4o-mini"
     assert settings["min_confidence"] == 0.75
+    assert settings["tools_enabled"] is False
+    assert settings["availability_lookup_enabled"] is False
+    assert settings["max_offered_slots"] == 5
+    assert settings["require_confirmation_before_booking"] is True
 
 
 def test_validate_ai_settings_rejects_invalid_confidence():
@@ -93,6 +99,11 @@ def test_validate_ai_settings_rejects_invalid_confidence():
 def test_validate_ai_settings_rejects_invalid_timeout():
     with pytest.raises(ValueError):
         validate_ai_settings({"timeout_seconds": 0})
+
+
+def test_validate_ai_settings_rejects_invalid_max_offered_slots():
+    with pytest.raises(ValueError):
+        validate_ai_settings({"max_offered_slots": 11})
 
 
 def test_validate_ai_settings_preserves_existing_api_key_when_blank():
@@ -125,6 +136,8 @@ def test_super_admin_sees_ai_fields_in_tenant_create(client, db_session):
     assert response.status_code == 200
     assert "Agente de IA" in response.text
     assert "ai_api_key" in response.text
+    assert "ai_tools_enabled" in response.text
+    assert "ai_availability_lookup_enabled" in response.text
 
 
 def test_super_admin_saves_tenant_ai_settings_and_masks_key(client, db_session):
@@ -148,6 +161,9 @@ def test_super_admin_saves_tenant_ai_settings_and_masks_key(client, db_session):
             ai_enabled="1",
             ai_api_key="sk-test1234abcd",
             ai_min_confidence="0.8",
+            ai_tools_enabled="1",
+            ai_availability_lookup_enabled="1",
+            ai_max_offered_slots="4",
         ),
         follow_redirects=False,
     )
@@ -158,6 +174,9 @@ def test_super_admin_saves_tenant_ai_settings_and_masks_key(client, db_session):
     assert tenant.ai_settings["enabled"] is True
     assert tenant.ai_settings["api_key"] == "sk-test1234abcd"
     assert tenant.ai_settings["min_confidence"] == 0.8
+    assert tenant.ai_settings["tools_enabled"] is True
+    assert tenant.ai_settings["availability_lookup_enabled"] is True
+    assert tenant.ai_settings["max_offered_slots"] == 4
 
     edit = client.get(f"/admin/tenants/{tenant.id}/edit")
     assert "sk-****abcd" in edit.text

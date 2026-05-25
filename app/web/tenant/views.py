@@ -40,6 +40,10 @@ from app.services.conversation_intents import (
     ConversationCategory,
     SUBTYPE_LABELS,
 )
+from app.services.ai_conversation_summary_service import (
+    get_ai_summary_from_context,
+    sanitize_context_for_display,
+)
 from app.services.messaging_service import MessagingService
 from app.services.calendar_service import CalendarService
 
@@ -103,7 +107,11 @@ def _selected_day(date_str: str | None) -> tuple[str, datetime, datetime]:
         date_str = parsed.date().isoformat()
     start = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
-    return date_str, start, end
+    # SQLite stores test datetimes as naive UTC strings. Normalizing the BA day
+    # bounds to UTC-naive keeps date filtering stable around midnight UTC.
+    start_db = start.astimezone(timezone.utc).replace(tzinfo=None)
+    end_db = end.astimezone(timezone.utc).replace(tzinfo=None)
+    return date_str, start_db, end_db
 
 
 def _turno_type_label(turno: Turno) -> str:
@@ -1012,6 +1020,7 @@ async def _conversation_listing_context(
                     "status_tone": status_tone,
                     "is_recent": _is_recent_interaction(state.updated_at),
                     "is_stale": _is_stale_pending(state.updated_at, state.status),
+                    "ai_summary": get_ai_summary_from_context(state.contexto_json, mask_sensitive=True),
                 }
             )
     if selected_status in {"resolved", "all"}:
@@ -1049,6 +1058,7 @@ async def _conversation_listing_context(
                     "status_tone": "success",
                     "is_recent": _is_recent_interaction(item.resolved_at),
                     "is_stale": False,
+                    "ai_summary": get_ai_summary_from_context(item.contexto_json, mask_sensitive=True),
                 }
             )
 
@@ -1332,7 +1342,7 @@ async def conversation_state_detail(
         (item for item in pacientes if _sanitize_phone(item.telefono) == phone_digits),
         None,
     )
-    contexto_pretty = json.dumps(state.contexto_json or {}, ensure_ascii=True, indent=2)
+    contexto_pretty = json.dumps(sanitize_context_for_display(state.contexto_json), ensure_ascii=True, indent=2)
     status = (state.status or "active").lower()
     return _template(
         request,
@@ -1357,6 +1367,7 @@ async def conversation_state_detail(
             "operational_labels": OPERATIONAL_CATEGORY_LABELS,
             "whatsapp_link": _build_whatsapp_link(state.telefono),
             "scope_prefix": "/t",
+            "ai_summary": get_ai_summary_from_context(state.contexto_json, mask_sensitive=False),
         },
     )
 
@@ -1390,7 +1401,7 @@ async def conversation_history_detail(
             "is_history": True,
             "paciente": paciente,
             "tenant": await get_entity_or_404(session, Tenant, user.tenant_id),
-            "contexto_pretty": json.dumps(history.contexto_json or {}, ensure_ascii=True, indent=2),
+            "contexto_pretty": json.dumps(sanitize_context_for_display(history.contexto_json), ensure_ascii=True, indent=2),
             "status": "finished",
             "category_label": CATEGORY_LABELS.get(history.conversation_category or "", "-"),
             "subtype_label": SUBTYPE_LABELS.get(
@@ -1405,6 +1416,7 @@ async def conversation_history_detail(
             "operational_labels": OPERATIONAL_CATEGORY_LABELS,
             "whatsapp_link": _build_whatsapp_link(history.telefono),
             "scope_prefix": "/t",
+            "ai_summary": get_ai_summary_from_context(history.contexto_json, mask_sensitive=False),
         },
     )
 
@@ -1447,6 +1459,8 @@ async def conversation_state_review_update(
     telefono: str,
     operational_category: str = Form(""),
     manual_note: str = Form(""),
+    ai_corrected_intent: str = Form(""),
+    ai_review_note: str = Form(""),
     status_action: str = Form(""),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("conversation:read")),
@@ -1464,6 +1478,12 @@ async def conversation_state_review_update(
         )
         if state is None:
             raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+        _apply_ai_review(
+            state,
+            corrected_intent=ai_corrected_intent,
+            review_note=ai_review_note,
+            reviewed_by=user.id,
+        )
         if status_action == "pending":
             state = await repo.mark_pending_manual(user.tenant_id, telefono)
             audit_action = "conversation_marked_pending"
@@ -1488,11 +1508,35 @@ async def conversation_state_review_update(
                 "tenant_id": user.tenant_id,
                 "operational_category": operational_category,
                 "manual_note": (manual_note or "").strip() or None,
+                "ai_corrected_intent": (ai_corrected_intent or "").strip() or None,
+                "ai_review_note": (ai_review_note or "").strip() or None,
                 "status_action": status_action or None,
             },
         )
     add_flash(request, "success", "Revision de conversacion actualizada")
     return RedirectResponse(f"/t/conversation-states/{telefono}", status_code=303)
+
+
+def _apply_ai_review(
+    state: EstadoConversacion,
+    *,
+    corrected_intent: str,
+    review_note: str,
+    reviewed_by: int | None,
+) -> None:
+    corrected_intent = (corrected_intent or "").strip()
+    review_note = (review_note or "").strip()
+    if not corrected_intent and not review_note:
+        return
+    context = dict(state.contexto_json or {})
+    context["ai_review"] = {
+        "human_corrected_intent": corrected_intent or None,
+        "review_note": review_note or None,
+        "reviewed_by": reviewed_by,
+        "reviewed_at": now_ba().isoformat(),
+    }
+    state.contexto_json = context
+    flag_modified(state, "contexto_json")
 
 
 async def settings_get(

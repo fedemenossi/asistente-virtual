@@ -123,6 +123,10 @@ async def _parse_ai_settings_form(
         "handoff_on_low_confidence": form.get("ai_handoff_on_low_confidence") == "1",
         "max_tokens": form.get("ai_max_tokens") or AI_SETTINGS_DEFAULTS["max_tokens"],
         "temperature": form.get("ai_temperature") or AI_SETTINGS_DEFAULTS["temperature"],
+        "tools_enabled": form.get("ai_tools_enabled") == "1",
+        "availability_lookup_enabled": form.get("ai_availability_lookup_enabled") == "1",
+        "max_offered_slots": form.get("ai_max_offered_slots") or AI_SETTINGS_DEFAULTS["max_offered_slots"],
+        "require_confirmation_before_booking": form.get("ai_require_confirmation_before_booking") == "1",
     }
     try:
         cleaned = validate_ai_settings(
@@ -1313,7 +1317,11 @@ async def conversation_state_detail(
             "is_history": False,
             "paciente": paciente,
             "tenant": tenant,
-            "contexto_pretty": json.dumps(state.contexto_json or {}, ensure_ascii=True, indent=2),
+            "contexto_pretty": json.dumps(
+                tenant_conversation_views.sanitize_context_for_display(state.contexto_json),
+                ensure_ascii=True,
+                indent=2,
+            ),
             "status": (state.status or "active").lower(),
             "category_label": tenant_conversation_views.CATEGORY_LABELS.get(state.conversation_category or "", "-"),
             "subtype_label": tenant_conversation_views.SUBTYPE_LABELS.get(
@@ -1328,6 +1336,9 @@ async def conversation_state_detail(
             "operational_labels": tenant_conversation_views.OPERATIONAL_CATEGORY_LABELS,
             "whatsapp_link": tenant_conversation_views._build_whatsapp_link(state.telefono),
             "scope_prefix": "/admin",
+            "ai_summary": tenant_conversation_views.get_ai_summary_from_context(
+                state.contexto_json, mask_sensitive=False
+            ),
         },
     )
 
@@ -1360,7 +1371,11 @@ async def conversation_history_detail(
             "is_history": True,
             "paciente": paciente,
             "tenant": tenant,
-            "contexto_pretty": json.dumps(history.contexto_json or {}, ensure_ascii=True, indent=2),
+            "contexto_pretty": json.dumps(
+                tenant_conversation_views.sanitize_context_for_display(history.contexto_json),
+                ensure_ascii=True,
+                indent=2,
+            ),
             "status": "finished",
             "category_label": tenant_conversation_views.CATEGORY_LABELS.get(history.conversation_category or "", "-"),
             "subtype_label": tenant_conversation_views.SUBTYPE_LABELS.get(
@@ -1375,6 +1390,9 @@ async def conversation_history_detail(
             "operational_labels": tenant_conversation_views.OPERATIONAL_CATEGORY_LABELS,
             "whatsapp_link": tenant_conversation_views._build_whatsapp_link(history.telefono),
             "scope_prefix": "/admin",
+            "ai_summary": tenant_conversation_views.get_ai_summary_from_context(
+                history.contexto_json, mask_sensitive=False
+            ),
         },
     )
 
@@ -1414,6 +1432,8 @@ async def conversation_state_review_update(
     telefono: str,
     operational_category: str = Form(""),
     manual_note: str = Form(""),
+    ai_corrected_intent: str = Form(""),
+    ai_review_note: str = Form(""),
     status_action: str = Form(""),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_super_admin),
@@ -1431,6 +1451,12 @@ async def conversation_state_review_update(
         )
         if state is None:
             raise HTTPException(status_code=404, detail="Conversacion no encontrada")
+        tenant_conversation_views._apply_ai_review(
+            state,
+            corrected_intent=ai_corrected_intent,
+            review_note=ai_review_note,
+            reviewed_by=user.id,
+        )
         if status_action == "pending":
             await repo.mark_pending_manual(tenant_id, telefono)
             action = "conversation_marked_pending"
@@ -1450,6 +1476,8 @@ async def conversation_state_review_update(
                 "tenant_id": tenant_id,
                 "operational_category": operational_category,
                 "manual_note": (manual_note or "").strip() or None,
+                "ai_corrected_intent": (ai_corrected_intent or "").strip() or None,
+                "ai_review_note": (ai_review_note or "").strip() or None,
                 "status_action": status_action or None,
             },
         )

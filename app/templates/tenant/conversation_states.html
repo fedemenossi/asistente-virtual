@@ -135,7 +135,42 @@
                 </div>
               </td>
               <td class="text-slate-600">{{ row.pending_reason_label }}</td>
-              <td class="max-w-md whitespace-normal break-words text-slate-600">{{ row.summary_text }}</td>
+              <td class="max-w-md whitespace-normal break-words text-slate-600">
+                <div>{{ row.summary_text }}</div>
+                {% if row.ai_summary.show %}
+                  {% set ai = row.ai_summary %}
+                  <div class="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <span class="font-semibold text-slate-800">IA: {{ ai.intent_label }}</span>
+                      <span class="text-slate-400">·</span>
+                      <span>{{ ai.confidence_label }}</span>
+                      <span class="text-slate-400">·</span>
+                      <span>fuente: {{ ai.source }}</span>
+                      <span class="rounded-full px-2 py-0.5 {% if ai.confidence_level == 'high' %}bg-emerald-50 text-emerald-700{% elif ai.confidence_level == 'medium' %}bg-amber-50 text-amber-700{% elif ai.confidence_level == 'low' %}bg-rose-50 text-rose-700{% else %}bg-slate-100 text-slate-600{% endif %}">{{ ai.confidence_badge_label }}</span>
+                      {% if ai.needs_human %}
+                        <span class="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">Requiere humano</span>
+                      {% endif %}
+                      {% if ai.urgency_level == 'high' %}
+                        <span class="rounded-full bg-rose-50 px-2 py-0.5 text-rose-700">Urgencia posible</span>
+                      {% endif %}
+                    </div>
+                    {% if ai.extracted_fields %}
+                      <div class="mt-1 line-clamp-2">
+                        <span class="font-medium text-slate-700">Datos:</span>
+                        {% for field in ai.extracted_fields[:4] %}
+                          {{ field.label }}: {{ field.value }}{% if not loop.last %} · {% endif %}
+                        {% endfor %}
+                      </div>
+                    {% endif %}
+                    {% if ai.missing_fields %}
+                      <div class="mt-1">
+                        <span class="font-medium text-slate-700">Faltan:</span>
+                        {{ ai.missing_fields|join(', ') }}
+                      </div>
+                    {% endif %}
+                  </div>
+                {% endif %}
+              </td>
               <td class="whitespace-nowrap text-slate-600">{{ row.updated_at|format_ba('%Y-%m-%d %H:%M') }}</td>
               <td>
                 <div class="flex flex-wrap items-center gap-2">

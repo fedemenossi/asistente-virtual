@@ -143,6 +143,22 @@
           <input type="checkbox" name="ai_handoff_on_low_confidence" value="1" {% if ai_settings.handoff_on_low_confidence %}checked{% endif %} />
           Derivar/revisar cuando la confianza sea baja
         </label>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+          <input type="checkbox" name="ai_tools_enabled" value="1" {% if ai_settings.tools_enabled %}checked{% endif %} />
+          Habilitar tools controladas
+        </label>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+          <input type="checkbox" name="ai_availability_lookup_enabled" value="1" {% if ai_settings.availability_lookup_enabled %}checked{% endif %} />
+          Habilitar consulta de disponibilidad
+        </label>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Maximo de turnos ofrecidos</label>
+          <input class="input mt-1" type="number" min="1" max="10" name="ai_max_offered_slots" value="{{ ai_settings.max_offered_slots }}" />
+        </div>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+          <input type="checkbox" name="ai_require_confirmation_before_booking" value="1" {% if ai_settings.require_confirmation_before_booking %}checked{% endif %} />
+          Requerir confirmacion antes de reservar
+        </label>
       </div>
       <div class="mt-4">
         <p class="text-sm font-medium text-slate-700">Intenciones permitidas</p>

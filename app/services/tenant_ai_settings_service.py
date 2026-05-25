@@ -20,6 +20,10 @@ AI_SETTINGS_DEFAULTS: dict[str, Any] = {
     "handoff_on_low_confidence": True,
     "max_tokens": 400,
     "temperature": 0.0,
+    "tools_enabled": False,
+    "availability_lookup_enabled": False,
+    "max_offered_slots": 5,
+    "require_confirmation_before_booking": True,
 }
 
 
@@ -54,6 +58,11 @@ def validate_ai_settings(
 
     cleaned["enabled"] = _as_bool(cleaned.get("enabled"))
     cleaned["handoff_on_low_confidence"] = _as_bool(cleaned.get("handoff_on_low_confidence"))
+    cleaned["tools_enabled"] = _as_bool(cleaned.get("tools_enabled"))
+    cleaned["availability_lookup_enabled"] = _as_bool(cleaned.get("availability_lookup_enabled"))
+    cleaned["require_confirmation_before_booking"] = _as_bool(
+        cleaned.get("require_confirmation_before_booking", True)
+    )
 
     provider = str(cleaned.get("provider") or "").strip().lower()
     if provider != "openai":
@@ -72,6 +81,9 @@ def validate_ai_settings(
     )
     cleaned["temperature"] = _float_range(cleaned.get("temperature"), "La temperatura", 0.0, 1.0)
     cleaned["max_tokens"] = int(_float_range(cleaned.get("max_tokens"), "Max tokens", 50, 2000))
+    cleaned["max_offered_slots"] = int(
+        _float_range(cleaned.get("max_offered_slots"), "Maximo de turnos ofrecidos", 1, 10)
+    )
     cleaned["agent_name"] = str(cleaned.get("agent_name") or AI_SETTINGS_DEFAULTS["agent_name"]).strip()
     cleaned["system_prompt"] = str(cleaned.get("system_prompt") or "").strip()
     cleaned["personality"] = str(cleaned.get("personality") or AI_SETTINGS_DEFAULTS["personality"]).strip()

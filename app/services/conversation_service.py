@@ -32,6 +32,7 @@ from app.services.ai_intent_classifier import (
     AIIntentResult,
     normalize_message,
 )
+from app.services.ai_tools import get_available_appointment_slots
 from app.services.tenant_ai_settings_service import get_effective_ai_settings
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,8 @@ class ConversationState(str, Enum):
     ASK_RECIPE_KIND = "ask_recipe_kind"
     ASK_RECIPE_DETAIL = "ask_recipe_detail"
     ASK_OTHER_QUERY = "ask_other_query"
+    ASK_AI_SLOT_SELECTION = "ask_ai_slot_selection"
+    ASK_AI_BOOKING_CONFIRMATION = "ask_ai_booking_confirmation"
 
     # Legacy states kept for backwards compatibility
     MAIN_MENU = "main_menu"
@@ -397,6 +400,68 @@ class ConversationService:
             )
             return "Escriba la consulta en un solo mensaje que sera respondida a la brevedad."
 
+        if current_state == ConversationState.ASK_AI_SLOT_SELECTION.value:
+            selected = self._select_offered_slot(context, text)
+            if selected is None:
+                return self._invalid_slot_selection_message(context)
+            appointment = context.setdefault("appointment", {})
+            appointment["selected_slot"] = selected
+            appointment["awaiting_slot_selection"] = False
+            appointment["awaiting_booking_confirmation"] = True
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_AI_BOOKING_CONFIRMATION.value,
+                context,
+                conversation_category=self._appointment_category_from_context(context),
+            )
+            return (
+                f"Perfecto. Seleccionaste el turno {self._appointment_label_from_context(context)} "
+                f"del {selected.get('label')}.\n"
+                "Confirmas que queres reservarlo?\n"
+                "1) Si, confirmar\n"
+                "2) No, ver otras opciones"
+            )
+
+        if current_state == ConversationState.ASK_AI_BOOKING_CONFIRMATION.value:
+            confirmation = detect_yes_no(text)
+            if confirmation is None:
+                return "Debe seleccionar una opcion valida.\n1) Si, confirmar\n2) No, ver otras opciones"
+            if confirmation is False:
+                context.setdefault("appointment", {})["selected_slot"] = None
+                return await self._offer_appointment_slots_if_available(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    context=context,
+                    original_text=text,
+                    has_media=has_media,
+                    media_items=media_items,
+                    force_manual_on_unavailable=False,
+                )
+            appointment = context.setdefault("appointment", {})
+            appointment["awaiting_booking_confirmation"] = False
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                current_state,
+                context,
+                conversation_category=self._appointment_category_from_context(context),
+            )
+            await self._set_pending(
+                tenant=tenant,
+                phone=normalized_phone,
+                reason=context.get("reason") or "turno_virtual",
+                message=self._build_ai_selected_slot_summary(context),
+                title="Seleccion de turno pendiente de confirmacion manual",
+                category=self._appointment_category_from_context(context),
+                subtype=None,
+                requires_human_review=False,
+                has_media=has_media,
+                last_patient_message=text,
+                media_items=media_items,
+            )
+            return "Perfecto, dejo registrada tu seleccion para que el consultorio la confirme."
+
         if current_state == ConversationState.ASK_PRESENTIAL_FOR_WHOM.value:
             who = detect_for_whom(text)
             if not who:
@@ -483,6 +548,16 @@ class ConversationService:
             if first_time is None:
                 return self._invalid_option_message(self._first_time_options())
             context["first_time"] = first_time
+            context.setdefault("appointment", {})["is_first_time"] = first_time
+            if self._ai_tools_enabled(ai_settings):
+                return await self._offer_appointment_slots_if_available(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    context=context,
+                    original_text=text,
+                    has_media=has_media,
+                    media_items=media_items,
+                )
             summary = self._build_presential_summary(context)
             await self._set_pending(
                 tenant=tenant,
@@ -588,6 +663,16 @@ class ConversationService:
             if first_time is None:
                 return self._invalid_option_message(self._first_time_options())
             context["first_time"] = first_time
+            context.setdefault("appointment", {})["is_first_time"] = first_time
+            if self._ai_tools_enabled(ai_settings):
+                return await self._offer_appointment_slots_if_available(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    context=context,
+                    original_text=text,
+                    has_media=has_media,
+                    media_items=media_items,
+                )
             summary = self._build_virtual_summary(context)
             await self._set_pending(
                 tenant=tenant,
@@ -746,6 +831,16 @@ class ConversationService:
                     return f"Perfecto, entiendo que el turno es para {name}. {self._first_time_options()}"
             return f"{prefix} {self._first_time_options()}"
 
+        if self._ai_tools_enabled(get_effective_ai_settings(tenant)):
+            return await self._offer_appointment_slots_if_available(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+                media_items=media_items,
+            )
+
         summary = self._build_virtual_summary(context) if appointment_type == "virtual" else self._build_presential_summary(context)
         await self._conversacion_repo.upsert_state(
             tenant.id,
@@ -839,6 +934,153 @@ class ConversationService:
             media_items=media_items,
         )
         return "Gracias. Ya tengo el detalle de la solicitud y se le respondera a la brevedad."
+
+    async def _offer_appointment_slots_if_available(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        context: dict,
+        original_text: str,
+        has_media: bool,
+        media_items: list[dict],
+        force_manual_on_unavailable: bool = True,
+    ) -> str:
+        del media_items
+        appointment = context.setdefault("appointment", {})
+        appointment_type = appointment.get("type") or (
+            "virtual" if context.get("reason") == "turno_virtual" else "presential"
+        )
+        appointment["type"] = appointment_type
+        reason = "turno_virtual" if appointment_type == "virtual" else "turno_presencial"
+        context["reason"] = context.get("reason") or reason
+        if not context.get("for_whom"):
+            context["for_whom"] = appointment.get("for")
+        if context.get("first_time") is None and appointment.get("is_first_time") is not None:
+            context["first_time"] = appointment.get("is_first_time")
+
+        missing = self._missing_before_availability(context)
+        if missing:
+            return await self._ask_missing_before_availability(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                missing=missing[0],
+            )
+
+        settings = get_effective_ai_settings(tenant)
+        limit = int(settings.get("max_offered_slots") or 5)
+        preferences = {
+            "preferred_day": appointment.get("preferred_day"),
+            "preferred_date": appointment.get("preferred_date"),
+            "preferred_time": appointment.get("preferred_time"),
+            "preferred_time_range": appointment.get("preferred_time_range"),
+        }
+        result = await get_available_appointment_slots(
+            self._session,
+            tenant_id=tenant.id,
+            consultorio_type=appointment_type,
+            patient_context=context,
+            preferences=preferences,
+            limit=limit,
+        )
+        slots = list((result.get("slots") or [])[:limit])
+        self._log_ai_tool(
+            tenant_id=tenant.id,
+            phone=phone,
+            intent="book_virtual_appointment" if appointment_type == "virtual" else "book_presential_appointment",
+            tool_name="get_available_appointment_slots",
+            slots_count=len(slots),
+            provider=result.get("source"),
+            error=result.get("error"),
+        )
+        if not result.get("ok") or not slots:
+            appointment["offered_slots"] = []
+            appointment["awaiting_slot_selection"] = False
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                phone,
+                ConversationState.MAIN_REASON_MENU.value,
+                context,
+                conversation_category=self._appointment_category_from_context(context),
+                has_media=has_media,
+                last_patient_message=original_text,
+            )
+            if force_manual_on_unavailable:
+                await self._set_pending(
+                    tenant=tenant,
+                    phone=phone,
+                    reason=context["reason"],
+                    message=result.get("message") or "No se pudo consultar disponibilidad automatica.",
+                    title="Solicitud de turno para revision manual",
+                    category=self._appointment_category_from_context(context),
+                    subtype=None,
+                    requires_human_review=True,
+                    has_media=has_media,
+                    last_patient_message=original_text,
+                    media_items=[],
+                )
+                return "No pude consultar la agenda en este momento. Dejo tu solicitud para que el consultorio te contacte."
+            return "No encontre turnos disponibles con esa preferencia. Queres que te muestre otros horarios?"
+
+        offered = []
+        for index, slot in enumerate(slots, start=1):
+            offered.append(
+                {
+                    "option": index,
+                    "slot_id": slot.get("slot_id"),
+                    "label": slot.get("label"),
+                    "start_at": slot.get("start_at"),
+                    "end_at": slot.get("end_at"),
+                    "provider": slot.get("provider"),
+                    "metadata": slot.get("metadata") or {},
+                }
+            )
+        appointment["preferences"] = {key: value for key, value in preferences.items() if value}
+        appointment["offered_slots"] = offered
+        appointment["selected_slot"] = None
+        appointment["awaiting_slot_selection"] = True
+        appointment["awaiting_booking_confirmation"] = False
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.ASK_AI_SLOT_SELECTION.value,
+            context,
+            conversation_category=self._appointment_category_from_context(context),
+        )
+        label = "presenciales" if appointment_type == "presential" else "virtuales"
+        lines = [f"Encontre estos turnos {label} disponibles:"]
+        lines.extend(f"{slot['option']}) {slot['label']}" for slot in offered)
+        lines.append("Responde con el numero de opcion que preferis.")
+        return "\n".join(lines)
+
+    async def _ask_missing_before_availability(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        context: dict,
+        missing: str,
+    ) -> str:
+        appointment_type = context.get("appointment", {}).get("type") or "virtual"
+        state_prefix = "VIRTUAL" if appointment_type == "virtual" else "PRESENTIAL"
+        if missing == "appointment_for":
+            state_value = getattr(ConversationState, f"ASK_{state_prefix}_FOR_WHOM").value
+            message = f"El turno {self._appointment_label_from_context(context)} es:\n{self._for_whom_options()}"
+        elif missing == "other_patient_dni":
+            state_value = getattr(ConversationState, f"ASK_{state_prefix}_OTHER_DNI").value
+            message = "Para consultar disponibilidad, indicame el DNI de la otra persona."
+        else:
+            state_value = getattr(ConversationState, f"ASK_{state_prefix}_FIRST_TIME").value
+            message = self._first_time_options()
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            state_value,
+            context,
+            conversation_category=self._appointment_category_from_context(context),
+        )
+        return message
 
     async def _set_pending(
         self,
@@ -995,6 +1237,96 @@ class ConversationService:
         if "receta" in normalized or "medic" in normalized:
             return PrescriptionSubtype.OTHER_PRESCRIPTION_RELATED
         return PrescriptionSubtype.OTHER_PRESCRIPTION_RELATED
+
+    @staticmethod
+    def _ai_tools_enabled(ai_settings: dict) -> bool:
+        return bool(
+            ai_settings.get("enabled")
+            and ai_settings.get("tools_enabled")
+            and ai_settings.get("availability_lookup_enabled")
+        )
+
+    @staticmethod
+    def _missing_before_availability(context: dict) -> list[str]:
+        appointment = context.get("appointment") if isinstance(context.get("appointment"), dict) else {}
+        missing = []
+        appointment_for = context.get("for_whom") or appointment.get("for")
+        if not appointment_for:
+            missing.append("appointment_for")
+        if appointment_for == "other" and not context.get("other_dni"):
+            missing.append("other_patient_dni")
+        if context.get("first_time") is None and appointment.get("is_first_time") is None:
+            missing.append("is_first_time")
+        return missing
+
+    @staticmethod
+    def _appointment_category_from_context(context: dict) -> str:
+        appointment_type = (context.get("appointment") or {}).get("type")
+        if appointment_type == "presential" or context.get("reason") == "turno_presencial":
+            return ConversationCategory.PRESENTIAL_APPOINTMENT
+        return ConversationCategory.VIRTUAL_APPOINTMENT
+
+    @staticmethod
+    def _appointment_label_from_context(context: dict) -> str:
+        appointment_type = (context.get("appointment") or {}).get("type")
+        return "presencial" if appointment_type == "presential" else "virtual"
+
+    @staticmethod
+    def _select_offered_slot(context: dict, text: str) -> dict | None:
+        try:
+            selected = int(normalize_message(text))
+        except ValueError:
+            return None
+        offered = (context.get("appointment") or {}).get("offered_slots") or []
+        for slot in offered:
+            if int(slot.get("option") or 0) == selected:
+                return slot
+        return None
+
+    @staticmethod
+    def _invalid_slot_selection_message(context: dict) -> str:
+        offered = (context.get("appointment") or {}).get("offered_slots") or []
+        if not offered:
+            return "Debe seleccionar una opcion valida."
+        lines = ["Debe seleccionar una opcion valida:"]
+        lines.extend(f"{slot.get('option')}) {slot.get('label')}" for slot in offered)
+        return "\n".join(lines)
+
+    @staticmethod
+    def _build_ai_selected_slot_summary(context: dict) -> str:
+        appointment = context.get("appointment") or {}
+        selected = appointment.get("selected_slot") or {}
+        return (
+            f"tipo=turno_{appointment.get('type')}; "
+            f"para={context.get('for_whom')}; "
+            f"primera_vez={'si' if context.get('first_time') else 'no'}; "
+            f"slot={selected.get('label')}; "
+            f"start_at={selected.get('start_at')}; "
+            f"provider={selected.get('provider')}; "
+            "reserva_real=no"
+        )
+
+    @staticmethod
+    def _log_ai_tool(
+        *,
+        tenant_id: int,
+        phone: str,
+        intent: str,
+        tool_name: str,
+        slots_count: int,
+        provider: str | None,
+        error: str | None,
+    ) -> None:
+        logger.info(
+            "ai_tool_executed tenant_id=%s telefono=%s intent=%s tool=%s slots_count=%s provider=%s error=%s",
+            tenant_id,
+            phone,
+            intent,
+            tool_name,
+            slots_count,
+            provider or "",
+            error or "",
+        )
 
     @staticmethod
     def _build_presential_summary(context: dict) -> str:
