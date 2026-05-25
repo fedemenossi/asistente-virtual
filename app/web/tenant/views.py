@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone, tzinfo
 import secrets
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import json
 import re
@@ -34,6 +36,7 @@ from app.models.notification import Notification
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
 from app.repositories.conversacion_repository import ConversacionRepository
+from app.integrations.consultorio_movil import CabildoConfigError, list_next_presential_slots
 from app.services.appointment_service import AppointmentService
 from app.services.conversation_intents import (
     CATEGORY_LABELS,
@@ -555,6 +558,113 @@ async def consultorios_edit_post(
         )
     add_flash(request, "success", "Consultorio actualizado")
     return RedirectResponse("/t/consultorios", status_code=303)
+
+
+async def consultorio_provider_test(
+    request: Request,
+    consultorio_id: int,
+    proveedor_turnos: str | None = Form(None),
+    cab_user: str | None = Form(None),
+    cab_password: str | None = Form(None),
+    cab_staff_id: str | None = Form(None),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("consultorio:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> JSONResponse:
+    validate_csrf(request, csrf_token)
+    consultorio = await get_tenant_entity_or_404(
+        session, Consultorio, consultorio_id, user.tenant_id
+    )
+    if proveedor_turnos != "consultorio_movil":
+        return JSONResponse(
+            {
+                "ok": False,
+                "message": "La prueba esta disponible para Consultorio Movil.",
+                "slots": [],
+            },
+            status_code=400,
+        )
+
+    errors: list[str] = []
+    if not _strip_optional(cab_user):
+        errors.append("usuario")
+    if not _strip_optional(cab_password):
+        errors.append("password")
+    if not _strip_optional(cab_staff_id):
+        errors.append("id del profesional")
+    if errors:
+        return JSONResponse(
+            {
+                "ok": False,
+                "message": "Completa los campos requeridos para probar: "
+                + ", ".join(errors)
+                + ".",
+                "slots": [],
+            },
+            status_code=400,
+        )
+
+    tenant = await session.get(Tenant, user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404)
+
+    test_consultorio = SimpleNamespace(
+        tipo=consultorio.tipo,
+        configuracion_externa={
+            "cabildo": {
+                "user": cab_user.strip(),
+                "password": cab_password.strip(),
+                "staff_id": cab_staff_id.strip(),
+                "days": 3,
+            }
+        },
+    )
+    try:
+        selections = await asyncio.to_thread(
+            list_next_presential_slots,
+            tenant,
+            test_consultorio,
+            30,
+        )
+    except CabildoConfigError as exc:
+        return JSONResponse(
+            {"ok": False, "message": str(exc), "slots": []},
+            status_code=400,
+        )
+    except Exception:
+        return JSONResponse(
+            {
+                "ok": False,
+                "message": "No se pudo conectar con Consultorio Movil. Verifica credenciales y staff id.",
+                "slots": [],
+            },
+            status_code=502,
+        )
+
+    slots = [
+        {
+            "option": index,
+            "label": selection.label,
+            "start_at": selection.start_at.isoformat(),
+            "end_at": selection.end_at.isoformat(),
+            "duration_minutes": selection.duration_minutes,
+            "timezone": selection.timezone,
+        }
+        for index, selection in enumerate(selections, start=1)
+    ]
+    message = (
+        "Conexion OK. No hay turnos disponibles en los proximos 3 dias."
+        if not slots
+        else f"Conexion OK. Se encontraron {len(slots)} turnos disponibles en los proximos 3 dias."
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": message,
+            "lookahead_days": 3,
+            "slots": slots,
+        }
+    )
 
 
 async def consultorios_delete(

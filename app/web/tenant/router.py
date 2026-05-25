@@ -49,6 +49,12 @@ router.add_api_route(
     dependencies=[Depends(require_feature("consultorios"))],
 )
 router.add_api_route(
+    "/consultorios/{consultorio_id}/test-provider",
+    views.consultorio_provider_test,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("consultorios"))],
+)
+router.add_api_route(
     "/consultorios/{consultorio_id}/delete",
     views.consultorios_delete,
     methods=["POST"],

@@ -684,6 +684,11 @@ Funciones:
   - cancelar turno externo reservado esta implementado via `cancel_presential_slot`, usando `/office/appointment/list/status` con `status_id=cancelled`.
   - `CalendarService.cancel_slot` libera turnos de Consultorio Movil cuando el turno local tiene `external_status` reservado/confirmado y `external_event_id` real.
   - los borradores locales con slot codificado no llaman cancelacion externa; solo se cancelan localmente.
+  - el formulario tenant de consultorios permite probar conexion contra Consultorio Movil desde `/t/consultorios/{consultorio_id}/edit`.
+    - endpoint: `POST /t/consultorios/{consultorio_id}/test-provider`.
+    - usa los valores actuales del formulario sin guardarlos.
+    - consulta disponibilidad presencial de los proximos 3 dias y lista hasta 30 slots.
+    - no reserva, no cancela y no expone usuario/password en la respuesta.
   - `sync_cabildo_cancel` y `sync_cabildo_update` quedan como placeholders legacy `NotImplemented`.
 
 Cancelacion operativa:
@@ -812,7 +817,7 @@ Nota: si los tests quedan en passed y no vuelve prompt, revisar recursos/event l
 - Conviven `/t/turnos` legacy y `/t/appointments` agenda real; evitar duplicar logica nueva en ambos sin decidir estrategia.
 - El bot conversacional actual clasifica y deriva a bandeja; no asumir agenda automatica end-to-end desde WhatsApp.
 - Inbound Twilio usa token por tenant y fallback global.
-- Consultorio Movil reserva, pero cancelacion/update externo estan pendientes; la cancelacion externa se bloquea explicitamente para evitar falsas cancelaciones locales.
+- Consultorio Movil reserva y cancelacion externa estan implementadas para turnos con `external_event_id` real; `sync_cabildo_update` sigue pendiente.
 - `ReminderService` usa `reminder_sent_at` unico junto con flags `reminder_24h_sent` y `reminder_2h_sent`; revisar antes de depender de dos recordatorios independientes.
 - Mercado Pago webhook exige firma si hay secret y persiste `external_payment_id`.
 - APIs REST admin (`/api/admin/*`) usan Basic Auth y algunas operaciones hacen delete fisico; SSR admin usa soft delete. No mezclar supuestos.
