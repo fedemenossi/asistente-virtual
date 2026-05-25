@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import timedelta
 
 from sqlalchemy import select
 
@@ -14,7 +15,7 @@ from app.models.user import UserRole
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.services.conversation_service import ConversationService, ConversationState
-from app.tests.conftest import create_paciente, create_tenant, create_user, get_tenant, login
+from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_turno, create_user, get_tenant, login
 from app.models.paciente import Paciente
 
 
@@ -693,6 +694,50 @@ def test_salir_finishes_conversation_state(db_session):
             assert len(list(history_result_after_new.scalars().all())) == 1
 
     asyncio.run(run())
+
+
+def test_chat_can_cancel_future_appointment(db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cancel Chat", "whatsapp:+737"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491173700001"
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, phone))
+    consultorio_id = asyncio.run(create_consultorio(db_session, tenant_id, "Monroe"))
+    turno_id = asyncio.run(
+        create_turno(
+            db_session,
+            paciente_id,
+            consultorio_id,
+            fecha_hora=now_ba().replace(tzinfo=None) + timedelta(days=1),
+        )
+    )
+    cancelled = {}
+
+    async def fake_cancel(self, request, tenant, consultorio, turno):
+        cancelled["turno_id"] = turno.id
+        turno.status = AppointmentStatus.CANCELLED
+        turno.estado = "cancelado"
+        await self._session.flush()
+
+    from app.models.turno import AppointmentStatus
+
+    monkeypatch.setattr("app.services.appointment_service.AppointmentService.cancel_turno", fake_cancel)
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(tenant, f"whatsapp:+{phone}", "quiero cancelar turno")
+            assert "Estos son tus turnos activos" in reply
+            assert "1)" in reply
+
+            confirm_prompt = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "Confirmas la cancelacion" in confirm_prompt
+
+            final = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "fue cancelado y liberado" in final
+
+    asyncio.run(run())
+    assert cancelled["turno_id"] == turno_id
 
 
 def test_salir_is_tenant_isolated(db_session):

@@ -681,8 +681,16 @@ Funciones:
   - user, password, staff_id, days, timezone.
 - Estado actual:
   - listar y reservar slots esta implementado via `CabildoProvider`.
-  - cancelar turno externo en Consultorio Movil esta pendiente y el servicio lo bloquea con `501` para evitar desincronizar el turno local.
-  - `sync_cabildo_cancel` y `sync_cabildo_update` existen como placeholders `NotImplemented`.
+  - cancelar turno externo reservado esta implementado via `cancel_presential_slot`, usando `/office/appointment/list/status` con `status_id=cancelled`.
+  - `CalendarService.cancel_slot` libera turnos de Consultorio Movil cuando el turno local tiene `external_status` reservado/confirmado y `external_event_id` real.
+  - los borradores locales con slot codificado no llaman cancelacion externa; solo se cancelan localmente.
+  - `sync_cabildo_cancel` y `sync_cabildo_update` quedan como placeholders legacy `NotImplemented`.
+
+Cancelacion operativa:
+- Desde la interfaz de turnos tenant: `/t/appointments/{turno_id}` o el listado diario.
+- Desde admin global: `/admin/appointments/{turno_id}`.
+- Desde WhatsApp: el paciente puede pedir cancelar turno, elegir un turno activo futuro y confirmar.
+- Si falla la cancelacion externa, no se marca el turno local como cancelado.
 
 ## 12) Integracion Mercado Pago
 Archivos:

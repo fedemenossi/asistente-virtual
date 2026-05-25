@@ -37,6 +37,7 @@ from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.repositories.tenant_repository import TenantRepository
+from app.services.appointment_service import AppointmentService
 from app.services.conversation_service import ConversationService
 from app.services.ai_intent_classifier import SUPPORTED_INTENTS
 from app.services.tenant_ai_settings_service import (
@@ -1267,6 +1268,68 @@ async def appointments_list(
             "date": date_str,
         },
     )
+
+
+async def appointment_detail(
+    request: Request,
+    turno_id: int,
+    user: CurrentUser = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    _ = user
+    row = (
+        await session.execute(
+            select(Turno, Paciente, Consultorio, Tenant)
+            .join(Paciente, Turno.paciente_id == Paciente.id)
+            .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+            .join(Tenant, Turno.tenant_id == Tenant.id)
+            .where(Turno.id == turno_id, Turno.deleted_at.is_(None))
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    return _template(
+        request,
+        "tenant/appointment_detail.html",
+        {
+            "row": row,
+            "status_meta": tenant_conversation_views._turno_status_label(row[0]),
+            "provider_meta": tenant_conversation_views._turno_provider_label(row[0]),
+            "type_label": tenant_conversation_views._turno_type_label(row[0]),
+            "scope_prefix": "/admin",
+            "cancel_href": f"/admin/appointments/{row[0].id}/cancel",
+            "resend_href": None,
+        },
+    )
+
+
+async def appointment_cancel(
+    request: Request,
+    turno_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_super_admin),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    _ = user
+    validate_csrf(request, csrf_token)
+    row = (
+        await session.execute(
+            select(Turno, Consultorio, Tenant)
+            .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+            .join(Tenant, Turno.tenant_id == Tenant.id)
+            .where(Turno.id == turno_id, Turno.deleted_at.is_(None))
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Turno no encontrado")
+    turno, consultorio, tenant = row
+    try:
+        await AppointmentService(session).cancel_turno(request, tenant, consultorio, turno)
+    except Exception:
+        add_flash(request, "error", "No se pudo cancelar el turno externo. No se modifico el turno local.")
+        return RedirectResponse(f"/admin/appointments/{turno_id}", status_code=303)
+    add_flash(request, "success", "Turno cancelado y liberado")
+    return RedirectResponse(f"/admin/appointments/{turno_id}", status_code=303)
 
 
 async def conversation_states(

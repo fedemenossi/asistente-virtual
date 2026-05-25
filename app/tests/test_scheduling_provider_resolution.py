@@ -5,8 +5,6 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
-
 from app.integrations.interfaces import CalendarSlot
 from app.models.turno import AppointmentStatus
 from app.services.appointment_service import AppointmentService
@@ -119,7 +117,7 @@ def test_appointment_service_create_draft_uses_consultorio_provider(db_session):
     assert turno.external_calendar_id == "88"
 
 
-def test_consultorio_movil_cancel_fails_without_marking_local_cancelled(db_session):
+def test_consultorio_movil_cancel_failure_does_not_mark_local_cancelled(db_session, monkeypatch):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cancel Cabildo", "whatsapp:+994"))
     consultorio_id = asyncio.run(
         create_consultorio(
@@ -141,6 +139,7 @@ def test_consultorio_movil_cancel_fails_without_marking_local_cancelled(db_sessi
             status=AppointmentStatus.CONFIRMED,
             external_calendar_provider="consultorio_movil",
             external_event_id="cabildo-123",
+            external_status="reserved",
         )
     )
 
@@ -154,7 +153,7 @@ def test_consultorio_movil_cancel_fails_without_marking_local_cancelled(db_sessi
             consultorio = await session.get(Consultorio, consultorio_id)
             turno = await session.get(Turno, turno_id)
             request = SimpleNamespace(client=None, headers={})
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(RuntimeError):
                 await AppointmentService(session).cancel_turno(
                     request,
                     tenant,
@@ -162,8 +161,64 @@ def test_consultorio_movil_cancel_fails_without_marking_local_cancelled(db_sessi
                     turno,
                 )
             await session.refresh(turno)
-            return exc_info.value.status_code, turno.status
+            return turno.status
 
-    status_code, turno_status = asyncio.run(_run())
-    assert status_code == 501
+    turno_status = asyncio.run(_run())
     assert turno_status == AppointmentStatus.CONFIRMED
+
+
+def test_consultorio_movil_cancel_marks_local_cancelled_when_external_ok(db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cancel Cabildo OK", "whatsapp:+995"))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Consultorio Cancel Cabildo OK",
+            proveedor_turnos="consultorio_movil",
+            configuracion_externa={
+                "cabildo": {"user": "u", "password": "p", "staff_id": "99", "days": 21}
+            },
+        )
+    )
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+9951"))
+    turno_id = asyncio.run(
+        create_turno(
+            db_session,
+            paciente_id,
+            consultorio_id,
+            status=AppointmentStatus.CONFIRMED,
+            external_calendar_provider="consultorio_movil",
+            external_event_id="cabildo-123",
+            external_status="reserved",
+        )
+    )
+    called = {}
+
+    def _ok_cancel(tenant, consultorio, external_event_id):
+        called["external_event_id"] = external_event_id
+        return {"status": "cancelled"}
+
+    monkeypatch.setattr("app.integrations.cabildo_provider.cancel_presential_slot", _ok_cancel)
+
+    async def _run():
+        from app.models.consultorio import Consultorio
+        from app.models.tenant import Tenant
+        from app.models.turno import Turno
+
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            consultorio = await session.get(Consultorio, consultorio_id)
+            turno = await session.get(Turno, turno_id)
+            request = SimpleNamespace(client=None, headers={})
+            await AppointmentService(session).cancel_turno(request, tenant, consultorio, turno)
+            await session.refresh(turno)
+            return turno.status, turno.external_status
+
+    turno_status, external_status = asyncio.run(_run())
+    assert called["external_event_id"] == "cabildo-123"
+    assert turno_status == AppointmentStatus.CANCELLED
+    assert external_status == "cancelled"
+    def _fail_cancel(*args, **kwargs):
+        raise RuntimeError("cabildo down")
+
+    monkeypatch.setattr("app.integrations.cabildo_provider.cancel_presential_slot", _fail_cancel)

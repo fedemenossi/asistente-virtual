@@ -2067,6 +2067,15 @@ async def appointments_list(
         "virtuales": sum(1 for turno, _, _ in rows if _turno_type_label(turno) == "Virtual"),
         "presenciales": sum(1 for turno, _, _ in rows if _turno_type_label(turno) == "Presencial"),
     }
+    consultorio_summary = []
+    for consultorio in consultorios:
+        assigned = [
+            turno
+            for turno, _, row_consultorio in rows
+            if row_consultorio.id == consultorio.id
+            and turno.status not in {AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED}
+        ]
+        consultorio_summary.append({"consultorio": consultorio, "count": len(assigned)})
     return _template(
         request,
         "tenant/appointments_list.html",
@@ -2077,6 +2086,7 @@ async def appointments_list(
             "consultorio_id": consultorio_id,
             "date": date_str,
             "daily_summary": daily_summary,
+            "consultorio_summary": consultorio_summary,
         },
     )
 
@@ -2110,6 +2120,9 @@ async def appointment_detail(
             "status_meta": _turno_status_label(row[0]),
             "provider_meta": _turno_provider_label(row[0]),
             "type_label": _turno_type_label(row[0]),
+            "scope_prefix": "/t",
+            "cancel_href": f"/t/appointments/{row[0].id}/cancel",
+            "resend_href": f"/t/appointments/{row[0].id}/resend",
         },
     )
 
@@ -2137,8 +2150,12 @@ async def appointment_cancel(
     if row is None:
         raise HTTPException(status_code=404, detail="Turno no encontrado")
     turno, consultorio, tenant = row
-    await AppointmentService(session).cancel_turno(request, tenant, consultorio, turno)
-    add_flash(request, "success", "Turno cancelado")
+    try:
+        await AppointmentService(session).cancel_turno(request, tenant, consultorio, turno)
+    except Exception:
+        add_flash(request, "error", "No se pudo cancelar el turno externo. No se modifico el turno local.")
+        return RedirectResponse(f"/t/appointments/{turno_id}", status_code=303)
+    add_flash(request, "success", "Turno cancelado y liberado")
     return RedirectResponse(f"/t/appointments/{turno_id}", status_code=303)
 
 

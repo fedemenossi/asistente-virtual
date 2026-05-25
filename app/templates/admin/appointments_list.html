@@ -42,8 +42,10 @@
             <th class="px-4 py-3 text-left font-medium">Turno</th>
             <th class="px-4 py-3 text-left font-medium">Tenant</th>
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
+            <th class="px-4 py-3 text-left font-medium">Consultorio</th>
             <th class="px-4 py-3 text-left font-medium">Fecha</th>
             <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-right font-medium">Acciones</th>
           </tr>
         </thead>
         <tbody>
@@ -51,11 +53,13 @@
             {% set turno = row[0] %}
             {% set tenant = row[1] %}
             {% set paciente = row[2] %}
+            {% set consultorio = row[3] %}
             {% set status = turno.status.value if turno.status is not none else turno.estado %}
             <tr class="border-t border-slate-200 hover:bg-slate-50">
               <td class="px-4 py-3 text-slate-900">#{{ turno.id }}</td>
               <td class="px-4 py-3 text-slate-600">{{ tenant.nombre }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.nombre }} {{ paciente.apellido }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ consultorio.nombre }}</td>
               {% set fecha = turno.start_at if turno.start_at else turno.fecha_hora %}
               <td class="px-4 py-3 text-slate-600">{{ fecha|format_ba('%Y-%m-%d %H:%M') }}</td>
               <td class="px-4 py-3">
@@ -68,6 +72,17 @@
                 {% else %}
                   {{ badge("Borrador", "neutral") }}
                 {% endif %}
+              </td>
+              <td class="px-4 py-3 text-right">
+                <div class="flex justify-end gap-2">
+                  <a class="btn btn-secondary" href="/admin/appointments/{{ turno.id }}">Ver</a>
+                  {% if status not in ['cancelled', 'cancelado', 'completed'] %}
+                    <form method="post" action="/admin/appointments/{{ turno.id }}/cancel">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                      <button class="btn btn-danger" type="submit">Cancelar</button>
+                    </form>
+                  {% endif %}
+                </div>
               </td>
             </tr>
           {% endfor %}

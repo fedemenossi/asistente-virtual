@@ -5,6 +5,7 @@ from datetime import datetime
 
 from app.integrations.consultorio_movil import (
     SlotSelection,
+    cancel_presential_slot,
     list_next_presential_slots,
     reserve_presential_slot,
 )
@@ -101,6 +102,19 @@ class CabildoProvider(CalendarProvider):
     async def cancel_slot(self, external_event_id: str) -> None:
         _ = external_event_id
         return None
+
+    async def cancel_slot_for_context(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        external_event_id: str,
+    ) -> dict:
+        return await asyncio.to_thread(
+            cancel_presential_slot,
+            tenant,
+            consultorio,
+            external_event_id,
+        )
 
     async def get_event(self, external_event_id: str) -> dict:
         return {"event_id": external_event_id, "provider": "consultorio_movil"}

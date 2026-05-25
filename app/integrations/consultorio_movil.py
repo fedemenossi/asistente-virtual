@@ -20,6 +20,7 @@ API_AVAILABILITY_URL = "https://office.consultoriomovil.net/api/appointment-avai
 PATIENT_SAVE_URL = "https://office.consultoriomovil.net/office/patient/save"
 APPOINTMENT_SAVE_URL = "https://office.consultoriomovil.net/office/appointment/appointment/save"
 APPOINTMENT_PRACTICES_URL = "https://office.consultoriomovil.net/office/appointment/appointment/loadPractices"
+APPOINTMENT_STATUS_URL = "https://office.consultoriomovil.net/office/appointment/list/status"
 XHR_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 DAY_NAMES_ES = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
 SIMPLE_TIMEZONES: dict[str, tzinfo] = {
@@ -482,8 +483,44 @@ def reserve_presential_slot(
     }
 
 
+def cancel_presential_slot(
+    tenant: Tenant,
+    consultorio: Consultorio | None,
+    external_event_id: str,
+) -> dict[str, Any]:
+    _ = tenant
+    cfg = _resolve_cabildo_config(consultorio)
+    if not (cfg["user"] and cfg["password"] and cfg["staff_id"]):
+        raise CabildoConfigError("Configuracion de Cabildo incompleta.")
+    appointment_id = str(external_event_id or "").strip()
+    if not appointment_id:
+        raise CabildoSlotUnavailable("ID externo de turno inexistente.")
+
+    session = login(cfg["user"], cfg["password"])
+    payload = {
+        "appointment_id": appointment_id,
+        "status_id": "cancelled",
+        "X-REQUESTED_WITH": "XMLHttpRequest",
+    }
+    resp = session.post(
+        APPOINTMENT_STATUS_URL,
+        data=payload,
+        headers={**XHR_HEADERS, "Accept": "application/json, text/javascript, */*; q=0.01"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {}
+    if str(data.get("success", True)).lower() == "false":
+        message = " ".join(data.get("messages") or []) or "No se pudo cancelar el turno en Cabildo."
+        raise RuntimeError(message)
+    return {"event_id": appointment_id, "provider": "consultorio_movil", "status": "cancelled"}
+
+
 def sync_cabildo_cancel(turno_id: int) -> None:
-    raise NotImplementedError
+    raise NotImplementedError("Usar cancel_presential_slot con tenant, consultorio e ID externo.")
 
 
 def sync_cabildo_update(turno_id: int) -> None:

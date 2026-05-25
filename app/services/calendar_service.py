@@ -82,10 +82,8 @@ class CalendarService:
     ) -> None:
         provider_name = (external_provider or self.resolve_provider_name(consultorio)).strip().lower()
         if provider_name == "consultorio_movil":
-            raise HTTPException(
-                status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                detail="La cancelacion externa en Consultorio Movil no esta implementada",
-            )
+            await CabildoProvider().cancel_slot_for_context(tenant, consultorio, external_event_id)
+            return
         provider = self._get_provider(tenant, consultorio)
         await provider.cancel_slot(external_event_id)
 

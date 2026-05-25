@@ -223,7 +223,14 @@ class AppointmentService:
         consultorio: Consultorio,
         turno: Turno,
     ) -> None:
-        if turno.external_calendar_provider and turno.external_event_id:
+        should_cancel_external = bool(turno.external_calendar_provider and turno.external_event_id)
+        if turno.external_calendar_provider == "consultorio_movil":
+            should_cancel_external = (
+                should_cancel_external
+                and str(turno.external_status or "").lower() in {"reserved", "confirmed"}
+                and turno.status != AppointmentStatus.DRAFT
+            )
+        if should_cancel_external:
             await self._calendar.cancel_slot(
                 tenant,
                 consultorio,

@@ -44,6 +44,18 @@
     </div>
   </div>
 
+  {% if consultorio_summary %}
+    <div class="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      {% for item in consultorio_summary %}
+        <div class="rounded-xl border border-slate-200 bg-white p-4">
+          <p class="text-xs uppercase tracking-wide text-slate-500">{{ item.consultorio.nombre }}</p>
+          <p class="mt-2 text-xl font-semibold text-slate-900">{{ item.count }}</p>
+          <p class="text-xs text-slate-500">turnos asignados</p>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   {% if rows %}
     <div class="card overflow-x-auto overflow-y-visible">
       <table class="min-w-full text-sm">
@@ -55,7 +67,7 @@
             <th class="px-4 py-3 text-left font-medium">Proveedor</th>
             <th class="px-4 py-3 text-left font-medium">Consultorio</th>
             <th class="px-4 py-3 text-left font-medium">Estado</th>
-            <th class="px-4 py-3 text-right font-medium">Detalle</th>
+            <th class="px-4 py-3 text-right font-medium">Acciones</th>
           </tr>
         </thead>
         <tbody>
@@ -98,7 +110,15 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">
-                <a class="btn btn-secondary" href="/t/appointments/{{ turno.id }}">Ver</a>
+                <div class="flex justify-end gap-2">
+                  <a class="btn btn-secondary" href="/t/appointments/{{ turno.id }}">Ver</a>
+                  {% if status not in ['cancelled', 'cancelado', 'completed'] %}
+                    <form method="post" action="/t/appointments/{{ turno.id }}/cancel">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                      <button class="btn btn-danger" type="submit">Cancelar</button>
+                    </form>
+                  {% endif %}
+                </div>
               </td>
             </tr>
           {% endfor %}

@@ -57,6 +57,17 @@ router.add_api_route(
     response_class=HTMLResponse,
 )
 router.add_api_route(
+    "/appointments/{turno_id}",
+    views.appointment_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+)
+router.add_api_route(
+    "/appointments/{turno_id}/cancel",
+    views.appointment_cancel,
+    methods=["POST"],
+)
+router.add_api_route(
     "/conversation-states",
     views.conversation_states,
     methods=["GET"],

@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.timezone import get_ba_tz, now_ba
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
+from app.models.consultorio import Consultorio
+from app.models.turno import AppointmentStatus, Turno
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.paciente_repository import PacienteRepository
@@ -33,7 +35,9 @@ from app.services.ai_intent_classifier import (
     normalize_message,
 )
 from app.services.ai_tools import get_available_appointment_slots
+from app.services.appointment_service import AppointmentService
 from app.services.tenant_ai_settings_service import get_effective_ai_settings
+from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +71,8 @@ class ConversationState(str, Enum):
     ASK_OTHER_QUERY = "ask_other_query"
     ASK_AI_SLOT_SELECTION = "ask_ai_slot_selection"
     ASK_AI_BOOKING_CONFIRMATION = "ask_ai_booking_confirmation"
+    ASK_CANCEL_APPOINTMENT_SELECTION = "ask_cancel_appointment_selection"
+    ASK_CANCEL_APPOINTMENT_CONFIRMATION = "ask_cancel_appointment_confirmation"
 
     # Legacy states kept for backwards compatibility
     MAIN_MENU = "main_menu"
@@ -391,6 +397,13 @@ class ConversationService:
                     media_items=media_items,
                 )
                 return "Perfecto. Derivo tu consulta para atencion humana y te responderan a la brevedad."
+            if reason == "cancelar_turno":
+                return await self._start_cancel_appointment_flow(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    paciente=paciente,
+                    context=context,
+                )
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -461,6 +474,53 @@ class ConversationService:
                 media_items=media_items,
             )
             return "Perfecto, dejo registrada tu seleccion para que el consultorio la confirme."
+
+        if current_state == ConversationState.ASK_CANCEL_APPOINTMENT_SELECTION.value:
+            selected = self._select_cancellable_turno(context, text)
+            if selected is None:
+                return self._invalid_cancel_selection_message(context)
+            context["cancel_appointment"]["selected"] = selected
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_CANCEL_APPOINTMENT_CONFIRMATION.value,
+                context,
+            )
+            return (
+                f"Seleccionaste cancelar el turno {selected.get('label')}.\n"
+                "Confirmas la cancelacion?\n"
+                "1) Si, cancelar\n"
+                "2) No"
+            )
+
+        if current_state == ConversationState.ASK_CANCEL_APPOINTMENT_CONFIRMATION.value:
+            confirmation = detect_yes_no(text)
+            if confirmation is None:
+                return "Debe seleccionar una opcion valida.\n1) Si, cancelar\n2) No"
+            if confirmation is False:
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.MAIN_REASON_MENU.value,
+                    {"patient_id": getattr(paciente, "id", None)},
+                )
+                return "Cancelacion descartada. Volves al menu principal.\n" + self._main_reason_menu_message()
+            selected = (context.get("cancel_appointment") or {}).get("selected") or {}
+            turno_id = selected.get("turno_id")
+            cancelled = await self._cancel_turno_from_chat(
+                tenant=tenant,
+                phone=normalized_phone,
+                turno_id=turno_id,
+            )
+            if not cancelled:
+                return "No pude cancelar ese turno. Lo derivo para que el consultorio lo revise."
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.MAIN_REASON_MENU.value,
+                {"patient_id": getattr(paciente, "id", None)},
+            )
+            return "Listo, el turno fue cancelado y liberado."
 
         if current_state == ConversationState.ASK_PRESENTIAL_FOR_WHOM.value:
             who = detect_for_whom(text)
@@ -1082,6 +1142,126 @@ class ConversationService:
         )
         return message
 
+    async def _start_cancel_appointment_flow(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        paciente: Paciente | None,
+        context: dict,
+    ) -> str:
+        if paciente is None:
+            await self._set_pending(
+                tenant=tenant,
+                phone=phone,
+                reason="cancelar_turno",
+                message="Paciente no identificado solicita cancelar turno.",
+                title="Cancelacion de turno para revisar",
+                category=ConversationCategory.HUMAN_HANDOFF,
+                subtype=None,
+                requires_human_review=True,
+                has_media=False,
+                last_patient_message=None,
+                media_items=[],
+            )
+            return "No pude identificar tus turnos. Derivo tu solicitud para que el consultorio te contacte."
+        options = await self._list_cancellable_turnos(tenant.id, paciente.id)
+        if not options:
+            return "No encontre turnos activos futuros para cancelar. Si necesitas ayuda, elegi hablar con una persona."
+        context = dict(context or {})
+        context["cancel_appointment"] = {"options": options, "selected": None}
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.ASK_CANCEL_APPOINTMENT_SELECTION.value,
+            context,
+        )
+        lines = ["Estos son tus turnos activos:"]
+        lines.extend(f"{item['option']}) {item['label']}" for item in options)
+        lines.append("Responde con el numero del turno que queres cancelar.")
+        return "\n".join(lines)
+
+    async def _list_cancellable_turnos(self, tenant_id: int, paciente_id: int) -> list[dict]:
+        result = await self._session.execute(
+            select(Turno, Consultorio)
+            .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+            .where(
+                Turno.tenant_id == tenant_id,
+                Turno.paciente_id == paciente_id,
+                Turno.deleted_at.is_(None),
+                Turno.status.notin_([AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED]),
+                Turno.fecha_hora >= now_ba().replace(tzinfo=None),
+            )
+            .order_by(Turno.fecha_hora.asc())
+            .limit(10)
+        )
+        options = []
+        for index, (turno, consultorio) in enumerate(result.all(), start=1):
+            start = turno.start_at or turno.fecha_hora
+            options.append(
+                {
+                    "option": index,
+                    "turno_id": turno.id,
+                    "label": f"{consultorio.nombre} - {start.strftime('%d/%m %H:%M')}",
+                }
+            )
+        return options
+
+    @staticmethod
+    def _select_cancellable_turno(context: dict, text: str) -> dict | None:
+        try:
+            selected = int(normalize_message(text))
+        except ValueError:
+            return None
+        options = (context.get("cancel_appointment") or {}).get("options") or []
+        for item in options:
+            if int(item.get("option") or 0) == selected:
+                return item
+        return None
+
+    @staticmethod
+    def _invalid_cancel_selection_message(context: dict) -> str:
+        options = (context.get("cancel_appointment") or {}).get("options") or []
+        lines = ["Debe seleccionar una opcion valida:"]
+        lines.extend(f"{item.get('option')}) {item.get('label')}" for item in options)
+        return "\n".join(lines)
+
+    async def _cancel_turno_from_chat(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        turno_id: int | None,
+    ) -> bool:
+        if not turno_id:
+            return False
+        result = await self._session.execute(
+            select(Turno, Consultorio, Tenant)
+            .join(Consultorio, Turno.consultorio_id == Consultorio.id)
+            .join(Tenant, Turno.tenant_id == Tenant.id)
+            .where(Turno.id == int(turno_id), Turno.tenant_id == tenant.id)
+        )
+        row = result.first()
+        if row is None:
+            return False
+        turno, consultorio, tenant_obj = row
+        try:
+            await AppointmentService(self._session).cancel_turno(
+                request=None,
+                tenant=tenant_obj,
+                consultorio=consultorio,
+                turno=turno,
+            )
+            return True
+        except Exception:
+            logger.exception(
+                "chat_cancel_turno_failed tenant_id=%s telefono=%s turno_id=%s",
+                tenant.id,
+                phone,
+                turno_id,
+            )
+            return False
+
     async def _set_pending(
         self,
         tenant: Tenant,
@@ -1385,6 +1565,8 @@ class ConversationService:
             return IntentResult("otra_consulta", ConversationCategory.OTHER_QUERY)
         if result.intent == AIIntent.HUMAN_HANDOFF:
             return IntentResult("humano", ConversationCategory.HUMAN_HANDOFF)
+        if result.intent == AIIntent.CANCEL_APPOINTMENT:
+            return IntentResult("cancelar_turno", ConversationCategory.OTHER_QUERY)
         return IntentResult(None, None)
 
     @staticmethod

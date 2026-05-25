@@ -9,19 +9,23 @@ from app.core.security import CurrentUser
 from app.models.audit_log import AuditLog
 
 
-def _get_ip(request: Request) -> str | None:
+def _get_ip(request: Request | None) -> str | None:
+    if request is None:
+        return None
     if request.client:
         return request.client.host
     return None
 
 
-def _get_user_agent(request: Request) -> str | None:
+def _get_user_agent(request: Request | None) -> str | None:
+    if request is None:
+        return None
     return request.headers.get("User-Agent")
 
 
 async def audit_log(
     session: AsyncSession,
-    request: Request,
+    request: Request | None,
     user: CurrentUser | None,
     action: str,
     entity: str,

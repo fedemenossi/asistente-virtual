@@ -100,15 +100,19 @@
       </div>
     </div>
     <div class="flex flex-wrap gap-3">
-      <form method="post" action="/t/appointments/{{ turno.id }}/cancel">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <button class="btn btn-danger" type="submit">Cancelar</button>
-      </form>
-      <form method="post" action="/t/appointments/{{ turno.id }}/resend">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <button class="btn btn-secondary" type="submit">Reenviar confirmacion</button>
-      </form>
-      <a class="btn btn-secondary" href="/t/appointments">Volver</a>
+      {% if cancel_href and status_label != 'Cancelado' %}
+        <form method="post" action="{{ cancel_href }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <button class="btn btn-danger" type="submit">Cancelar y liberar</button>
+        </form>
+      {% endif %}
+      {% if resend_href and status_label != 'Cancelado' %}
+        <form method="post" action="{{ resend_href }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <button class="btn btn-secondary" type="submit">Reenviar confirmacion</button>
+        </form>
+      {% endif %}
+      <a class="btn btn-secondary" href="{{ scope_prefix or '/t' }}/appointments">Volver</a>
     </div>
   </div>
 {% endblock %}
