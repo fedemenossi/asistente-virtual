@@ -913,92 +913,21 @@ async def pacientes_delete(
 async def turnos_list(
     request: Request,
     user: CurrentUser = Depends(require_permission("appointment:read")),
-    session: AsyncSession = Depends(get_async_session),
-) -> Response:
-    tipo = request.query_params.get("tipo", "")
-    estado = request.query_params.get("estado", "")
-    date_str = request.query_params.get("date", "").strip()
-    page = max(int(request.query_params.get("page", "1") or 1), 1)
-    limit = 10
-    offset = (page - 1) * limit
-
-    stmt = (
-        select(Turno, Paciente, Consultorio)
-        .join(Paciente, Turno.paciente_id == Paciente.id)
-        .join(Consultorio, Turno.consultorio_id == Consultorio.id)
-        .where(Turno.tenant_id == user.tenant_id, Consultorio.tenant_id == user.tenant_id)
-    )
-    stmt = stmt.where(
-        Turno.deleted_at.is_(None),
-        Consultorio.deleted_at.is_(None),
-        Paciente.deleted_at.is_(None),
-    )
-    if tipo:
-        stmt = stmt.where(Turno.tipo == tipo)
-    if estado:
-        stmt = stmt.where(Turno.estado == estado)
-    if date_str:
-        try:
-            parsed = datetime.fromisoformat(date_str)
-            start = parsed.replace(hour=0, minute=0, second=0, microsecond=0)
-            end = start + timedelta(days=1)
-            stmt = stmt.where(Turno.fecha_hora >= start, Turno.fecha_hora < end)
-        except ValueError:
-            date_str = ""
-
-    count_stmt = select(func.count()).select_from(stmt.subquery())
-    total = await session.scalar(count_stmt)
-    total_pages = max(((total or 0) + limit - 1) // limit, 1)
-
-    result = await session.execute(
-        stmt.order_by(Turno.fecha_hora.desc()).limit(limit).offset(offset)
-    )
-    rows = result.all()
-    query_string = urlencode(
-        {k: v for k, v in {"tipo": tipo, "estado": estado, "date": date_str}.items() if v}
-    )
-    return _template(
-        request,
-        "tenant/turnos_list.html",
-        {
-            "rows": rows,
-            "tipo": tipo,
-            "estado": estado,
-            "date": date_str,
-            "page": page,
-            "total_pages": total_pages,
-            "query_string": query_string,
-        },
-    )
+) -> RedirectResponse:
+    del user
+    target = "/t/appointments"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    return RedirectResponse(target, status_code=303)
 
 
 async def turnos_detail(
     request: Request,
     turno_id: int,
     user: CurrentUser = Depends(require_permission("appointment:read")),
-    session: AsyncSession = Depends(get_async_session),
-) -> Response:
-    stmt = (
-        select(Turno, Paciente, Consultorio, Tenant)
-        .join(Paciente, Turno.paciente_id == Paciente.id)
-        .join(Consultorio, Turno.consultorio_id == Consultorio.id)
-        .join(Tenant, Consultorio.tenant_id == Tenant.id)
-        .where(
-            Turno.id == turno_id,
-            Turno.tenant_id == user.tenant_id,
-            Consultorio.tenant_id == user.tenant_id,
-        )
-    )
-    stmt = stmt.where(
-        Turno.deleted_at.is_(None),
-        Consultorio.deleted_at.is_(None),
-        Paciente.deleted_at.is_(None),
-    )
-    result = await session.execute(stmt)
-    row = result.first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Turno no encontrado")
-    return _template(request, "tenant/turno_detail.html", {"row": row})
+) -> RedirectResponse:
+    del request, user
+    return RedirectResponse(f"/t/appointments/{turno_id}", status_code=303)
 
 
 async def _conversation_listing_context(

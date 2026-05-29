@@ -17,12 +17,12 @@ FEATURE_REGISTRY: dict[str, dict] = {
         "default_enabled": True,
     },
     "turnos": {
-        "label": "Turnos",
+        "label": "Turnos legacy",
         "routes": ["/t/turnos"],
         "default_enabled": True,
     },
     "appointments": {
-        "label": "Turnos reales",
+        "label": "Turnos",
         "routes": ["/t/appointments"],
         "default_enabled": True,
     },

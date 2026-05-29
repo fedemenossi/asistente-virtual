@@ -85,3 +85,54 @@ def test_agenda_by_date_filters_turnos(client, db_session):
     assert response.status_code == 200
     assert "PacienteDiaDos" in response.text
     assert "PacienteDiaTres" not in response.text
+
+
+def test_legacy_turnos_redirects_to_canonical_appointments(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Legacy Turnos", "whatsapp:+734"))
+    password_hash = hash_password("secret-123")
+    asyncio.run(create_user(db_session, "legacy-turnos@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+
+    login(client, "legacy-turnos@test.com", "secret-123")
+
+    response = client.get("/t/turnos?date=2026-04-02", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/t/appointments?date=2026-04-02"
+
+
+def test_legacy_turnos_detail_redirects_to_canonical_appointment_detail(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Legacy Detail", "whatsapp:+735"))
+    consultorio_id = asyncio.run(create_consultorio(db_session, tenant_id, "Consultorio Legacy"))
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+7351"))
+    turno_id = asyncio.run(
+        _seed_turno(
+            db_session,
+            tenant_id,
+            consultorio_id,
+            paciente_id,
+            datetime(2026, 4, 2, 10, 0, tzinfo=timezone.utc),
+        )
+    )
+    password_hash = hash_password("secret-123")
+    asyncio.run(create_user(db_session, "legacy-detail@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+
+    login(client, "legacy-detail@test.com", "secret-123")
+
+    response = client.get(f"/t/turnos/{turno_id}", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/t/appointments/{turno_id}"
+
+
+def test_sidebar_points_turnos_to_canonical_appointments_only(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sidebar Turnos", "whatsapp:+736"))
+    password_hash = hash_password("secret-123")
+    asyncio.run(create_user(db_session, "sidebar-turnos@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+
+    login(client, "sidebar-turnos@test.com", "secret-123")
+    response = client.get("/t/dashboard")
+
+    assert response.status_code == 200
+    assert 'href="/t/appointments"' in response.text
+    assert 'href="/t/turnos"' not in response.text
+    assert "Turnos reales" not in response.text

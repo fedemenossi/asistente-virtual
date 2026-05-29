@@ -155,8 +155,10 @@ def test_unauthenticated_sensitive_routes_redirect_to_login(client, db_session):
     turno_id = asyncio.run(create_turno(db_session, paciente_id, consultorio_id))
 
     response_conversations = client.get("/t/conversation-states", follow_redirects=False)
+    response_turnos = client.get("/t/turnos", follow_redirects=False)
     response_appointments = client.get(f"/t/appointments/{turno_id}", follow_redirects=False)
     assert response_conversations.status_code == 303
+    assert response_turnos.status_code == 303
     assert response_appointments.status_code == 303
 
 

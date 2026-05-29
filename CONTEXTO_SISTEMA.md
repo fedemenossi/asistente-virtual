@@ -190,8 +190,8 @@ Multi-tenant:
 - `GET /t/pacientes/{paciente_id}/edit`
 - `POST /t/pacientes/{paciente_id}/edit`
 - `POST /t/pacientes/{paciente_id}/delete`
-- `GET /t/turnos`
-- `GET /t/turnos/{turno_id}`
+- `GET /t/turnos` (legacy: redirige a `/t/appointments`)
+- `GET /t/turnos/{turno_id}` (legacy: redirige a `/t/appointments/{turno_id}`)
 - `GET /t/appointments`
 - `GET /t/appointments/{turno_id}`
 - `POST /t/appointments/{turno_id}/cancel`
@@ -814,7 +814,8 @@ Nota: si los tests quedan en passed y no vuelve prompt, revisar recursos/event l
 
 ## 19) Riesgos/observaciones actuales (para IA y equipo)
 - `Turno` SI tiene `tenant_id` directo. Mantenerlo sincronizado con `Consultorio.tenant_id` y conservar validaciones cruzadas para aislamiento.
-- Conviven `/t/turnos` legacy y `/t/appointments` agenda real; evitar duplicar logica nueva en ambos sin decidir estrategia.
+- `/t/appointments` es la agenda canonica para turnos tenant. Toda nueva funcionalidad de gestion de turnos debe implementarse ahi.
+- `/t/turnos` queda como ruta legacy/deprecada y redirige a `/t/appointments`; no debe contener queries, templates ni logica de negocio nueva.
 - El bot conversacional actual clasifica y deriva a bandeja; no asumir agenda automatica end-to-end desde WhatsApp.
 - Inbound Twilio usa token por tenant y fallback global.
 - Consultorio Movil reserva y cancelacion externa estan implementadas para turnos con `external_event_id` real; `sync_cabildo_update` sigue pendiente.

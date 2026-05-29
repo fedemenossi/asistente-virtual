@@ -105,15 +105,13 @@ router.add_api_route(
     "/turnos",
     views.turnos_list,
     methods=["GET"],
-    response_class=HTMLResponse,
-    dependencies=[Depends(require_feature("turnos"))],
+    dependencies=[Depends(require_feature("appointments"))],
 )
 router.add_api_route(
     "/turnos/{turno_id}",
     views.turnos_detail,
     methods=["GET"],
-    response_class=HTMLResponse,
-    dependencies=[Depends(require_feature("turnos"))],
+    dependencies=[Depends(require_feature("appointments"))],
 )
 router.add_api_route(
     "/appointments",
