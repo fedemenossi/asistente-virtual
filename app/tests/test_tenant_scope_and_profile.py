@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 
 from app.core.security import hash_password
 from app.models.user import UserRole
@@ -215,3 +216,73 @@ def test_admin_can_create_tenant_with_profile_fields(client, db_session):
     assert tenant.address == "Av. Siempre Viva 742"
     assert tenant.postal_code == "1406"
     assert tenant.phone == "1133344455"
+
+
+def test_admin_create_tenant_duplicate_whatsapp_returns_form_error(client, db_session):
+    asyncio.run(create_tenant(db_session, "Tenant Existente", "+5491150648909"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "admin-dup-whatsapp@test.com",
+            hash_password("secret-123"),
+            UserRole.SUPER_ADMIN.value,
+            None,
+        )
+    )
+
+    login(client, "admin-dup-whatsapp@test.com", "secret-123")
+    response = client.get("/admin/tenants/new")
+    csrf_token = response.text.split('name="csrf_token" value="')[1].split('"')[0]
+
+    result = client.post(
+        "/admin/tenants/new",
+        data={
+            "csrf_token": csrf_token,
+            "nombre": "Tenant Duplicado",
+            "whatsapp_number": "+5491150648909",
+            "activo": "1",
+        },
+    )
+
+    assert result.status_code == 200
+    assert "Ese WhatsApp ya esta registrado." in result.text
+
+
+def test_admin_create_tenant_duplicate_soft_deleted_whatsapp_returns_form_error(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Eliminado", "+5491150648910"))
+
+    async def _soft_delete():
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            async with session.begin():
+                tenant = await session.get(Tenant, tenant_id)
+                tenant.deleted_at = datetime.now(timezone.utc)
+
+    asyncio.run(_soft_delete())
+    asyncio.run(
+        create_user(
+            db_session,
+            "admin-dup-deleted@test.com",
+            hash_password("secret-123"),
+            UserRole.SUPER_ADMIN.value,
+            None,
+        )
+    )
+
+    login(client, "admin-dup-deleted@test.com", "secret-123")
+    response = client.get("/admin/tenants/new")
+    csrf_token = response.text.split('name="csrf_token" value="')[1].split('"')[0]
+
+    result = client.post(
+        "/admin/tenants/new",
+        data={
+            "csrf_token": csrf_token,
+            "nombre": "Tenant Duplicado Eliminado",
+            "whatsapp_number": "+5491150648910",
+            "activo": "1",
+        },
+    )
+
+    assert result.status_code == 200
+    assert "Ese WhatsApp ya esta registrado." in result.text

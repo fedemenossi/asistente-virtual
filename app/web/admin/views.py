@@ -80,6 +80,19 @@ def _collect_tenant_profile_changes(tenant: Tenant, updates: dict[str, str | Non
     return changes
 
 
+async def _tenant_whatsapp_number_exists(
+    session: AsyncSession,
+    whatsapp_number: str,
+    *,
+    exclude_tenant_id: int | None = None,
+) -> bool:
+    stmt = select(Tenant.id).where(Tenant.whatsapp_number == whatsapp_number)
+    if exclude_tenant_id is not None:
+        stmt = stmt.where(Tenant.id != exclude_tenant_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none() is not None
+
+
 def _tenant_form_context(
     request: Request,
     tenant: Tenant | None,
@@ -327,12 +340,7 @@ async def tenants_new_post(
         ai_settings=ai_settings,
     )
     async with session.begin_nested():
-        exists_stmt = select(Tenant.id).where(
-            Tenant.whatsapp_number == cleaned["whatsapp_number"],
-            Tenant.deleted_at.is_(None),
-        )
-        exists = await session.execute(exists_stmt)
-        if exists.scalar_one_or_none() is not None:
+        if await _tenant_whatsapp_number_exists(session, cleaned["whatsapp_number"]):
             errors["whatsapp_number"] = "Ese WhatsApp ya esta registrado."
             cleaned["ai_settings"] = ai_settings
             return _template(
@@ -457,13 +465,11 @@ async def tenants_edit_post(
                 _tenant_form_context(request, tenant, errors, cleaned),
             )
         if cleaned["whatsapp_number"]:
-            exists_stmt = select(Tenant.id).where(
-                Tenant.whatsapp_number == cleaned["whatsapp_number"],
-                Tenant.id != tenant.id,
-                Tenant.deleted_at.is_(None),
-            )
-            exists = await session.execute(exists_stmt)
-            if exists.scalar_one_or_none() is not None:
+            if await _tenant_whatsapp_number_exists(
+                session,
+                cleaned["whatsapp_number"],
+                exclude_tenant_id=tenant.id,
+            ):
                 errors["whatsapp_number"] = "Ese WhatsApp ya esta registrado."
                 return _template(
                     request,
