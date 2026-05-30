@@ -193,7 +193,7 @@ def test_tenant_cannot_access_other_tenant_conversation_history_detail(client, d
     assert response.status_code == 404
 
 
-def test_super_admin_can_open_global_conversation_detail(client, db_session):
+def test_super_admin_global_conversation_detail_redirects_to_tenants(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Admin Detail", "whatsapp:+858"))
     asyncio.run(
         create_user(
@@ -218,6 +218,6 @@ def test_super_admin_can_open_global_conversation_detail(client, db_session):
     )
     login(client, "admin-global-detail@test.com", "change_me")
 
-    response = client.get(f"/admin/conversation-states/{tenant_id}/{phone}")
-    assert response.status_code == 200
-    assert "Detalle global" in response.text
+    response = client.get(f"/admin/conversation-states/{tenant_id}/{phone}", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/tenants"

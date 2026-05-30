@@ -408,7 +408,7 @@ def test_conversation_review_update_can_resolve_and_reopen(client, db_session):
     assert reopened.resolved_at is None
 
 
-def test_super_admin_conversation_inbox_is_global(client, db_session):
+def test_super_admin_conversation_inbox_redirects_to_tenants(client, db_session):
     tenant_a = asyncio.run(create_tenant(db_session, "Tenant Admin View A", "whatsapp:+831"))
     tenant_b = asyncio.run(create_tenant(db_session, "Tenant Admin View B", "whatsapp:+832"))
     asyncio.run(
@@ -450,15 +450,12 @@ def test_super_admin_conversation_inbox_is_global(client, db_session):
     asyncio.run(seed())
     login(client, "admin-conversations@test.com", "change_me")
 
-    response = client.get("/admin/conversation-states")
-    assert response.status_code == 200
-    assert "Tenant Admin View A" in response.text
-    assert "Tenant Admin View B" in response.text
-    assert "5491183100001" in response.text
-    assert "5491183200001" in response.text
+    response = client.get("/admin/conversation-states", follow_redirects=False)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/tenants"
 
 
-def test_admin_global_and_detail_show_ai_summary_without_secrets(client, db_session):
+def test_admin_conversation_routes_do_not_expose_tenant_conversation_detail(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Admin IA", "whatsapp:+833"))
     asyncio.run(
         create_user(
@@ -487,15 +484,13 @@ def test_admin_global_and_detail_show_ai_summary_without_secrets(client, db_sess
     asyncio.run(seed())
     login(client, "admin-ia-conversations@test.com", "change_me")
 
-    listing = client.get("/admin/conversation-states")
-    detail = client.get(f"/admin/conversation-states/{tenant_id}/5491183300001")
+    listing = client.get("/admin/conversation-states", follow_redirects=False)
+    detail = client.get(f"/admin/conversation-states/{tenant_id}/5491183300001", follow_redirects=False)
 
-    assert listing.status_code == 200
-    assert "IA: Turno virtual" in listing.text
-    assert "must_not_render" not in listing.text
-    assert detail.status_code == 200
-    assert "Interpretacion de IA" in detail.text
-    assert "sk-" not in detail.text
+    assert listing.status_code == 303
+    assert listing.headers["location"] == "/admin/tenants"
+    assert detail.status_code == 303
+    assert detail.headers["location"] == "/admin/tenants"
 
 
 def test_conversation_history_detail_shows_ai_summary_when_present(client, db_session):
@@ -573,3 +568,21 @@ def test_tenant_admin_cannot_access_admin_conversation_inbox(client, db_session)
 
     response = client.get("/admin/conversation-states")
     assert response.status_code == 403
+
+
+def test_super_admin_sidebar_does_not_show_conversations_link(client, db_session):
+    asyncio.run(
+        create_user(
+            db_session,
+            "admin-no-conversations-link@test.com",
+            hash_password("change_me"),
+            UserRole.SUPER_ADMIN.value,
+            None,
+        )
+    )
+    login(client, "admin-no-conversations-link@test.com", "change_me")
+
+    response = client.get("/admin/dashboard")
+
+    assert response.status_code == 200
+    assert 'href="/admin/conversation-states"' not in response.text

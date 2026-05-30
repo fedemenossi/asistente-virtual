@@ -45,8 +45,8 @@
         <option value="consultorio_movil" {% if selected_cab %}selected{% endif %}>
           Consultorio Movil
         </option>
-        {% set selected_google = (form.proveedor_turnos is defined and form.proveedor_turnos == 'google') or (consultorio and consultorio.proveedor_turnos == 'google') %}
-        <option value="google" {% if selected_google %}selected{% endif %}>
+        {% set selected_google = (form.proveedor_turnos is defined and form.proveedor_turnos in ['google', 'google_calendar']) or (consultorio and consultorio.proveedor_turnos in ['google', 'google_calendar']) %}
+        <option value="google_calendar" {% if selected_google %}selected{% endif %}>
           Google Calendar
         </option>
         {% if consultorio and consultorio.proveedor_turnos and consultorio.proveedor_turnos not in ['', 'consultorio_movil', 'google'] %}
@@ -105,6 +105,78 @@
       {% endif %}
       <p class="text-xs text-slate-500">Estos valores se guardan en la configuracion externa del consultorio.</p>
     </div>
+    <div class="border border-slate-200 rounded-xl p-4 space-y-4 hidden" data-google-fields>
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <p class="text-sm font-semibold text-slate-900">Google Calendar</p>
+          <p class="mt-1 text-xs text-slate-500">El calendario elegido es la fuente real de disponibilidad y reservas para este consultorio.</p>
+          {% if errors.google_calendar %}<p class="mt-2 text-xs text-rose-600">{{ errors.google_calendar }}</p>{% endif %}
+          {% if google_calendar_error %}<p class="mt-2 text-xs text-amber-700">{{ google_calendar_error }}</p>{% endif %}
+        </div>
+        {% if is_edit %}
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" type="button" data-google-calendars-url="/t/consultorios/{{ consultorio.id }}/google-calendars" data-google-calendars-button>Probar conexion</button>
+            <button class="btn btn-secondary" type="button" data-google-calendars-url="/t/consultorios/{{ consultorio.id }}/google-calendars" data-google-calendars-button>Actualizar calendarios</button>
+            <a class="btn btn-secondary" href="/t/consultorios/{{ consultorio.id }}/calendar-slots">Generar slots</a>
+          </div>
+        {% endif %}
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Calendario</label>
+        <select class="select mt-1" name="gcal_calendar_id" data-google-calendar-select>
+          <option value="">Seleccionar calendario</option>
+          {% for calendar in google_calendars %}
+            <option value="{{ calendar.id }}" {% if google_config.calendar_id == calendar.id %}selected{% endif %}>{{ calendar.summary }} - {{ calendar.id }}</option>
+          {% endfor %}
+          {% if google_config.calendar_id and google_config.calendar_id not in (google_calendars | map(attribute='id') | list) %}
+            <option value="{{ google_config.calendar_id }}" selected>{{ google_config.calendar_id }}</option>
+          {% endif %}
+        </select>
+        <p class="mt-1 text-xs text-slate-500">Compartí el calendario con la service account del tenant con permisos para modificar eventos.</p>
+      </div>
+      <div class="grid gap-4 md:grid-cols-3">
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Timezone</label>
+          <input class="input mt-1" name="gcal_timezone" value="{{ google_config.timezone }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Tag disponible</label>
+          <input class="input mt-1" name="gcal_available_tag" value="{{ google_config.available_tag }}" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-700">Template reservado</label>
+          <input class="input mt-1" name="gcal_reserved_tag_template" value="{{ google_config.reserved_tag_template }}" />
+        </div>
+      </div>
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600">
+            <tr>
+              <th class="px-3 py-2 text-left font-medium">Dia</th>
+              <th class="px-3 py-2 text-left font-medium">Activo</th>
+              <th class="px-3 py-2 text-left font-medium">Inicio</th>
+              <th class="px-3 py-2 text-left font-medium">Fin</th>
+              <th class="px-3 py-2 text-left font-medium">Duracion</th>
+              <th class="px-3 py-2 text-left font-medium">Intervalo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for day_key, day_label in google_weekdays %}
+              {% set day = google_config.schedule[day_key] %}
+              <tr class="border-t border-slate-200">
+                <td class="px-3 py-2 text-slate-800">{{ day_label }}</td>
+                <td class="px-3 py-2"><input type="checkbox" name="gcal_{{ day_key }}_enabled" value="1" {% if day.enabled %}checked{% endif %} /></td>
+                <td class="px-3 py-2"><input class="input min-w-28" type="time" name="gcal_{{ day_key }}_start" value="{{ day.start }}" /></td>
+                <td class="px-3 py-2"><input class="input min-w-28" type="time" name="gcal_{{ day_key }}_end" value="{{ day.end }}" /></td>
+                <td class="px-3 py-2"><input class="input min-w-24" type="number" min="1" name="gcal_{{ day_key }}_slot_minutes" value="{{ day.slot_minutes }}" /></td>
+                <td class="px-3 py-2"><input class="input min-w-24" type="number" min="0" name="gcal_{{ day_key }}_buffer_minutes" value="{{ day.buffer_minutes }}" /></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="hidden rounded-lg border px-3 py-3 text-sm" data-google-calendars-result></div>
+    </div>
     <div class="flex items-center gap-3">
       <button class="btn btn-primary" type="submit">Guardar</button>
       <a class="btn btn-secondary" href="/t/consultorios">Cancelar</a>
@@ -115,8 +187,12 @@
       const form = document.querySelector("[data-consultorio-form]");
       const select = document.querySelector("[data-provider-select]");
       const fields = document.querySelector("[data-cabildo-fields]");
+      const googleFields = document.querySelector("[data-google-fields]");
       const testButton = document.querySelector("[data-provider-test-button]");
       const testResult = document.querySelector("[data-provider-test-result]");
+      const googleCalendarsButtons = document.querySelectorAll("[data-google-calendars-button]");
+      const googleCalendarsResult = document.querySelector("[data-google-calendars-result]");
+      const googleCalendarSelect = document.querySelector("[data-google-calendar-select]");
       const inputs = {
         cab_user: form?.querySelector("input[name='cab_user']"),
         cab_password: form?.querySelector("input[name='cab_password']"),
@@ -129,6 +205,11 @@
           fields.classList.remove("hidden");
         } else {
           fields.classList.add("hidden");
+        }
+        if (select.value === "google_calendar" || select.value === "google") {
+          googleFields?.classList.remove("hidden");
+        } else {
+          googleFields?.classList.add("hidden");
         }
       };
       const clearInlineErrors = () => {
@@ -216,6 +297,36 @@
           testButton.textContent = previousLabel;
         }
       });
+      googleCalendarsButtons.forEach((googleCalendarsButton) => googleCalendarsButton.addEventListener("click", async () => {
+        if (!form || !googleCalendarsButton || !googleCalendarSelect || !googleCalendarsResult) return;
+        const previousLabel = googleCalendarsButton.textContent;
+        googleCalendarsButtons.forEach((button) => button.disabled = true);
+        googleCalendarsButton.textContent = "Probando...";
+        googleCalendarsResult.className = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700";
+        try {
+          const response = await fetch(googleCalendarsButton.dataset.googleCalendarsUrl, {
+            method: "POST",
+            body: new FormData(form),
+            headers: {"X-Requested-With": "XMLHttpRequest"},
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.message || "No se pudieron listar calendarios.");
+          googleCalendarSelect.innerHTML = '<option value="">Seleccionar calendario</option>';
+          data.calendars.forEach((calendar) => {
+            const option = document.createElement("option");
+            option.value = calendar.id;
+            option.textContent = `${calendar.summary} - ${calendar.id}`;
+            googleCalendarSelect.appendChild(option);
+          });
+          googleCalendarsResult.textContent = data.message;
+        } catch (error) {
+          googleCalendarsResult.className = "rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700";
+          googleCalendarsResult.textContent = error.message || "No se pudieron listar calendarios.";
+        } finally {
+          googleCalendarsButtons.forEach((button) => button.disabled = false);
+          googleCalendarsButton.textContent = previousLabel;
+        }
+      }));
       select.addEventListener("change", toggle);
       toggle();
     })();

@@ -11,18 +11,25 @@ from app.integrations.interfaces import CalendarProvider, CalendarSlot
 from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
+from app.services.google_calendar_slots_service import CalculatedSlot, get_google_calendar_config
 
 
 class CalendarService:
     def resolve_provider_name(self, consultorio: Consultorio) -> str:
         # Valor normalizado persistido en turnos.provider / external_calendar_provider.
         provider = (consultorio.proveedor_turnos or "").strip().lower()
+        if provider == "google_calendar":
+            provider = "google"
         return provider or "google"
 
     def resolve_external_source_id(self, tenant: Tenant, consultorio: Consultorio) -> str | None:
         provider = self.resolve_provider_name(consultorio)
         if provider == "consultorio_movil":
             return str((((consultorio.configuracion_externa or {}).get("cabildo") or {}).get("staff_id")) or "")
+        if provider == "google":
+            consultorio_settings = ((consultorio.configuracion_externa or {}).get("google_calendar") or {})
+            if consultorio_settings.get("calendar_id"):
+                return consultorio_settings.get("calendar_id")
         settings = tenant.calendar_settings or {}
         return settings.get("google_calendar_id")
 
@@ -38,7 +45,8 @@ class CalendarService:
                 detail="Proveedor de turnos no soportado",
             )
         settings = tenant.calendar_settings or {}
-        calendar_id = settings.get("google_calendar_id")
+        consultorio_settings = get_google_calendar_config(consultorio)
+        calendar_id = consultorio_settings.get("calendar_id") or settings.get("google_calendar_id")
         if not calendar_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -51,6 +59,17 @@ class CalendarService:
                 detail="Credenciales de Google no configuradas",
             )
         return GoogleCalendarProvider(calendar_id, credentials_json, delegated_user)
+
+    def list_google_calendars(self, tenant: Tenant) -> list[dict[str, str]]:
+        settings = tenant.calendar_settings or {}
+        credentials_json, delegated_user = resolve_google_credentials(settings)
+        if not credentials_json:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Credenciales de Google no configuradas",
+            )
+        calendar_id = settings.get("google_calendar_id") or "primary"
+        return GoogleCalendarProvider(calendar_id, credentials_json, delegated_user).list_calendars()
 
     async def list_available_slots(
         self,
@@ -72,6 +91,17 @@ class CalendarService:
     ) -> dict:
         provider = self._get_provider(tenant, consultorio)
         return await provider.reserve_slot(tenant, consultorio, slot_id, patient, metadata)
+
+    async def generate_available_slots(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        slots: list[CalculatedSlot],
+    ) -> dict:
+        provider = self._get_provider(tenant, consultorio)
+        if not isinstance(provider, GoogleCalendarProvider):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El consultorio no usa Google Calendar")
+        return provider.generate_available_slots(tenant, consultorio, slots)
 
     async def cancel_slot(
         self,

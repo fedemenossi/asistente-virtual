@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from google.oauth2 import service_account
@@ -11,6 +12,12 @@ from app.integrations.interfaces import CalendarProvider, CalendarSlot
 from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
+from app.services.google_calendar_slots_service import (
+    DEFAULT_AVAILABLE_TAG,
+    DEFAULT_RESERVED_TAG_TEMPLATE,
+    CalculatedSlot,
+    get_google_calendar_config,
+)
 
 
 class GoogleCalendarProvider(CalendarProvider):
@@ -38,7 +45,15 @@ class GoogleCalendarProvider(CalendarProvider):
     def _is_slot_available(event: dict, tags: list[str] | None) -> bool:
         summary = (event.get("summary") or "").lower()
         description = (event.get("description") or "").lower()
-        if "[disponible]" not in summary and "slot=available" not in description:
+        private_props = ((event.get("extendedProperties") or {}).get("private") or {})
+        shared_props = ((event.get("extendedProperties") or {}).get("shared") or {})
+        slot_status = str(private_props.get("slot_status") or shared_props.get("slot_status") or "").lower()
+        generated = str(private_props.get("generated_by_app") or shared_props.get("generated_by_app") or "").lower()
+        if slot_status == "available":
+            return True
+        if generated == "true" and slot_status and slot_status != "available":
+            return False
+        if DEFAULT_AVAILABLE_TAG.lower() not in summary and "[disponible]" not in summary and "slot=available" not in description:
             return False
         if tags:
             for tag in tags:
@@ -56,8 +71,9 @@ class GoogleCalendarProvider(CalendarProvider):
         end,
     ) -> list[CalendarSlot]:
         settings = tenant.calendar_settings or {}
+        consultorio_settings = get_google_calendar_config(consultorio)
         tags = settings.get("calendar_tags") or []
-        timezone = settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
+        timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
 
         service = self._build_service()
         events = (
@@ -81,10 +97,13 @@ class GoogleCalendarProvider(CalendarProvider):
             end_dt = end_info.get("dateTime")
             if not start_dt or not end_dt:
                 continue
+            parsed_start = _parse_datetime(start_dt)
+            if parsed_start < datetime.now(parsed_start.tzinfo):
+                continue
             slots.append(
                 CalendarSlot(
                     slot_id=event["id"],
-                    start_at=_parse_datetime(start_dt),
+                    start_at=parsed_start,
                     end_at=_parse_datetime(end_dt),
                     timezone=start_info.get("timeZone") or timezone,
                     provider="google",
@@ -92,6 +111,89 @@ class GoogleCalendarProvider(CalendarProvider):
                 )
             )
         return slots
+
+    def list_calendars(self) -> list[dict[str, str]]:
+        service = self._build_service()
+        result = service.calendarList().list().execute()
+        calendars = []
+        for item in result.get("items", []) or []:
+            calendars.append(
+                {
+                    "id": item.get("id") or "",
+                    "summary": item.get("summary") or item.get("id") or "",
+                    "access_role": item.get("accessRole") or "",
+                }
+            )
+        return calendars
+
+    def generate_available_slots(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        slots: list[CalculatedSlot],
+    ) -> dict[str, Any]:
+        config = get_google_calendar_config(consultorio)
+        service = self._build_service()
+        if not slots:
+            return {"calculated": 0, "created": 0, "duplicates": 0, "conflicts": 0, "errors": []}
+
+        time_min = min(slot.start_at for slot in slots).isoformat()
+        time_max = max(slot.end_at for slot in slots).isoformat()
+        existing = (
+            service.events()
+            .list(
+                calendarId=self._calendar_id,
+                timeMin=time_min,
+                timeMax=time_max,
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+            .get("items", [])
+            or []
+        )
+        summary = {"calculated": len(slots), "created": 0, "duplicates": 0, "conflicts": 0, "errors": []}
+        for slot in slots:
+            duplicate = False
+            conflict = False
+            for event in existing:
+                event_start = _event_datetime(event, "start")
+                event_end = _event_datetime(event, "end")
+                if not event_start or not event_end:
+                    continue
+                if _same_slot(event, tenant.id, consultorio.id, slot.start_at, slot.end_at):
+                    duplicate = True
+                    break
+                if _overlaps(slot.start_at, slot.end_at, event_start, event_end) and not self._is_slot_available(event, None):
+                    conflict = True
+                    break
+            if duplicate:
+                summary["duplicates"] += 1
+                continue
+            if conflict:
+                summary["conflicts"] += 1
+                continue
+            body = {
+                "summary": config.get("available_tag") or DEFAULT_AVAILABLE_TAG,
+                "start": {"dateTime": slot.start_at.isoformat(), "timeZone": config["timezone"]},
+                "end": {"dateTime": slot.end_at.isoformat(), "timeZone": config["timezone"]},
+                "extendedProperties": {
+                    "private": {
+                        "app": "consultorio_virtual",
+                        "tenant_id": str(tenant.id),
+                        "consultorio_id": str(consultorio.id),
+                        "slot_status": "available",
+                        "generated_by_app": "true",
+                    }
+                },
+            }
+            try:
+                created = service.events().insert(calendarId=self._calendar_id, body=body).execute()
+                existing.append(created)
+                summary["created"] += 1
+            except Exception as exc:
+                summary["errors"].append(type(exc).__name__)
+        return summary
 
     async def reserve_slot(
         self,
@@ -102,8 +204,9 @@ class GoogleCalendarProvider(CalendarProvider):
         metadata: dict,
     ) -> dict:
         settings = tenant.calendar_settings or {}
+        consultorio_settings = get_google_calendar_config(consultorio)
         tags = settings.get("calendar_tags") or []
-        timezone = settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
+        timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
         virtual_meet_enabled = bool(settings.get("virtual_meet_enabled"))
 
         service = self._build_service()
@@ -111,18 +214,30 @@ class GoogleCalendarProvider(CalendarProvider):
         if not self._is_slot_available(event, tags):
             raise RuntimeError("Slot no disponible")
 
-        description = event.get("description") or ""
+        patient_full_name = f"{patient.nombre} {patient.apellido}".strip()
         patient_block = (
-            f"\n\nPaciente: {patient.nombre} {patient.apellido}\n"
-            f"Telefono: {patient.telefono}\n"
-            f"DNI: {patient.dni}\n"
-            f"Email: {patient.email}\n"
-            f"Metadata: {json.dumps(metadata)}"
+            f"Paciente: {patient_full_name}\n"
+            f"DNI: {patient.dni or '-'}\n"
+            f"Telefono: {patient.telefono or '-'}\n"
+            f"Obra social: {patient.obra_social or '-'}\n"
+            f"Email: {patient.email or '-'}\n"
+            f"Metadata: {json.dumps(metadata, ensure_ascii=True)}"
         )
-        summary = f"Turno confirmado - {patient.nombre} {patient.apellido}"
+        template = consultorio_settings.get("reserved_tag_template") or DEFAULT_RESERVED_TAG_TEMPLATE
+        summary = template.replace("{patient_full_name}", patient_full_name)
         body: dict[str, Any] = {
             "summary": summary,
-            "description": description + patient_block,
+            "description": patient_block,
+            "extendedProperties": {
+                "private": {
+                    **(((event.get("extendedProperties") or {}).get("private") or {})),
+                    "app": "consultorio_virtual",
+                    "tenant_id": str(tenant.id),
+                    "consultorio_id": str(consultorio.id),
+                    "slot_status": "reserved",
+                    "generated_by_app": "true",
+                }
+            },
         }
         if consultorio.tipo.value == "virtual" and virtual_meet_enabled:
             body["conferenceData"] = {
@@ -157,8 +272,20 @@ class GoogleCalendarProvider(CalendarProvider):
 
     async def cancel_slot(self, external_event_id: str) -> None:
         service = self._build_service()
-        service.events().delete(
-            calendarId=self._calendar_id, eventId=external_event_id, sendUpdates="all"
+        event = service.events().get(calendarId=self._calendar_id, eventId=external_event_id).execute()
+        private_props = ((event.get("extendedProperties") or {}).get("private") or {})
+        private_props["slot_status"] = "available"
+        private_props["generated_by_app"] = "true"
+        body = {
+            "summary": DEFAULT_AVAILABLE_TAG,
+            "description": "",
+            "extendedProperties": {"private": private_props},
+        }
+        service.events().patch(
+            calendarId=self._calendar_id,
+            eventId=external_event_id,
+            body=body,
+            sendUpdates="all",
         ).execute()
 
     async def get_event(self, external_event_id: str) -> dict:
@@ -182,3 +309,23 @@ def _parse_datetime(value: str):
     from datetime import datetime
 
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _event_datetime(event: dict, field: str):
+    value = (event.get(field) or {}).get("dateTime")
+    return _parse_datetime(value) if value else None
+
+
+def _same_slot(event: dict, tenant_id: int, consultorio_id: int, start_at, end_at) -> bool:
+    private_props = ((event.get("extendedProperties") or {}).get("private") or {})
+    return (
+        str(private_props.get("generated_by_app")).lower() == "true"
+        and str(private_props.get("tenant_id")) == str(tenant_id)
+        and str(private_props.get("consultorio_id")) == str(consultorio_id)
+        and _event_datetime(event, "start") == start_at
+        and _event_datetime(event, "end") == end_at
+    )
+
+
+def _overlaps(start_a, end_a, start_b, end_b) -> bool:
+    return start_a < end_b and start_b < end_a

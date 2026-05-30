@@ -1,0 +1,89 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Generar slots" %}
+{% set breadcrumb = "Tenant / Consultorios / Google Calendar" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">{{ consultorio.nombre }}</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Generar slots en Google Calendar</h1>
+    <p class="mt-1 text-sm text-slate-600">Crea eventos disponibles en el calendario configurado. No guarda slots locales.</p>
+  </div>
+
+  {% if errors %}
+    <div class="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+      {% for _, message in errors.items() %}
+        <p>{{ message }}</p>
+      {% endfor %}
+    </div>
+  {% endif %}
+  {% if warnings %}
+    <div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+      {% for message in warnings %}
+        <p>{{ message }}</p>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  <form method="post" class="card p-6 space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="grid gap-4 md:grid-cols-3">
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Fecha desde</label>
+        <input class="input mt-1" type="date" name="date_from" value="{{ date_from }}" required />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Fecha hasta</label>
+        <input class="input mt-1" type="date" name="date_to" value="{{ date_to }}" required />
+      </div>
+      <label class="mt-7 inline-flex items-center gap-2 text-sm text-slate-600">
+        <input type="checkbox" name="exclude_holidays" value="1" {% if exclude_holidays %}checked{% endif %} />
+        No generar turnos en feriados de Argentina
+      </label>
+    </div>
+    <div class="flex flex-wrap items-center gap-3">
+      <button class="btn btn-secondary" type="submit" name="action" value="preview">Previsualizar slots</button>
+      <button class="btn btn-primary" type="submit" name="action" value="generate">Generar slots en Google Calendar</button>
+      <a class="btn btn-secondary" href="/t/consultorios/{{ consultorio.id }}/edit">Volver</a>
+    </div>
+  </form>
+
+  {% if result %}
+    <div class="mt-4 grid gap-4 md:grid-cols-5">
+      <div class="card-sm border border-slate-200 bg-white"><p class="text-xs text-slate-500">Calculados</p><p class="mt-1 text-2xl font-semibold">{{ result.calculated }}</p></div>
+      <div class="card-sm border border-emerald-200 bg-emerald-50"><p class="text-xs text-emerald-700">Creados</p><p class="mt-1 text-2xl font-semibold">{{ result.created }}</p></div>
+      <div class="card-sm border border-slate-200 bg-white"><p class="text-xs text-slate-500">Duplicados</p><p class="mt-1 text-2xl font-semibold">{{ result.duplicates }}</p></div>
+      <div class="card-sm border border-amber-200 bg-amber-50"><p class="text-xs text-amber-700">Conflictos</p><p class="mt-1 text-2xl font-semibold">{{ result.conflicts }}</p></div>
+      <div class="card-sm border border-rose-200 bg-rose-50"><p class="text-xs text-rose-700">Errores</p><p class="mt-1 text-2xl font-semibold">{{ result.errors|length }}</p></div>
+    </div>
+  {% endif %}
+
+  <div class="mt-4 card overflow-x-auto">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-slate-900">Previsualizacion</h2>
+      <span class="text-xs text-slate-500">{{ preview_slots|length }} slots</span>
+    </div>
+    {% if preview_slots %}
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Inicio</th>
+            <th class="px-4 py-3 text-left font-medium">Fin</th>
+            <th class="px-4 py-3 text-left font-medium">Dia</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for slot in preview_slots %}
+            <tr class="border-t border-slate-200">
+              <td class="px-4 py-3 text-slate-900">{{ slot.start_at|format_ba('%Y-%m-%d %H:%M') }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ slot.end_at|format_ba('%H:%M') }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ slot.weekday }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="py-8 text-center text-sm text-slate-500">No hay slots calculados para el rango elegido.</p>
+    {% endif %}
+  </div>
+{% endblock %}

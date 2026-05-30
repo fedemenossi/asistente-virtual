@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo
 import secrets
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -49,6 +49,16 @@ from app.services.ai_conversation_summary_service import (
 )
 from app.services.messaging_service import MessagingService
 from app.services.calendar_service import CalendarService
+from app.services.google_calendar_slots_service import (
+    WEEKDAY_KEYS,
+    WEEKDAY_LABELS,
+    build_google_calendar_config_from_form,
+    calculate_slots,
+    default_google_calendar_config,
+    get_google_calendar_config,
+    normalize_provider,
+)
+from app.services.holiday_service import HolidayService
 
 
 def _template(request: Request, name: str, context: dict) -> Response:
@@ -326,25 +336,59 @@ async def consultorios_list(
     )
 
 
+def _consultorio_form_common_context(
+    consultorio: Consultorio | None,
+    *,
+    errors: dict | None = None,
+    form_data: dict | None = None,
+    cabildo_defaults: dict | None = None,
+    google_config: dict | None = None,
+    google_calendars: list[dict] | None = None,
+    google_calendar_error: str | None = None,
+) -> dict:
+    return {
+        "consultorio": consultorio,
+        "tipos": list(TipoConsultorio),
+        "errors": errors or {},
+        "form_data": form_data or {},
+        "cabildo_defaults": cabildo_defaults or {
+            "user": "",
+            "password": "",
+            "staff_id": "",
+            "days": 21,
+        },
+        "google_config": google_config or (get_google_calendar_config(consultorio) if consultorio else default_google_calendar_config()),
+        "google_weekdays": [(key, WEEKDAY_LABELS[key]) for key in WEEKDAY_KEYS],
+        "google_calendars": google_calendars or [],
+        "google_calendar_error": google_calendar_error,
+    }
+
+
+def _load_google_calendars_for_tenant(tenant: Tenant) -> tuple[list[dict], str | None]:
+    try:
+        return CalendarService().list_google_calendars(tenant), None
+    except Exception:
+        return [], (
+            "No se pudieron listar calendarios. Compartí el calendario con el email de la service account "
+            "y verificá que tenga permisos de lectura/escritura."
+        )
+
+
 async def consultorios_new_get(
     request: Request,
     user: CurrentUser = Depends(require_permission("consultorio:write")),
+    session: AsyncSession = Depends(get_async_session),
 ) -> Response:
+    tenant = await session.get(Tenant, user.tenant_id)
+    google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
     return _template(
         request,
         "tenant/consultorio_form.html",
-        {
-            "consultorio": None,
-            "tipos": list(TipoConsultorio),
-            "errors": {},
-            "form_data": {},
-            "cabildo_defaults": {
-                "user": "",
-                "password": "",
-                "staff_id": "",
-                "days": 21,
-            },
-        },
+        _consultorio_form_common_context(
+            None,
+            google_calendars=google_calendars,
+            google_calendar_error=google_calendar_error,
+        ),
     )
 
 
@@ -362,8 +406,16 @@ async def consultorios_new_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     validate_csrf(request, csrf_token)
+    provider = normalize_provider(proveedor_turnos)
     config_externa: dict | None = None
-    if proveedor_turnos == "consultorio_movil":
+    form = await request.form()
+    google_config = default_google_calendar_config()
+    google_calendars: list[dict] = []
+    google_calendar_error = None
+    tenant = await session.get(Tenant, user.tenant_id)
+    if tenant:
+        google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant)
+    if provider == "consultorio_movil":
         errors: dict[str, str] = {}
         if not cab_user:
             errors["cab_user"] = "El usuario es obligatorio."
@@ -381,22 +433,15 @@ async def consultorios_new_post(
             return _template(
                 request,
                 "tenant/consultorio_form.html",
-                {
-                    "consultorio": None,
-                    "tipos": list(TipoConsultorio),
-                    "errors": errors,
-                    "form_data": {
-                        "nombre": nombre,
-                        "tipo": tipo,
-                        "proveedor_turnos": proveedor_turnos or "",
-                    },
-                    "cabildo_defaults": {
-                        "user": cab_user or "",
-                        "password": cab_password or "",
-                        "staff_id": cab_staff_id or "",
-                        "days": cab_days or 21,
-                    },
-                },
+                _consultorio_form_common_context(
+                    None,
+                    errors=errors,
+                    form_data={"nombre": nombre, "tipo": tipo, "proveedor_turnos": provider or ""},
+                    cabildo_defaults={"user": cab_user or "", "password": cab_password or "", "staff_id": cab_staff_id or "", "days": cab_days or 21},
+                    google_config=google_config,
+                    google_calendars=google_calendars,
+                    google_calendar_error=google_calendar_error,
+                ),
             )
         days_value = 21
         if cab_days:
@@ -412,21 +457,43 @@ async def consultorios_new_post(
                 "days": days_value,
             }
         }
+    elif provider == "google":
+        errors = {}
+        try:
+            google_config = build_google_calendar_config_from_form(form)
+        except ValueError as exc:
+            errors["google_calendar"] = str(exc)
+        if errors:
+            return _template(
+                request,
+                "tenant/consultorio_form.html",
+                _consultorio_form_common_context(
+                    None,
+                    errors=errors,
+                    form_data={"nombre": nombre, "tipo": tipo, "proveedor_turnos": provider or ""},
+                    google_config=google_config,
+                    google_calendars=google_calendars,
+                    google_calendar_error=google_calendar_error,
+                ),
+            )
+        config_externa = {"google_calendar": google_config}
     consultorio = Consultorio(
         tenant_id=user.tenant_id,
         nombre=nombre,
         tipo=TipoConsultorio(tipo),
-        proveedor_turnos=proveedor_turnos,
+        proveedor_turnos=provider,
         configuracion_externa=config_externa,
     )
     async with session.begin_nested():
         session.add(consultorio)
         await session.flush()
         metadata = None
-        if proveedor_turnos == "consultorio_movil":
+        if provider == "consultorio_movil":
             metadata = {
                 "cabildo": consultorio.configuracion_externa.get("cabildo") if consultorio.configuracion_externa else {},
             }
+        elif provider == "google":
+            metadata = {"google_calendar": {"calendar_id": google_config.get("calendar_id"), "schedule_updated": True}}
         await audit_log(
             session,
             request,
@@ -450,21 +517,22 @@ async def consultorios_edit_get(
         session, Consultorio, consultorio_id, user.tenant_id
     )
     cabildo_cfg = (consultorio.configuracion_externa or {}).get("cabildo") or {}
+    tenant = await session.get(Tenant, user.tenant_id)
+    google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
     return _template(
         request,
         "tenant/consultorio_form.html",
-        {
-            "consultorio": consultorio,
-            "tipos": list(TipoConsultorio),
-            "errors": {},
-            "form_data": {},
-            "cabildo_defaults": {
+        _consultorio_form_common_context(
+            consultorio,
+            cabildo_defaults={
                 "user": cabildo_cfg.get("user") or "",
                 "password": cabildo_cfg.get("password") or "",
                 "staff_id": cabildo_cfg.get("staff_id") or "",
                 "days": cabildo_cfg.get("days") or 21,
             },
-        },
+            google_calendars=google_calendars,
+            google_calendar_error=google_calendar_error,
+        ),
     )
 
 
@@ -483,15 +551,20 @@ async def consultorios_edit_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     validate_csrf(request, csrf_token)
+    provider = normalize_provider(proveedor_turnos)
+    form = await request.form()
     consultorio = await get_tenant_entity_or_404(
         session, Consultorio, consultorio_id, user.tenant_id
     )
     errors: dict[str, str] = {}
+    tenant = await session.get(Tenant, user.tenant_id)
+    google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
+    google_config = get_google_calendar_config(consultorio)
     existing_days = (
         (consultorio.configuracion_externa or {}).get("cabildo") or {}
     ).get("days") or 21
     days_value = existing_days
-    if proveedor_turnos == "consultorio_movil":
+    if provider == "consultorio_movil":
         if not cab_user:
             errors["cab_user"] = "El usuario es obligatorio."
         if not cab_password:
@@ -507,22 +580,33 @@ async def consultorios_edit_post(
             return _template(
                 request,
                 "tenant/consultorio_form.html",
-                {
-                    "consultorio": consultorio,
-                    "tipos": list(TipoConsultorio),
-                    "errors": errors,
-                    "form_data": {
-                        "nombre": nombre,
-                        "tipo": tipo,
-                        "proveedor_turnos": proveedor_turnos or "",
-                    },
-                    "cabildo_defaults": {
-                        "user": cab_user or "",
-                        "password": cab_password or "",
-                        "staff_id": cab_staff_id or "",
-                        "days": cab_days or 21,
-                    },
-                },
+                _consultorio_form_common_context(
+                    consultorio,
+                    errors=errors,
+                    form_data={"nombre": nombre, "tipo": tipo, "proveedor_turnos": provider or ""},
+                    cabildo_defaults={"user": cab_user or "", "password": cab_password or "", "staff_id": cab_staff_id or "", "days": cab_days or 21},
+                    google_config=google_config,
+                    google_calendars=google_calendars,
+                    google_calendar_error=google_calendar_error,
+                ),
+            )
+    elif provider == "google":
+        try:
+            google_config = build_google_calendar_config_from_form(form)
+        except ValueError as exc:
+            errors["google_calendar"] = str(exc)
+        if errors:
+            return _template(
+                request,
+                "tenant/consultorio_form.html",
+                _consultorio_form_common_context(
+                    consultorio,
+                    errors=errors,
+                    form_data={"nombre": nombre, "tipo": tipo, "proveedor_turnos": provider or ""},
+                    google_config=google_config,
+                    google_calendars=google_calendars,
+                    google_calendar_error=google_calendar_error,
+                ),
             )
     previous_cabildo = None
     if consultorio.configuracion_externa:
@@ -530,9 +614,9 @@ async def consultorios_edit_post(
     async with session.begin_nested():
         consultorio.nombre = nombre
         consultorio.tipo = TipoConsultorio(tipo)
-        consultorio.proveedor_turnos = proveedor_turnos
+        consultorio.proveedor_turnos = provider
         config_externa = consultorio.configuracion_externa or {}
-        if proveedor_turnos == "consultorio_movil":
+        if provider == "consultorio_movil":
             config_externa["cabildo"] = {
                 "user": cab_user.strip(),
                 "password": cab_password.strip(),
@@ -541,12 +625,18 @@ async def consultorios_edit_post(
             }
             consultorio.configuracion_externa = config_externa
             flag_modified(consultorio, "configuracion_externa")
+        elif provider == "google":
+            config_externa["google_calendar"] = google_config
+            consultorio.configuracion_externa = config_externa
+            flag_modified(consultorio, "configuracion_externa")
         metadata = None
-        if proveedor_turnos == "consultorio_movil":
+        if provider == "consultorio_movil":
             metadata = {
                 "cabildo_before": previous_cabildo,
                 "cabildo_after": config_externa.get("cabildo") if config_externa else {},
             }
+        elif provider == "google":
+            metadata = {"google_calendar": {"calendar_id": google_config.get("calendar_id"), "schedule_updated": True}}
         await audit_log(
             session,
             request,
@@ -664,6 +754,125 @@ async def consultorio_provider_test(
             "lookahead_days": 3,
             "slots": slots,
         }
+    )
+
+
+async def consultorio_google_calendars(
+    request: Request,
+    consultorio_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("consultorio:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> JSONResponse:
+    validate_csrf(request, csrf_token)
+    await get_tenant_entity_or_404(session, Consultorio, consultorio_id, user.tenant_id)
+    tenant = await session.get(Tenant, user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404)
+    calendars, error = _load_google_calendars_for_tenant(tenant)
+    if error:
+        return JSONResponse({"ok": False, "message": error, "calendars": []}, status_code=400)
+    return JSONResponse({"ok": True, "message": f"Se encontraron {len(calendars)} calendarios.", "calendars": calendars})
+
+
+async def consultorio_calendar_slots_get(
+    request: Request,
+    consultorio_id: int,
+    user: CurrentUser = Depends(require_permission("consultorio:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    consultorio = await get_tenant_entity_or_404(session, Consultorio, consultorio_id, user.tenant_id)
+    if CalendarService().resolve_provider_name(consultorio) != "google":
+        raise HTTPException(status_code=400, detail="El consultorio no usa Google Calendar")
+    today = now_ba().date()
+    return _template(
+        request,
+        "tenant/consultorio_calendar_slots.html",
+        {
+            "consultorio": consultorio,
+            "date_from": today.isoformat(),
+            "date_to": (today + timedelta(days=14)).isoformat(),
+            "exclude_holidays": True,
+            "preview_slots": [],
+            "result": None,
+            "warnings": [],
+            "errors": {},
+        },
+    )
+
+
+async def consultorio_calendar_slots_post(
+    request: Request,
+    consultorio_id: int,
+    date_from: str = Form(...),
+    date_to: str = Form(...),
+    action: str = Form("preview"),
+    exclude_holidays: str | None = Form(None),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("consultorio:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    consultorio = await get_tenant_entity_or_404(session, Consultorio, consultorio_id, user.tenant_id)
+    if CalendarService().resolve_provider_name(consultorio) != "google":
+        raise HTTPException(status_code=400, detail="El consultorio no usa Google Calendar")
+    tenant = await session.get(Tenant, user.tenant_id)
+    if tenant is None:
+        raise HTTPException(status_code=404)
+    errors: dict[str, str] = {}
+    result = None
+    preview_slots = []
+    warnings: list[str] = []
+    try:
+        start_day = date.fromisoformat(date_from)
+        end_day = date.fromisoformat(date_to)
+        holiday_service = HolidayService()
+        if exclude_holidays:
+            missing = holiday_service.missing_years(start_day, end_day)
+            if missing:
+                warnings.append("No hay feriados cargados para: " + ", ".join(str(year) for year in missing))
+        preview_slots = calculate_slots(
+            get_google_calendar_config(consultorio),
+            start_day,
+            end_day,
+            exclude_argentina_holidays=bool(exclude_holidays),
+            holiday_service=holiday_service,
+        )
+    except ValueError as exc:
+        errors["date_range"] = str(exc)
+    if not errors and action == "generate":
+        try:
+            result = await CalendarService().generate_available_slots(tenant, consultorio, preview_slots)
+            await audit_log(
+                session,
+                request,
+                user,
+                action="google_calendar_slots_generated",
+                entity="consultorio",
+                entity_id=consultorio.id,
+                tenant_id=tenant.id,
+                metadata={
+                    "calendar_id": get_google_calendar_config(consultorio).get("calendar_id"),
+                    "date_from": date_from,
+                    "date_to": date_to,
+                    "result": result,
+                },
+            )
+        except Exception as exc:
+            errors["generate"] = f"No se pudieron generar slots: {type(exc).__name__}"
+    return _template(
+        request,
+        "tenant/consultorio_calendar_slots.html",
+        {
+            "consultorio": consultorio,
+            "date_from": date_from,
+            "date_to": date_to,
+            "exclude_holidays": bool(exclude_holidays),
+            "preview_slots": preview_slots,
+            "result": result,
+            "warnings": warnings,
+            "errors": errors,
+        },
     )
 
 

@@ -235,11 +235,10 @@ Multi-tenant:
 - `GET /admin/audit-logs`
 - `GET /admin/calendars`
 - `GET /admin/appointments`
-- `GET /admin/conversation-states`
-- `GET /admin/conversation-states/{tenant_id}/{telefono}`
-- `GET /admin/conversation-states/history/{history_id}`
-- `POST /admin/conversation-states/{tenant_id}/{telefono}/resolve`
-- `POST /admin/conversation-states/{tenant_id}/{telefono}/review`
+- `/admin/conversation-states*` queda como ruta legacy de compatibilidad:
+  - los `GET` redirigen a `/admin/tenants`.
+  - los `POST` de resolve/review responden `403`.
+  - las conversaciones se operan desde el panel tenant (`/t/conversation-states`).
 - `GET /admin/payments`
 - `GET /admin/payments/{payment_id}`
 - `GET /admin/settings/notifications`
@@ -305,7 +304,7 @@ Reglas:
 
 Conversaciones pendientes/finalizadas:
 - Bandeja en `/t/conversation-states`.
-- Vista tenant y vista global super admin (`/admin/conversation-states`).
+- No hay bandeja global operativa para `SUPER_ADMIN`; las conversaciones pertenecen al tenant y se gestionan desde el panel tenant.
 - Filtros operativos por estado, categoria, subtipo, adjuntos y ventana temporal.
 - Detalle incluye link para responder por WhatsApp.
 - Acciones manuales:
@@ -662,14 +661,29 @@ Configuracion por tenant (`calendar_settings`):
 - `google_credentials_json` (Service Account JSON)
 - `google_delegated_user` (opcional)
 
+Configuracion por consultorio virtual (`consultorio.configuracion_externa.google_calendar`):
+- `calendar_id` elegido desde calendarios accesibles por la service account del tenant.
+- `available_tag` default `[TURNO DISPONIBLE]`.
+- `reserved_tag_template` default `[TURNO {patient_full_name}]`.
+- `timezone` default `America/Argentina/Buenos_Aires`.
+- `schedule` semanal lunes-domingo con activo, inicio, fin, duracion del turno y buffer.
+- El formulario acepta `proveedor_turnos=google_calendar` y lo normaliza a `google`.
+
 Flujos:
-- Listar slots disponibles: eventos con tags de disponibilidad.
-- Reservar slot: patch al evento, agrega datos paciente, opcional Meet.
-- Cancelar slot: delete del evento.
+- Listar slots disponibles: eventos con `summary=[TURNO DISPONIBLE]` o `extendedProperties.private.slot_status=available`.
+- Generar slots: `/t/consultorios/{consultorio_id}/calendar-slots` crea eventos en Google Calendar segun la agenda semanal.
+- No se persisten slots disponibles en tablas locales; Google Calendar es la fuente de verdad para disponibilidad.
+- Reservar slot: patch al evento existente, agrega datos paciente, cambia `summary` y `slot_status=reserved`, opcional Meet.
+- Cancelar slot: reabre el evento como `[TURNO DISPONIBLE]`, limpia descripcion y cambia `slot_status=available`; no borra el evento.
+- Duplicados: se omite si ya existe evento generado por app para mismo tenant, consultorio, inicio y fin.
+- Conflictos: se omite si hay evento ocupado solapado en el rango.
+- Feriados: `HolidayService` local permite excluir feriados de Argentina sin depender de API externa.
 
 UI:
 - `/t/settings/calendar`
 - Boton "Probar conexion" abre modal con grilla de slots desde `/t/settings/calendar/test`.
+- `/t/consultorios/{consultorio_id}/edit` lista calendarios con `calendarList.list` y configura agenda semanal.
+- `/t/consultorios/{consultorio_id}/calendar-slots` previsualiza/genera eventos disponibles.
 
 ## 11) Integracion Consultorio Movil
 Archivo: `app/integrations/consultorio_movil.py`.
