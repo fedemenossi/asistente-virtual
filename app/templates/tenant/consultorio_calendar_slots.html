@@ -31,6 +31,7 @@
 
   <form method="post" class="card p-6 space-y-4" data-calendar-slots-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="action" value="preview" data-calendar-slots-action-input />
     <div class="grid gap-4 md:grid-cols-3">
       <div>
         <label class="block text-sm font-medium text-slate-700">Fecha desde</label>
@@ -124,6 +125,7 @@
     (() => {
       const form = document.querySelector("[data-calendar-slots-form]");
       if (!form) return;
+      const actionInput = document.querySelector("[data-calendar-slots-action-input]");
       const progress = document.querySelector("[data-calendar-slots-progress]");
       const title = document.querySelector("[data-calendar-slots-progress-title]");
       const detail = document.querySelector("[data-calendar-slots-progress-detail]");
@@ -143,6 +145,9 @@
 
       form.addEventListener("submit", (event) => {
         const submitter = event.submitter;
+        if (actionInput && submitter?.name === "action") {
+          actionInput.value = submitter.value || "preview";
+        }
         if (!submitter || submitter.dataset.calendarSlotsAction !== "generate") return;
         progress?.classList.remove("hidden");
         buttons.forEach((button) => {

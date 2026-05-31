@@ -224,6 +224,7 @@ def test_calendar_slots_page_renders_progress_indicator(client, db_session):
 
     assert response.status_code == 200
     assert "data-calendar-slots-progress" in response.text
+    assert 'data-calendar-slots-action-input' in response.text
     assert "Consultando Google Calendar" in response.text
     assert "Generando..." in response.text
 
