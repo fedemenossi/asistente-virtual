@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from typing import Any
 
@@ -19,6 +20,9 @@ from app.services.google_calendar_slots_service import (
     CalculatedSlot,
     get_google_calendar_config,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class GoogleCalendarProvider(CalendarProvider):
@@ -146,25 +150,32 @@ class GoogleCalendarProvider(CalendarProvider):
         slots: list[CalculatedSlot],
     ) -> dict[str, Any]:
         config = get_google_calendar_config(consultorio)
-        service = self._build_service()
+        logger.info(
+            "google_calendar_generate_start tenant_id=%s consultorio_id=%s calendar_id=%s slots=%s timezone=%s",
+            tenant.id,
+            consultorio.id,
+            _mask_calendar_id(self._calendar_id),
+            len(slots),
+            config.get("timezone"),
+        )
         if not slots:
-            return {"calculated": 0, "created": 0, "duplicates": 0, "conflicts": 0, "errors": []}
+            logger.info(
+                "google_calendar_generate_no_slots tenant_id=%s consultorio_id=%s calendar_id=%s",
+                tenant.id,
+                consultorio.id,
+                _mask_calendar_id(self._calendar_id),
+            )
+            return {
+                "calendar_id": self._calendar_id,
+                "calculated": 0,
+                "created": 0,
+                "duplicates": 0,
+                "conflicts": 0,
+                "errors": [],
+            }
 
         time_min = min(slot.start_at for slot in slots).isoformat()
         time_max = max(slot.end_at for slot in slots).isoformat()
-        existing = (
-            service.events()
-            .list(
-                calendarId=self._calendar_id,
-                timeMin=time_min,
-                timeMax=time_max,
-                singleEvents=True,
-                orderBy="startTime",
-            )
-            .execute()
-            .get("items", [])
-            or []
-        )
         summary = {
             "calendar_id": self._calendar_id,
             "calculated": len(slots),
@@ -173,6 +184,48 @@ class GoogleCalendarProvider(CalendarProvider):
             "conflicts": 0,
             "errors": [],
         }
+        try:
+            service = self._build_service()
+            logger.info(
+                "google_calendar_generate_list_existing tenant_id=%s consultorio_id=%s calendar_id=%s time_min=%s time_max=%s",
+                tenant.id,
+                consultorio.id,
+                _mask_calendar_id(self._calendar_id),
+                time_min,
+                time_max,
+            )
+            existing = (
+                service.events()
+                .list(
+                    calendarId=self._calendar_id,
+                    timeMin=time_min,
+                    timeMax=time_max,
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
+                .get("items", [])
+                or []
+            )
+            logger.info(
+                "google_calendar_generate_existing_loaded tenant_id=%s consultorio_id=%s calendar_id=%s existing_events=%s",
+                tenant.id,
+                consultorio.id,
+                _mask_calendar_id(self._calendar_id),
+                len(existing),
+            )
+        except Exception as exc:
+            error = _safe_google_error(exc)
+            logger.exception(
+                "google_calendar_generate_list_failed tenant_id=%s consultorio_id=%s calendar_id=%s error=%s",
+                tenant.id,
+                consultorio.id,
+                _mask_calendar_id(self._calendar_id),
+                error,
+            )
+            summary["errors"].append(error)
+            return summary
+
         for slot in slots:
             duplicate = False
             conflict = False
@@ -212,7 +265,28 @@ class GoogleCalendarProvider(CalendarProvider):
                 existing.append(created)
                 summary["created"] += 1
             except Exception as exc:
-                summary["errors"].append(_safe_google_error(exc))
+                error = _safe_google_error(exc)
+                summary["errors"].append(error)
+                logger.exception(
+                    "google_calendar_generate_insert_failed tenant_id=%s consultorio_id=%s calendar_id=%s slot_start=%s slot_end=%s error=%s",
+                    tenant.id,
+                    consultorio.id,
+                    _mask_calendar_id(self._calendar_id),
+                    slot.start_at.isoformat(),
+                    slot.end_at.isoformat(),
+                    error,
+                )
+        logger.info(
+            "google_calendar_generate_finished tenant_id=%s consultorio_id=%s calendar_id=%s calculated=%s created=%s duplicates=%s conflicts=%s errors=%s",
+            tenant.id,
+            consultorio.id,
+            _mask_calendar_id(self._calendar_id),
+            summary["calculated"],
+            summary["created"],
+            summary["duplicates"],
+            summary["conflicts"],
+            len(summary["errors"]),
+        )
         return summary
 
     async def reserve_slot(
@@ -384,3 +458,12 @@ def _safe_google_error(exc: Exception) -> str:
             pieces.append(str(detail))
         return " - ".join(pieces)
     return type(exc).__name__
+
+
+def _mask_calendar_id(calendar_id: str | None) -> str:
+    value = str(calendar_id or "").strip()
+    if not value:
+        return ""
+    if len(value) <= 12:
+        return value
+    return f"{value[:6]}...{value[-6:]}"

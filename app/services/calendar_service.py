@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import HTTPException, status
 
 from app.integrations.cabildo_provider import CabildoProvider
@@ -13,6 +15,9 @@ from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
 from app.services.google_calendar_slots_service import CalculatedSlot, get_google_calendar_config
+
+
+logger = logging.getLogger(__name__)
 
 
 class CalendarService:
@@ -48,6 +53,17 @@ class CalendarService:
         settings = tenant.calendar_settings or {}
         consultorio_settings = get_google_calendar_config(consultorio)
         calendar_id = consultorio_settings.get("calendar_id") or settings.get("google_calendar_id")
+        logger.info(
+            "calendar_provider_resolve tenant_id=%s consultorio_id=%s provider=%s has_consultorio_calendar=%s has_fallback_calendar=%s selected_calendar_id=%s has_credentials=%s delegated_user=%s",
+            tenant.id,
+            consultorio.id,
+            provider,
+            bool(consultorio_settings.get("calendar_id")),
+            bool(settings.get("google_calendar_id")),
+            _mask_calendar_id(calendar_id),
+            bool(settings.get("google_credentials_json")),
+            bool(settings.get("google_delegated_user")),
+        )
         if not calendar_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -55,6 +71,12 @@ class CalendarService:
             )
         credentials_json, delegated_user = resolve_google_credentials(settings)
         if not credentials_json:
+            logger.warning(
+                "calendar_provider_missing_google_credentials tenant_id=%s consultorio_id=%s calendar_id=%s",
+                tenant.id,
+                consultorio.id,
+                _mask_calendar_id(calendar_id),
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Credenciales de Google no configuradas",
@@ -105,6 +127,12 @@ class CalendarService:
         provider = self._get_provider(tenant, consultorio)
         if not isinstance(provider, GoogleCalendarProvider):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El consultorio no usa Google Calendar")
+        logger.info(
+            "calendar_service_generate_available_slots tenant_id=%s consultorio_id=%s slots=%s",
+            tenant.id,
+            consultorio.id,
+            len(slots),
+        )
         return provider.generate_available_slots(tenant, consultorio, slots)
 
     async def cancel_slot(
@@ -131,3 +159,12 @@ class CalendarService:
         provider_name = (external_provider or self.resolve_provider_name(consultorio)).strip().lower()
         provider = CabildoProvider() if provider_name == "consultorio_movil" else self._get_provider(tenant, consultorio)
         return await provider.get_event(external_event_id)
+
+
+def _mask_calendar_id(calendar_id: str | None) -> str:
+    value = str(calendar_id or "").strip()
+    if not value:
+        return ""
+    if len(value) <= 12:
+        return value
+    return f"{value[:6]}...{value[-6:]}"

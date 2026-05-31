@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, timedelta, timezone, tzinfo
 import secrets
 from types import SimpleNamespace
@@ -61,6 +62,9 @@ from app.services.google_calendar_slots_service import (
 from app.services.holiday_service import HolidayService
 
 
+logger = logging.getLogger(__name__)
+
+
 def _template(request: Request, name: str, context: dict) -> Response:
     base = base_context(request)
     base.update(context)
@@ -79,6 +83,28 @@ def _validate_digits(value: str | None, field_name: str, errors: dict[str, str])
     if cleaned and not re.fullmatch(r"[0-9]+", cleaned):
         errors[field_name] = "Solo se permiten numeros."
     return cleaned
+
+
+def _mask_calendar_id(calendar_id: str | None) -> str:
+    value = str(calendar_id or "").strip()
+    if not value:
+        return ""
+    if len(value) <= 12:
+        return value
+    return f"{value[:6]}...{value[-6:]}"
+
+
+def _calendar_generation_log_result(result: dict | None) -> dict:
+    result = result or {}
+    return {
+        "calendar_id": _mask_calendar_id(result.get("calendar_id")),
+        "calculated": result.get("calculated"),
+        "created": result.get("created"),
+        "duplicates": result.get("duplicates"),
+        "conflicts": result.get("conflicts"),
+        "errors": len(result.get("errors") or []),
+        "first_error": (result.get("errors") or [None])[0],
+    }
 
 
 def _collect_tenant_profile_changes(tenant: Tenant, updates: dict[str, str | None]) -> dict:
@@ -911,6 +937,17 @@ async def consultorio_calendar_slots_post(
     result = None
     preview_slots = []
     warnings: list[str] = []
+    logger.info(
+        "calendar_slots_post_start tenant_id=%s consultorio_id=%s user_id=%s action=%s date_from=%s date_to=%s exclude_holidays=%s provider=%s",
+        user.tenant_id,
+        consultorio_id,
+        user.id,
+        action,
+        date_from,
+        date_to,
+        bool(exclude_holidays),
+        consultorio.proveedor_turnos,
+    )
     try:
         start_day = date.fromisoformat(date_from)
         end_day = date.fromisoformat(date_to)
@@ -927,11 +964,40 @@ async def consultorio_calendar_slots_post(
             exclude_argentina_holidays=bool(exclude_holidays),
             holiday_service=holiday_service,
         )
+        logger.info(
+            "calendar_slots_calculated tenant_id=%s consultorio_id=%s action=%s calendar_id=%s timezone=%s slots=%s warnings=%s",
+            user.tenant_id,
+            consultorio_id,
+            action,
+            _mask_calendar_id(google_config.get("calendar_id")),
+            google_config.get("timezone"),
+            len(preview_slots),
+            len(warnings),
+        )
     except ValueError as exc:
         errors["date_range"] = str(exc)
+        logger.warning(
+            "calendar_slots_validation_error tenant_id=%s consultorio_id=%s action=%s error=%s",
+            user.tenant_id,
+            consultorio_id,
+            action,
+            str(exc),
+        )
     if not errors and action == "generate":
         try:
+            logger.info(
+                "calendar_slots_generate_call tenant_id=%s consultorio_id=%s slots=%s",
+                tenant.id,
+                consultorio.id,
+                len(preview_slots),
+            )
             result = await CalendarService().generate_available_slots(tenant, consultorio, preview_slots)
+            logger.info(
+                "calendar_slots_generate_result tenant_id=%s consultorio_id=%s result=%s",
+                tenant.id,
+                consultorio.id,
+                _calendar_generation_log_result(result),
+            )
             await audit_log(
                 session,
                 request,
@@ -949,6 +1015,12 @@ async def consultorio_calendar_slots_post(
             )
         except Exception as exc:
             errors["generate"] = f"No se pudieron generar slots: {type(exc).__name__}"
+            logger.exception(
+                "calendar_slots_generate_unhandled_error tenant_id=%s consultorio_id=%s error=%s",
+                tenant.id,
+                consultorio.id,
+                type(exc).__name__,
+            )
     return _template(
         request,
         "tenant/consultorio_calendar_slots.html",
