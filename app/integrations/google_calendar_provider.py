@@ -133,12 +133,17 @@ class GoogleCalendarProvider(CalendarProvider):
             if not calendar_id or calendar_id == "primary" or any(item["id"] == calendar_id for item in calendars):
                 continue
             try:
-                calendar = service.calendars().get(calendarId=calendar_id).execute()
+                try:
+                    calendar = service.calendarList().insert(body={"id": calendar_id}).execute()
+                    access_role = calendar.get("accessRole") or "inserted"
+                except Exception:
+                    calendar = service.calendars().get(calendarId=calendar_id).execute()
+                    access_role = "direct"
                 calendars.append(
                     {
                         "id": calendar.get("id") or calendar_id,
                         "summary": calendar.get("summary") or calendar.get("id") or calendar_id,
-                        "access_role": "direct",
+                        "access_role": access_role,
                     }
                 )
             except Exception:

@@ -216,6 +216,10 @@ class _FakeCalendarList:
     def list(self, **kwargs):
         return _FakeCall({"items": []})
 
+    def insert(self, body):
+        calendar_id = body["id"]
+        return _FakeCall({"id": calendar_id, "summary": "Calendario insertado", "accessRole": "writer"})
+
 
 class _FakeCalendars:
     def get(self, calendarId):
@@ -297,7 +301,7 @@ def test_google_provider_deduplicates_and_reserves_slot(db_session, monkeypatch)
         raise AssertionError("slot reservado aceptado de nuevo")
 
 
-def test_google_provider_lists_direct_calendar_when_calendar_list_is_empty(monkeypatch):
+def test_google_provider_registers_direct_calendar_when_calendar_list_is_empty(monkeypatch):
     provider = GoogleCalendarProvider("direct-calendar@example.com", "{}")
     monkeypatch.setattr(provider, "_build_service", lambda: _FakeCalendarService())
 
@@ -306,8 +310,8 @@ def test_google_provider_lists_direct_calendar_when_calendar_list_is_empty(monke
     assert calendars == [
         {
             "id": "direct-calendar@example.com",
-            "summary": "Calendario directo",
-            "access_role": "direct",
+            "summary": "Calendario insertado",
+            "access_role": "writer",
         }
     ]
 
@@ -321,8 +325,8 @@ def test_google_provider_lists_candidate_calendar_from_form(monkeypatch):
     assert calendars == [
         {
             "id": "secondary-calendar@example.com",
-            "summary": "Calendario directo",
-            "access_role": "direct",
+            "summary": "Calendario insertado",
+            "access_role": "writer",
         }
     ]
 
