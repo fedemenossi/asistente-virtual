@@ -122,6 +122,7 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
     )
 
     assert response.status_code in (302, 303)
+    assert response.headers["location"] == f"/t/consultorios/{consultorio_id}/edit"
 
     async def _fetch():
         from app.models.consultorio import Consultorio
@@ -134,6 +135,9 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
     assert consultorio.proveedor_turnos == "google"
     assert cfg["calendar_id"] == "cal-1"
     assert cfg["schedule"]["monday"]["buffer_minutes"] == 10
+
+    saved_page = client.get(f"/t/consultorios/{consultorio_id}/edit")
+    assert "Consultorio actualizado" in saved_page.text
 
 
 def test_calendar_slots_page_renders_progress_indicator(client, db_session):

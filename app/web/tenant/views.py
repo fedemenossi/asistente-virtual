@@ -671,7 +671,7 @@ async def consultorios_edit_post(
             metadata=metadata,
         )
     add_flash(request, "success", "Consultorio actualizado")
-    return RedirectResponse("/t/consultorios", status_code=303)
+    return RedirectResponse(f"/t/consultorios/{consultorio_id}/edit", status_code=303)
 
 
 async def consultorio_provider_test(
