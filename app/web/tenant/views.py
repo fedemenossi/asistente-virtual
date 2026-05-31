@@ -392,9 +392,9 @@ def _consultorio_form_common_context(
     }
 
 
-def _load_google_calendars_for_tenant(tenant: Tenant) -> tuple[list[dict], str | None]:
+def _load_google_calendars_for_tenant(tenant: Tenant, candidate_calendar_id: str | None = None) -> tuple[list[dict], str | None]:
     try:
-        calendars = CalendarService().list_google_calendars(tenant)
+        calendars = CalendarService().list_google_calendars(tenant, candidate_calendar_id)
         if not calendars:
             email = CalendarService().get_google_service_account_email(tenant)
             suffix = f" ({email})" if email else ""
@@ -810,6 +810,7 @@ async def consultorio_provider_test(
 async def consultorio_google_calendars(
     request: Request,
     consultorio_id: int,
+    gcal_calendar_id: str = Form(""),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("consultorio:write")),
     session: AsyncSession = Depends(get_async_session),
@@ -819,7 +820,7 @@ async def consultorio_google_calendars(
     tenant = await session.get(Tenant, user.tenant_id)
     if tenant is None:
         raise HTTPException(status_code=404)
-    calendars, error = _load_google_calendars_for_tenant(tenant)
+    calendars, error = _load_google_calendars_for_tenant(tenant, gcal_calendar_id.strip())
     service_account_email = CalendarService().get_google_service_account_email(tenant)
     if error:
         return JSONResponse(

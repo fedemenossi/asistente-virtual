@@ -309,3 +309,18 @@ def test_google_provider_lists_direct_calendar_when_calendar_list_is_empty(monke
             "access_role": "direct",
         }
     ]
+
+
+def test_google_provider_lists_candidate_calendar_from_form(monkeypatch):
+    provider = GoogleCalendarProvider("primary", "{}")
+    monkeypatch.setattr(provider, "_build_service", lambda: _FakeCalendarService())
+
+    calendars = provider.list_calendars("secondary-calendar@example.com")
+
+    assert calendars == [
+        {
+            "id": "secondary-calendar@example.com",
+            "summary": "Calendario directo",
+            "access_role": "direct",
+        }
+    ]

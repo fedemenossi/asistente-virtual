@@ -83,7 +83,7 @@ class CalendarService:
             )
         return GoogleCalendarProvider(calendar_id, credentials_json, delegated_user)
 
-    def list_google_calendars(self, tenant: Tenant) -> list[dict[str, str]]:
+    def list_google_calendars(self, tenant: Tenant, candidate_calendar_id: str | None = None) -> list[dict[str, str]]:
         settings = tenant.calendar_settings or {}
         credentials_json, delegated_user = resolve_google_credentials(settings)
         if not credentials_json:
@@ -92,7 +92,7 @@ class CalendarService:
                 detail="Credenciales de Google no configuradas",
             )
         calendar_id = settings.get("google_calendar_id") or "primary"
-        return GoogleCalendarProvider(calendar_id, credentials_json, delegated_user).list_calendars()
+        return GoogleCalendarProvider(calendar_id, credentials_json, delegated_user).list_calendars(candidate_calendar_id)
 
     def get_google_service_account_email(self, tenant: Tenant) -> str | None:
         return get_google_service_account_email(tenant.calendar_settings or {})

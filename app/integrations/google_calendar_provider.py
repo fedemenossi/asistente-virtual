@@ -117,7 +117,7 @@ class GoogleCalendarProvider(CalendarProvider):
             )
         return slots
 
-    def list_calendars(self) -> list[dict[str, str]]:
+    def list_calendars(self, candidate_calendar_id: str | None = None) -> list[dict[str, str]]:
         service = self._build_service()
         result = service.calendarList().list(showHidden=True).execute()
         calendars = []
@@ -129,13 +129,15 @@ class GoogleCalendarProvider(CalendarProvider):
                     "access_role": item.get("accessRole") or "",
                 }
             )
-        if self._calendar_id and self._calendar_id != "primary" and not any(item["id"] == self._calendar_id for item in calendars):
+        for calendar_id in [self._calendar_id, candidate_calendar_id]:
+            if not calendar_id or calendar_id == "primary" or any(item["id"] == calendar_id for item in calendars):
+                continue
             try:
-                calendar = service.calendars().get(calendarId=self._calendar_id).execute()
+                calendar = service.calendars().get(calendarId=calendar_id).execute()
                 calendars.append(
                     {
-                        "id": calendar.get("id") or self._calendar_id,
-                        "summary": calendar.get("summary") or calendar.get("id") or self._calendar_id,
+                        "id": calendar.get("id") or calendar_id,
+                        "summary": calendar.get("summary") or calendar.get("id") or calendar_id,
                         "access_role": "direct",
                     }
                 )
