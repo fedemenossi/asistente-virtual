@@ -871,11 +871,13 @@ async def consultorio_calendar_slots_get(
     if CalendarService().resolve_provider_name(consultorio) != "google":
         raise HTTPException(status_code=400, detail="El consultorio no usa Google Calendar")
     today = now_ba().date()
+    google_config = get_google_calendar_config(consultorio)
     return _template(
         request,
         "tenant/consultorio_calendar_slots.html",
         {
             "consultorio": consultorio,
+            "google_config": google_config,
             "date_from": today.isoformat(),
             "date_to": (today + timedelta(days=14)).isoformat(),
             "exclude_holidays": True,
@@ -917,8 +919,9 @@ async def consultorio_calendar_slots_post(
             missing = holiday_service.missing_years(start_day, end_day)
             if missing:
                 warnings.append("No hay feriados cargados para: " + ", ".join(str(year) for year in missing))
+        google_config = get_google_calendar_config(consultorio)
         preview_slots = calculate_slots(
-            get_google_calendar_config(consultorio),
+            google_config,
             start_day,
             end_day,
             exclude_argentina_holidays=bool(exclude_holidays),
@@ -951,6 +954,7 @@ async def consultorio_calendar_slots_post(
         "tenant/consultorio_calendar_slots.html",
         {
             "consultorio": consultorio,
+            "google_config": get_google_calendar_config(consultorio),
             "date_from": date_from,
             "date_to": date_to,
             "exclude_holidays": bool(exclude_holidays),

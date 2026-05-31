@@ -6,6 +6,7 @@ from typing import Any
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from app.core.config import get_settings
 from app.integrations.interfaces import CalendarProvider, CalendarSlot
@@ -164,7 +165,14 @@ class GoogleCalendarProvider(CalendarProvider):
             .get("items", [])
             or []
         )
-        summary = {"calculated": len(slots), "created": 0, "duplicates": 0, "conflicts": 0, "errors": []}
+        summary = {
+            "calendar_id": self._calendar_id,
+            "calculated": len(slots),
+            "created": 0,
+            "duplicates": 0,
+            "conflicts": 0,
+            "errors": [],
+        }
         for slot in slots:
             duplicate = False
             conflict = False
@@ -204,7 +212,7 @@ class GoogleCalendarProvider(CalendarProvider):
                 existing.append(created)
                 summary["created"] += 1
             except Exception as exc:
-                summary["errors"].append(type(exc).__name__)
+                summary["errors"].append(_safe_google_error(exc))
         return summary
 
     async def reserve_slot(
@@ -353,3 +361,26 @@ def _same_slot(event: dict, tenant_id: int, consultorio_id: int, start_at, end_a
 
 def _overlaps(start_a, end_a, start_b, end_b) -> bool:
     return start_a < end_b and start_b < end_a
+
+
+def _safe_google_error(exc: Exception) -> str:
+    if isinstance(exc, HttpError):
+        status = getattr(exc.resp, "status", None)
+        reason = getattr(exc.resp, "reason", "") or ""
+        detail = ""
+        try:
+            payload = json.loads(exc.content.decode("utf-8"))
+            detail = (
+                payload.get("error", {}).get("message")
+                or payload.get("error_description")
+                or ""
+            )
+        except Exception:
+            detail = ""
+        pieces = [f"Google Calendar HTTP {status}" if status else "Google Calendar HTTP error"]
+        if reason:
+            pieces.append(str(reason))
+        if detail:
+            pieces.append(str(detail))
+        return " - ".join(pieces)
+    return type(exc).__name__

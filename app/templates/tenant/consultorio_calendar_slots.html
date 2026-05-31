@@ -8,6 +8,10 @@
     <p class="text-sm text-slate-600">{{ consultorio.nombre }}</p>
     <h1 class="text-2xl font-semibold text-slate-900">Generar slots en Google Calendar</h1>
     <p class="mt-1 text-sm text-slate-600">Crea eventos disponibles en el calendario configurado. No guarda slots locales.</p>
+    <div class="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+      <span class="font-medium text-slate-900">Calendar ID usado:</span>
+      <span class="font-mono break-all">{{ google_config.calendar_id or "No configurado" }}</span>
+    </div>
   </div>
 
   {% if errors %}
@@ -73,6 +77,19 @@
       <div class="card-sm border border-amber-200 bg-amber-50"><p class="text-xs text-amber-700">Conflictos</p><p class="mt-1 text-2xl font-semibold">{{ result.conflicts }}</p></div>
       <div class="card-sm border border-rose-200 bg-rose-50"><p class="text-xs text-rose-700">Errores</p><p class="mt-1 text-2xl font-semibold">{{ result.errors|length }}</p></div>
     </div>
+    {% if result.errors %}
+      <div class="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+        <p class="font-medium">Google rechazo algunos eventos:</p>
+        <ul class="mt-2 list-disc space-y-1 pl-5">
+          {% for error in result.errors[:5] %}
+            <li>{{ error }}</li>
+          {% endfor %}
+        </ul>
+        {% if result.errors|length > 5 %}
+          <p class="mt-2 text-xs">Hay {{ result.errors|length - 5 }} errores adicionales.</p>
+        {% endif %}
+      </div>
+    {% endif %}
   {% endif %}
 
   <div class="mt-4 card overflow-x-auto">
