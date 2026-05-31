@@ -99,6 +99,8 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
 
     assert "Google Calendar" in page.text
     assert "gcal_calendar_id" in page.text
+    assert "ID de calendario de este consultorio" in page.text
+    assert "Cada consultorio puede usar un calendario distinto" in page.text
     assert "svc-calendar@example.com" in page.text
 
     response = client.post(

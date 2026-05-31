@@ -17,12 +17,13 @@
   <form method="post" class="card p-6 space-y-6">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <div class="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
-      <h2 class="text-sm font-semibold text-slate-900">Datos del calendario</h2>
-      <p class="text-xs text-slate-500 mt-1">Identifica tu calendario y como se publican los turnos.</p>
+      <h2 class="text-sm font-semibold text-slate-900">Datos generales de Google Calendar</h2>
+      <p class="text-xs text-slate-500 mt-1">Estas credenciales son del tenant. El calendario operativo se elige en cada consultorio.</p>
       <div class="mt-4 grid gap-4 md:grid-cols-2">
         <div>
-          <label class="text-xs text-slate-500">Google Calendar ID</label>
+          <label class="text-xs text-slate-500">Google Calendar ID fallback opcional</label>
           <input class="input" type="text" name="google_calendar_id" value="{{ calendar_settings.google_calendar_id }}" />
+          <p class="mt-1 text-xs text-slate-500">Usalo solo como fallback o para probar conexion. Cada consultorio puede tener su propio calendario.</p>
         </div>
         <div>
           <label class="text-xs text-slate-500">Timezone por defecto</label>
