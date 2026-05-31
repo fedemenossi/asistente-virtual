@@ -91,8 +91,10 @@ class CalendarService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Credenciales de Google no configuradas",
             )
-        calendar_id = settings.get("google_calendar_id") or "primary"
-        return GoogleCalendarProvider(calendar_id, credentials_json, delegated_user).list_calendars(candidate_calendar_id)
+        # Para el combo de "Calendarios detectados por Google" no usamos el
+        # fallback legacy persistido en calendar_settings.google_calendar_id.
+        # La fuente debe ser la lista real accesible para la identidad Google.
+        return GoogleCalendarProvider("primary", credentials_json, delegated_user).list_calendars(candidate_calendar_id)
 
     def get_google_service_account_email(self, tenant: Tenant) -> str | None:
         return get_google_service_account_email(tenant.calendar_settings or {})

@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from app.core.security import hash_password
 from app.integrations.google_calendar_provider import GoogleCalendarProvider
 from app.models.user import UserRole
+from app.services.calendar_service import CalendarService
 from app.services.google_calendar_slots_service import (
     calculate_slots,
     validate_google_calendar_config,
@@ -324,3 +325,38 @@ def test_google_provider_lists_candidate_calendar_from_form(monkeypatch):
             "access_role": "direct",
         }
     ]
+
+
+def test_calendar_service_does_not_use_legacy_fallback_when_listing_google_calendars(db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Calendar List",
+            "whatsapp:+9406",
+            calendar_settings={
+                "google_credentials_json": "{}",
+                "google_calendar_id": "legacy-calendar@example.com",
+            },
+        )
+    )
+
+    async def _load_tenant():
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            return await session.get(Tenant, tenant_id)
+
+    tenant = asyncio.run(_load_tenant())
+    captured = {}
+
+    def _fake_list(self, candidate_calendar_id=None):
+        captured["calendar_id"] = self._calendar_id
+        captured["candidate_calendar_id"] = candidate_calendar_id
+        return []
+
+    monkeypatch.setattr(GoogleCalendarProvider, "list_calendars", _fake_list)
+
+    calendars = CalendarService().list_google_calendars(tenant)
+
+    assert calendars == []
+    assert captured == {"calendar_id": "primary", "candidate_calendar_id": None}
