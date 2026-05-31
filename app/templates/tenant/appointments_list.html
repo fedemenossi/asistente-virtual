@@ -56,6 +56,88 @@
     </div>
   {% endif %}
 
+  <div class="mb-4 card p-5">
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <h2 class="text-lg font-semibold text-slate-900">Agenda Google en vivo</h2>
+        <p class="mt-1 text-sm text-slate-600">Visualiza eventos reales del calendario del consultorio seleccionado. No persiste slots disponibles en la base local.</p>
+      </div>
+      {% if selected_consultorio %}
+        <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">{{ selected_consultorio.nombre }}</span>
+      {% endif %}
+    </div>
+    {% if not selected_consultorio %}
+      <p class="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Selecciona un consultorio para consultar su agenda externa.</p>
+    {% elif selected_consultorio.proveedor_turnos not in ['google', 'google_calendar'] %}
+      <p class="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Este consultorio no usa Google Calendar.</p>
+    {% elif google_events_error %}
+      <p class="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{{ google_events_error }}</p>
+    {% elif google_events %}
+      <div class="mt-4 overflow-x-auto rounded-xl border border-slate-200">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600">
+            <tr>
+              <th class="px-4 py-3 text-left font-medium">Hora</th>
+              <th class="px-4 py-3 text-left font-medium">Evento</th>
+              <th class="px-4 py-3 text-left font-medium">Estado</th>
+              <th class="px-4 py-3 text-left font-medium">Origen</th>
+              <th class="px-4 py-3 text-right font-medium">Accion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for event in google_events %}
+              <tr class="border-t border-slate-200">
+                <td class="px-4 py-3 whitespace-nowrap text-slate-900">{{ event.start_at|format_ba('%H:%M') }} - {{ event.end_at|format_ba('%H:%M') }}</td>
+                <td class="px-4 py-3 text-slate-900">{{ event.summary or "Sin titulo" }}</td>
+                <td class="px-4 py-3">
+                  {% if event.status == 'available' %}
+                    {{ badge("Disponible", "success") }}
+                  {% elif event.status == 'reserved' %}
+                    {{ badge("Reservado", "info") }}
+                  {% else %}
+                    {{ badge("Ocupado", "neutral") }}
+                  {% endif %}
+                </td>
+                <td class="px-4 py-3 text-slate-600">
+                  {% if event.generated_by_app %}
+                    App
+                  {% else %}
+                    Google
+                  {% endif %}
+                </td>
+                <td class="px-4 py-3 text-right">
+                  {% if event.status == 'available' %}
+                    {% if pacientes %}
+                      <form class="flex min-w-[360px] justify-end gap-2" method="post" action="/t/appointments/google/assign">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                        <input type="hidden" name="consultorio_id" value="{{ selected_consultorio.id }}" />
+                        <input type="hidden" name="event_id" value="{{ event.event_id }}" />
+                        <input type="hidden" name="date" value="{{ date or '' }}" />
+                        <select class="select max-w-56" name="patient_id" required>
+                          <option value="">Paciente</option>
+                          {% for paciente in pacientes %}
+                            <option value="{{ paciente.id }}">{{ paciente.apellido }}, {{ paciente.nombre }}{% if paciente.dni %} - {{ paciente.dni }}{% endif %}</option>
+                          {% endfor %}
+                        </select>
+                        <button class="btn btn-primary" type="submit">Asignar</button>
+                      </form>
+                    {% else %}
+                      <span class="text-xs text-slate-500">Sin pacientes</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="text-xs text-slate-400">-</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Google Calendar no devolvio eventos para la fecha seleccionada.</p>
+    {% endif %}
+  </div>
+
   {% if rows %}
     <div class="card overflow-x-auto overflow-y-visible">
       <table class="min-w-full text-sm">

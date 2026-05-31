@@ -1,0 +1,27 @@
+Queda principalmente esto, ordenado por valor:
+
+Urgente
+
+Probar en Railway con Google real el flujo nuevo: ver slot disponible, asignarlo a paciente, confirmar que el evento cambia en Google y que aparece el Turno local.
+Mejorar errores visibles si Google responde 403, 404, slot ocupado o credenciales inválidas.
+Rotar la service account key que quedó expuesta.
+Siguiente etapa recomendada
+
+Crear/asignar paciente desde la misma pantalla de turnos. Hoy solo permite elegir paciente existente.
+Evitar doble reserva con una verificación más explícita en UI: si Google dice “slot no disponible”, refrescar la agenda en vivo.
+Mostrar más claro qué viene de Google y qué viene de la DB local.
+Funcionalidad pendiente importante
+
+Sincronización inversa parcial: si alguien edita/cancela manualmente en Google, la pantalla puede mostrarlo en vivo, pero el Turno local no se actualiza automáticamente.
+Cancelación desde Turno local ya libera Google si tiene external_event_id, pero conviene probarla extremo a extremo con eventos creados desde slots.
+Filtros por consultorio/estado más cómodos en /t/appointments.
+Acción “ver en Google Calendar” usando html_link si está disponible.
+Auditoría más detallada de asignación/cancelación Google.
+Futuro
+
+Webhook o sync job para reconciliar Google Calendar contra DB local.
+Reserva desde chatbot usando los mismos slots Google.
+Pagos para turnos virtuales antes/después de confirmar.
+Crear Google Meet y mostrar link en detalle del turno si está habilitado.
+Recordatorios WhatsApp sobre turnos confirmados.
+Mi recomendación: seguir con una etapa chica de “hardening”: probar asignación/cancelación real contra Google, mejorar mensajes de error y agregar botón “Ver en Google”.

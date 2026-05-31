@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
+
+from sqlalchemy import select
 
 from app.core.security import hash_password
-from app.models.turno import AppointmentStatus, EstadoTurno, TipoTurno
+from app.models.consultorio import TipoConsultorio
+from app.models.turno import AppointmentStatus, EstadoTurno, TipoTurno, Turno
 from app.services.appointment_service import AppointmentService
 from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_user, login
 
@@ -31,6 +35,12 @@ async def _seed_turno(db_session, tenant_id: int, consultorio_id: int, paciente_
                 estado=EstadoTurno.CONFIRMADO,
             )
             return turno.id
+
+
+def _csrf_from(html: str) -> str:
+    match = re.search(r'name="csrf_token" value="([^"]+)"', html)
+    assert match is not None
+    return match.group(1)
 
 
 def test_dashboard_tenant_only_shows_own_data(client, db_session):
@@ -85,6 +95,207 @@ def test_agenda_by_date_filters_turnos(client, db_session):
     assert response.status_code == 200
     assert "PacienteDiaDos" in response.text
     assert "PacienteDiaTres" not in response.text
+
+
+def test_appointments_list_shows_live_google_calendar_events(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Agenda Google",
+            "whatsapp:+737",
+            calendar_settings={"google_credentials_json": "{}"},
+        )
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Google",
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {
+                    "calendar_id": "calendar-google",
+                    "timezone": "America/Argentina/Buenos_Aires",
+                }
+            },
+        )
+    )
+    password_hash = hash_password("secret-123")
+    asyncio.run(create_user(db_session, "agenda-google@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+
+    async def _fake_events(self, tenant, consultorio, start, end):
+        assert tenant.id == tenant_id
+        assert consultorio.id == consultorio_id
+        start_at = datetime(2026, 4, 2, 9, 0, tzinfo=timezone(timedelta(hours=-3)))
+        return [
+            {
+                "event_id": "evt-1",
+                "summary": "[TURNO DISPONIBLE]",
+                "start_at": start_at,
+                "end_at": start_at + timedelta(minutes=30),
+                "timezone": "America/Argentina/Buenos_Aires",
+                "status": "available",
+                "provider": "google",
+                "calendar_id": "calendar-google",
+                "html_link": None,
+                "generated_by_app": True,
+            }
+        ]
+
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.list_calendar_events", _fake_events)
+
+    login(client, "agenda-google@test.com", "secret-123")
+    response = client.get(f"/t/appointments?date=2026-04-02&consultorio_id={consultorio_id}")
+
+    assert response.status_code == 200
+    assert "Agenda Google en vivo" in response.text
+    assert "[TURNO DISPONIBLE]" in response.text
+    assert "Disponible" in response.text
+
+
+def test_assign_google_live_event_creates_local_turno(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Assign Google",
+            "whatsapp:+738",
+            calendar_settings={"google_credentials_json": "{}"},
+        )
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Assign",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {
+                    "calendar_id": "calendar-assign",
+                    "timezone": "America/Argentina/Buenos_Aires",
+                }
+            },
+        )
+    )
+    paciente_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "whatsapp:+7381",
+            nombre="Ana",
+            apellido="Gomez",
+            dni="28077008",
+        )
+    )
+    password_hash = hash_password("secret-123")
+    asyncio.run(create_user(db_session, "assign-google@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+
+    async def _fake_reserve(self, tenant, consultorio, slot_id, patient, metadata):
+        assert tenant.id == tenant_id
+        assert consultorio.id == consultorio_id
+        assert slot_id == "evt-assign"
+        assert patient.id == paciente_id
+        assert metadata["source"] == "tenant_panel"
+        return {
+            "event_id": "evt-assign",
+            "calendar_id": "calendar-assign",
+            "start_at": "2026-04-02T09:00:00-03:00",
+            "end_at": "2026-04-02T09:30:00-03:00",
+            "timezone": "America/Argentina/Buenos_Aires",
+            "html_link": None,
+            "meet_link": "https://meet.google.com/demo",
+        }
+
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.reserve_slot", _fake_reserve)
+
+    login(client, "assign-google@test.com", "secret-123")
+    form_page = client.get(f"/t/appointments?date=2026-04-02&consultorio_id={consultorio_id}")
+    csrf_token = _csrf_from(form_page.text)
+
+    response = client.post(
+        "/t/appointments/google/assign",
+        data={
+            "csrf_token": csrf_token,
+            "consultorio_id": str(consultorio_id),
+            "event_id": "evt-assign",
+            "patient_id": str(paciente_id),
+            "date": "2026-04-02",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/t/appointments/")
+
+    async def _load_turno():
+        async with db_session() as session:
+            return await session.scalar(
+                select(Turno).where(
+                    Turno.tenant_id == tenant_id,
+                    Turno.paciente_id == paciente_id,
+                    Turno.external_event_id == "evt-assign",
+                )
+            )
+
+    turno = asyncio.run(_load_turno())
+    assert turno is not None
+    assert turno.consultorio_id == consultorio_id
+    assert turno.status == AppointmentStatus.CONFIRMED
+    assert turno.estado == EstadoTurno.CONFIRMADO
+    assert turno.tipo == TipoTurno.VIRTUAL
+    assert turno.external_calendar_provider == "google"
+    assert turno.external_calendar_id == "calendar-assign"
+    assert turno.referencia_externa == "https://meet.google.com/demo"
+
+
+def test_assign_google_live_event_rejects_other_tenant_patient(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Assign Isolation A",
+            "whatsapp:+739",
+            calendar_settings={"google_credentials_json": "{}"},
+        )
+    )
+    other_tenant_id = asyncio.run(create_tenant(db_session, "Tenant Assign Isolation B", "whatsapp:+740"))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Isolation",
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": {"calendar_id": "calendar-isolation"}},
+        )
+    )
+    other_patient_id = asyncio.run(create_paciente(db_session, other_tenant_id, "whatsapp:+7401"))
+    password_hash = hash_password("secret-123")
+    asyncio.run(create_user(db_session, "assign-isolation@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+    called = {"reserve": False}
+
+    async def _fake_reserve(self, tenant, consultorio, slot_id, patient, metadata):
+        called["reserve"] = True
+        return {}
+
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.reserve_slot", _fake_reserve)
+
+    login(client, "assign-isolation@test.com", "secret-123")
+    form_page = client.get(f"/t/appointments?date=2026-04-02&consultorio_id={consultorio_id}")
+    csrf_token = _csrf_from(form_page.text)
+
+    response = client.post(
+        "/t/appointments/google/assign",
+        data={
+            "csrf_token": csrf_token,
+            "consultorio_id": str(consultorio_id),
+            "event_id": "evt-isolation",
+            "patient_id": str(other_patient_id),
+            "date": "2026-04-02",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 404
+    assert called["reserve"] is False
 
 
 def test_legacy_turnos_redirects_to_canonical_appointments(client, db_session):

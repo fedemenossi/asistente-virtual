@@ -32,7 +32,7 @@ from app.models.conversation_history import ConversationHistory
 from app.models.conversacion import EstadoConversacion
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
-from app.models.turno import AppointmentStatus, Turno
+from app.models.turno import AppointmentStatus, EstadoTurno, TipoTurno, Turno
 from app.models.notification import Notification
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
@@ -178,6 +178,12 @@ def _turno_provider_label(turno: Turno) -> tuple[str, str]:
     if provider == "consultorio_movil":
         return "Consultorio Movil", "warning"
     return "Manual", "neutral"
+
+
+def _parse_google_datetime(value: str | None) -> datetime:
+    if not value:
+        return now_ba().replace(tzinfo=None)
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
 
 
 async def dashboard(
@@ -2454,6 +2460,17 @@ async def appointments_list(
         .scalars()
         .all()
     )
+    pacientes = list(
+        (
+            await session.execute(
+                select(Paciente)
+                .where(Paciente.tenant_id == user.tenant_id, Paciente.deleted_at.is_(None))
+                .order_by(Paciente.apellido.asc(), Paciente.nombre.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
     daily_summary = {
         "count": len(rows),
         "virtuales": sum(1 for turno, _, _ in rows if _turno_type_label(turno) == "Virtual"),
@@ -2468,6 +2485,41 @@ async def appointments_list(
             and turno.status not in {AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED}
         ]
         consultorio_summary.append({"consultorio": consultorio, "count": len(assigned)})
+    google_events: list[dict] = []
+    google_events_error = None
+    selected_consultorio = None
+    if consultorio_id:
+        selected_consultorio = next(
+            (item for item in consultorios if str(item.id) == str(consultorio_id)),
+            None,
+        )
+    if selected_consultorio and CalendarService().resolve_provider_name(selected_consultorio) == "google":
+        tenant = await session.get(Tenant, user.tenant_id)
+        if tenant is not None:
+            try:
+                live_tz = _resolve_timezone(
+                    (get_google_calendar_config(selected_consultorio).get("timezone") or "America/Argentina/Buenos_Aires")
+                ) or timezone(timedelta(hours=-3))
+                live_day = datetime.fromisoformat(date_str).date()
+                live_start = datetime.combine(live_day, datetime.min.time(), tzinfo=live_tz)
+                live_end = live_start + timedelta(days=1)
+                google_events = await CalendarService().list_calendar_events(
+                    tenant,
+                    selected_consultorio,
+                    live_start,
+                    live_end,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "appointments_google_live_events_failed tenant_id=%s consultorio_id=%s error=%s",
+                    user.tenant_id,
+                    selected_consultorio.id,
+                    type(exc).__name__,
+                )
+                google_events_error = (
+                    "No se pudo consultar Google Calendar para este consultorio. "
+                    f"Detalle: {type(exc).__name__}."
+                )
     return _template(
         request,
         "tenant/appointments_list.html",
@@ -2479,8 +2531,132 @@ async def appointments_list(
             "date": date_str,
             "daily_summary": daily_summary,
             "consultorio_summary": consultorio_summary,
+            "selected_consultorio": selected_consultorio,
+            "google_events": google_events,
+            "google_events_error": google_events_error,
+            "pacientes": pacientes,
         },
     )
+
+
+async def appointment_google_assign(
+    request: Request,
+    consultorio_id: int = Form(...),
+    event_id: str = Form(...),
+    patient_id: int = Form(...),
+    date: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("appointment:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    back_query = urlencode({"date": date, "consultorio_id": consultorio_id})
+    back_url = f"/t/appointments?{back_query}"
+
+    stmt = (
+        select(Consultorio, Tenant)
+        .join(Tenant, Consultorio.tenant_id == Tenant.id)
+        .where(
+            Consultorio.id == consultorio_id,
+            Consultorio.tenant_id == user.tenant_id,
+            Consultorio.deleted_at.is_(None),
+        )
+    )
+    row = (await session.execute(stmt)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Consultorio no encontrado")
+    consultorio, tenant = row
+    if CalendarService().resolve_provider_name(consultorio) != "google":
+        raise HTTPException(status_code=400, detail="El consultorio no usa Google Calendar")
+
+    paciente = await get_tenant_entity_or_404(session, Paciente, patient_id, user.tenant_id)
+    existing = await session.scalar(
+        select(Turno).where(
+            Turno.tenant_id == user.tenant_id,
+            Turno.consultorio_id == consultorio.id,
+            Turno.external_calendar_provider == "google",
+            Turno.external_event_id == event_id,
+            Turno.deleted_at.is_(None),
+            Turno.status != AppointmentStatus.CANCELLED,
+        )
+    )
+    if existing is not None:
+        add_flash(request, "error", "Ese turno ya fue asignado en la agenda local.")
+        return RedirectResponse(f"/t/appointments/{existing.id}", status_code=303)
+
+    logger.info(
+        "appointments_google_assign_start tenant_id=%s consultorio_id=%s patient_id=%s event_id=%s",
+        user.tenant_id,
+        consultorio.id,
+        paciente.id,
+        event_id,
+    )
+    try:
+        result = await CalendarService().reserve_slot(
+            tenant,
+            consultorio,
+            event_id,
+            paciente,
+            {
+                "source": "tenant_panel",
+                "assigned_by": user.id,
+                "tenant_id": tenant.id,
+                "consultorio_id": consultorio.id,
+            },
+        )
+    except Exception as exc:
+        logger.exception(
+            "appointments_google_assign_failed tenant_id=%s consultorio_id=%s patient_id=%s event_id=%s error=%s",
+            user.tenant_id,
+            consultorio.id,
+            paciente.id,
+            event_id,
+            type(exc).__name__,
+        )
+        add_flash(request, "error", "No se pudo reservar el evento en Google. Puede que el turno ya no este disponible.")
+        return RedirectResponse(back_url, status_code=303)
+
+    tipo_turno = TipoTurno.VIRTUAL if consultorio.tipo == TipoConsultorio.VIRTUAL else TipoTurno.PRESENCIAL
+    start_at = _parse_google_datetime(result.get("start_at"))
+    end_at = _parse_google_datetime(result.get("end_at")) if result.get("end_at") else None
+    turno = await AppointmentService(session).create_local_turno(
+        tenant=tenant,
+        consultorio=consultorio,
+        paciente=paciente,
+        tipo=tipo_turno,
+        start_at=start_at,
+        end_at=end_at,
+        timezone_name=result.get("timezone") or get_google_calendar_config(consultorio).get("timezone"),
+        provider="google",
+        external_id=result.get("event_id") or event_id,
+        external_status="reserved",
+        status=AppointmentStatus.CONFIRMED,
+        estado=EstadoTurno.CONFIRMADO,
+        notes="Turno asignado desde evento disponible de Google Calendar.",
+    )
+    turno.external_calendar_id = result.get("calendar_id") or turno.external_calendar_id
+    if result.get("meet_link"):
+        turno.referencia_externa = result.get("meet_link")
+    await audit_log(
+        session,
+        request,
+        user.id,
+        action="assign_google_slot",
+        entity="turno",
+        entity_id=turno.id,
+        tenant_id=tenant.id,
+    )
+    await session.commit()
+    logger.info(
+        "appointments_google_assign_success tenant_id=%s consultorio_id=%s patient_id=%s turno_id=%s event_id=%s",
+        user.tenant_id,
+        consultorio.id,
+        paciente.id,
+        turno.id,
+        result.get("event_id") or event_id,
+    )
+    add_flash(request, "success", "Turno asignado desde Google Calendar")
+    return RedirectResponse(f"/t/appointments/{turno.id}", status_code=303)
 
 
 async def appointment_detail(

@@ -146,6 +146,12 @@ router.add_api_route(
     dependencies=[Depends(require_feature("appointments"))],
 )
 router.add_api_route(
+    "/appointments/google/assign",
+    views.appointment_google_assign,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("appointments"))],
+)
+router.add_api_route(
     "/appointments/{turno_id}",
     views.appointment_detail,
     methods=["GET"],

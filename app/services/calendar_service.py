@@ -109,6 +109,18 @@ class CalendarService:
         provider = self._get_provider(tenant, consultorio)
         return await provider.list_available_slots(tenant, consultorio, start, end)
 
+    async def list_calendar_events(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        start,
+        end,
+    ) -> list[dict]:
+        provider = self._get_provider(tenant, consultorio)
+        if isinstance(provider, GoogleCalendarProvider):
+            return await provider.list_calendar_events(tenant, consultorio, start, end)
+        return []
+
     async def reserve_slot(
         self,
         tenant: Tenant,

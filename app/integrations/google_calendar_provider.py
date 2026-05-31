@@ -117,6 +117,58 @@ class GoogleCalendarProvider(CalendarProvider):
             )
         return slots
 
+    async def list_calendar_events(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        start,
+        end,
+    ) -> list[dict[str, Any]]:
+        settings = tenant.calendar_settings or {}
+        consultorio_settings = get_google_calendar_config(consultorio)
+        tags = settings.get("calendar_tags") or []
+        timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
+
+        service = self._build_service()
+        events = (
+            service.events()
+            .list(
+                calendarId=self._calendar_id,
+                timeMin=start.isoformat(),
+                timeMax=end.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+        rows: list[dict[str, Any]] = []
+        for event in events.get("items", []) or []:
+            start_info = event.get("start") or {}
+            end_info = event.get("end") or {}
+            start_dt = start_info.get("dateTime")
+            end_dt = end_info.get("dateTime")
+            if not start_dt or not end_dt:
+                continue
+            private_props = ((event.get("extendedProperties") or {}).get("private") or {})
+            shared_props = ((event.get("extendedProperties") or {}).get("shared") or {})
+            slot_status = str(private_props.get("slot_status") or shared_props.get("slot_status") or "").lower()
+            status = "available" if self._is_slot_available(event, tags) else slot_status or "busy"
+            rows.append(
+                {
+                    "event_id": event.get("id"),
+                    "summary": event.get("summary") or "",
+                    "start_at": _parse_datetime(start_dt),
+                    "end_at": _parse_datetime(end_dt),
+                    "timezone": start_info.get("timeZone") or timezone,
+                    "status": status,
+                    "provider": "google",
+                    "calendar_id": self._calendar_id,
+                    "html_link": event.get("htmlLink"),
+                    "generated_by_app": str(private_props.get("generated_by_app") or shared_props.get("generated_by_app") or "").lower() == "true",
+                }
+            )
+        return rows
+
     def list_calendars(self, candidate_calendar_id: str | None = None) -> list[dict[str, str]]:
         service = self._build_service()
         result = service.calendarList().list(showHidden=True).execute()
