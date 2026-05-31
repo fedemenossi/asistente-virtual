@@ -71,7 +71,14 @@ def test_validate_google_calendar_config_rejects_invalid_day_range():
 
 
 def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_session, monkeypatch):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Google Form", "whatsapp:+9401"))
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Google Form",
+            "whatsapp:+9401",
+            calendar_settings={"google_credentials_json": '{"client_email":"svc-calendar@example.com"}'},
+        )
+    )
     consultorio_id = asyncio.run(create_consultorio(db_session, tenant_id, "Virtual"))
     asyncio.run(
         create_user(
@@ -92,6 +99,7 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
 
     assert "Google Calendar" in page.text
     assert "gcal_calendar_id" in page.text
+    assert "svc-calendar@example.com" in page.text
 
     response = client.post(
         f"/t/consultorios/{consultorio_id}/edit",
@@ -166,6 +174,24 @@ class _FakeService:
         return _FakeEvents(self.store)
 
 
+class _FakeCalendarList:
+    def list(self, **kwargs):
+        return _FakeCall({"items": []})
+
+
+class _FakeCalendars:
+    def get(self, calendarId):
+        return _FakeCall({"id": calendarId, "summary": "Calendario directo"})
+
+
+class _FakeCalendarService:
+    def calendarList(self):
+        return _FakeCalendarList()
+
+    def calendars(self):
+        return _FakeCalendars()
+
+
 def _event(event_id, start, end, *, status="available", summary="[TURNO DISPONIBLE]"):
     return {
         "id": event_id,
@@ -231,3 +257,18 @@ def test_google_provider_deduplicates_and_reserves_slot(db_session, monkeypatch)
         pass
     else:
         raise AssertionError("slot reservado aceptado de nuevo")
+
+
+def test_google_provider_lists_direct_calendar_when_calendar_list_is_empty(monkeypatch):
+    provider = GoogleCalendarProvider("direct-calendar@example.com", "{}")
+    monkeypatch.setattr(provider, "_build_service", lambda: _FakeCalendarService())
+
+    calendars = provider.list_calendars()
+
+    assert calendars == [
+        {
+            "id": "direct-calendar@example.com",
+            "summary": "Calendario directo",
+            "access_role": "direct",
+        }
+    ]

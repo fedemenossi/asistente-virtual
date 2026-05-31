@@ -345,6 +345,7 @@ def _consultorio_form_common_context(
     google_config: dict | None = None,
     google_calendars: list[dict] | None = None,
     google_calendar_error: str | None = None,
+    google_service_account_email: str | None = None,
 ) -> dict:
     return {
         "consultorio": consultorio,
@@ -361,16 +362,29 @@ def _consultorio_form_common_context(
         "google_weekdays": [(key, WEEKDAY_LABELS[key]) for key in WEEKDAY_KEYS],
         "google_calendars": google_calendars or [],
         "google_calendar_error": google_calendar_error,
+        "google_service_account_email": google_service_account_email,
     }
 
 
 def _load_google_calendars_for_tenant(tenant: Tenant) -> tuple[list[dict], str | None]:
     try:
-        return CalendarService().list_google_calendars(tenant), None
-    except Exception:
+        calendars = CalendarService().list_google_calendars(tenant)
+        if not calendars:
+            email = CalendarService().get_google_service_account_email(tenant)
+            suffix = f" ({email})" if email else ""
+            return [], (
+                "No se encontraron calendarios accesibles. Compartí el calendario con la service account"
+                f"{suffix} con permisos para modificar eventos."
+            )
+        return calendars, None
+    except HTTPException as exc:
+        return [], str(exc.detail)
+    except Exception as exc:
+        email = CalendarService().get_google_service_account_email(tenant)
+        suffix = f" Service account: {email}." if email else ""
         return [], (
-            "No se pudieron listar calendarios. Compartí el calendario con el email de la service account "
-            "y verificá que tenga permisos de lectura/escritura."
+            "No se pudieron listar calendarios. Verificá que Google Calendar API esté habilitada y que el "
+            f"calendario esté compartido con permisos suficientes.{suffix} Detalle: {type(exc).__name__}."
         )
 
 
@@ -381,6 +395,7 @@ async def consultorios_new_get(
 ) -> Response:
     tenant = await session.get(Tenant, user.tenant_id)
     google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
+    google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
     return _template(
         request,
         "tenant/consultorio_form.html",
@@ -388,6 +403,7 @@ async def consultorios_new_get(
             None,
             google_calendars=google_calendars,
             google_calendar_error=google_calendar_error,
+            google_service_account_email=google_service_account_email,
         ),
     )
 
@@ -415,6 +431,7 @@ async def consultorios_new_post(
     tenant = await session.get(Tenant, user.tenant_id)
     if tenant:
         google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant)
+    google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
     if provider == "consultorio_movil":
         errors: dict[str, str] = {}
         if not cab_user:
@@ -441,6 +458,7 @@ async def consultorios_new_post(
                     google_config=google_config,
                     google_calendars=google_calendars,
                     google_calendar_error=google_calendar_error,
+                    google_service_account_email=google_service_account_email,
                 ),
             )
         days_value = 21
@@ -474,6 +492,7 @@ async def consultorios_new_post(
                     google_config=google_config,
                     google_calendars=google_calendars,
                     google_calendar_error=google_calendar_error,
+                    google_service_account_email=google_service_account_email,
                 ),
             )
         config_externa = {"google_calendar": google_config}
@@ -519,6 +538,7 @@ async def consultorios_edit_get(
     cabildo_cfg = (consultorio.configuracion_externa or {}).get("cabildo") or {}
     tenant = await session.get(Tenant, user.tenant_id)
     google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
+    google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
     return _template(
         request,
         "tenant/consultorio_form.html",
@@ -532,6 +552,7 @@ async def consultorios_edit_get(
             },
             google_calendars=google_calendars,
             google_calendar_error=google_calendar_error,
+            google_service_account_email=google_service_account_email,
         ),
     )
 
@@ -559,6 +580,7 @@ async def consultorios_edit_post(
     errors: dict[str, str] = {}
     tenant = await session.get(Tenant, user.tenant_id)
     google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
+    google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
     google_config = get_google_calendar_config(consultorio)
     existing_days = (
         (consultorio.configuracion_externa or {}).get("cabildo") or {}
@@ -588,6 +610,7 @@ async def consultorios_edit_post(
                     google_config=google_config,
                     google_calendars=google_calendars,
                     google_calendar_error=google_calendar_error,
+                    google_service_account_email=google_service_account_email,
                 ),
             )
     elif provider == "google":
@@ -606,6 +629,7 @@ async def consultorios_edit_post(
                     google_config=google_config,
                     google_calendars=google_calendars,
                     google_calendar_error=google_calendar_error,
+                    google_service_account_email=google_service_account_email,
                 ),
             )
     previous_cabildo = None
@@ -770,9 +794,25 @@ async def consultorio_google_calendars(
     if tenant is None:
         raise HTTPException(status_code=404)
     calendars, error = _load_google_calendars_for_tenant(tenant)
+    service_account_email = CalendarService().get_google_service_account_email(tenant)
     if error:
-        return JSONResponse({"ok": False, "message": error, "calendars": []}, status_code=400)
-    return JSONResponse({"ok": True, "message": f"Se encontraron {len(calendars)} calendarios.", "calendars": calendars})
+        return JSONResponse(
+            {
+                "ok": False,
+                "message": error,
+                "calendars": [],
+                "service_account_email": service_account_email,
+            },
+            status_code=400,
+        )
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": f"Se encontraron {len(calendars)} calendarios.",
+            "calendars": calendars,
+            "service_account_email": service_account_email,
+        }
+    )
 
 
 async def consultorio_calendar_slots_get(

@@ -5,6 +5,7 @@ from fastapi import HTTPException, status
 from app.integrations.cabildo_provider import CabildoProvider
 from app.integrations.google_calendar_provider import (
     GoogleCalendarProvider,
+    get_google_service_account_email,
     resolve_google_credentials,
 )
 from app.integrations.interfaces import CalendarProvider, CalendarSlot
@@ -70,6 +71,9 @@ class CalendarService:
             )
         calendar_id = settings.get("google_calendar_id") or "primary"
         return GoogleCalendarProvider(calendar_id, credentials_json, delegated_user).list_calendars()
+
+    def get_google_service_account_email(self, tenant: Tenant) -> str | None:
+        return get_google_service_account_email(tenant.calendar_settings or {})
 
     async def list_available_slots(
         self,

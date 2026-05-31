@@ -133,6 +133,9 @@
           {% endif %}
         </select>
         <p class="mt-1 text-xs text-slate-500">Compartí el calendario con la service account del tenant con permisos para modificar eventos.</p>
+        {% if google_service_account_email %}
+          <p class="mt-1 text-xs text-slate-500">Service account: <span class="font-mono">{{ google_service_account_email }}</span></p>
+        {% endif %}
       </div>
       <div class="grid gap-4 md:grid-cols-3">
         <div>

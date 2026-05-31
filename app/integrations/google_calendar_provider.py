@@ -114,7 +114,7 @@ class GoogleCalendarProvider(CalendarProvider):
 
     def list_calendars(self) -> list[dict[str, str]]:
         service = self._build_service()
-        result = service.calendarList().list().execute()
+        result = service.calendarList().list(showHidden=True).execute()
         calendars = []
         for item in result.get("items", []) or []:
             calendars.append(
@@ -124,6 +124,18 @@ class GoogleCalendarProvider(CalendarProvider):
                     "access_role": item.get("accessRole") or "",
                 }
             )
+        if self._calendar_id and self._calendar_id != "primary" and not any(item["id"] == self._calendar_id for item in calendars):
+            try:
+                calendar = service.calendars().get(calendarId=self._calendar_id).execute()
+                calendars.append(
+                    {
+                        "id": calendar.get("id") or self._calendar_id,
+                        "summary": calendar.get("summary") or calendar.get("id") or self._calendar_id,
+                        "access_role": "direct",
+                    }
+                )
+            except Exception:
+                pass
         return calendars
 
     def generate_available_slots(
@@ -303,6 +315,18 @@ def resolve_google_credentials(calendar_settings: dict | None) -> tuple[str | No
     credentials_json = credentials_json or settings.google_credentials_json
     delegated_user = delegated_user or settings.google_delegated_user
     return credentials_json, delegated_user
+
+
+def get_google_service_account_email(calendar_settings: dict | None) -> str | None:
+    credentials_json, _ = resolve_google_credentials(calendar_settings)
+    if not credentials_json:
+        return None
+    try:
+        data = json.loads(credentials_json)
+    except (TypeError, ValueError):
+        return None
+    email = data.get("client_email")
+    return str(email).strip() if email else None
 
 
 def _parse_datetime(value: str):
