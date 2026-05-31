@@ -57,6 +57,7 @@ def test_admin_soft_delete_tenant_and_user(client, db_session):
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
     user = asyncio.run(get_user(db_session, user_id))
     assert tenant.deleted_at is not None
+    assert tenant.whatsapp_number.endswith(f"__deleted_{tenant_id}")
     assert user.deleted_at is not None
 
 

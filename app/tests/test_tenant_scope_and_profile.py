@@ -248,7 +248,7 @@ def test_admin_create_tenant_duplicate_whatsapp_returns_form_error(client, db_se
     assert "Ese WhatsApp ya esta registrado." in result.text
 
 
-def test_admin_create_tenant_duplicate_soft_deleted_whatsapp_returns_form_error(client, db_session):
+def test_admin_create_tenant_reuses_soft_deleted_whatsapp(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Eliminado", "+5491150648910"))
 
     async def _soft_delete():
@@ -278,11 +278,11 @@ def test_admin_create_tenant_duplicate_soft_deleted_whatsapp_returns_form_error(
         "/admin/tenants/new",
         data={
             "csrf_token": csrf_token,
-            "nombre": "Tenant Duplicado Eliminado",
+            "nombre": "Tenant Reutiliza WhatsApp",
             "whatsapp_number": "+5491150648910",
             "activo": "1",
         },
+        follow_redirects=False,
     )
 
-    assert result.status_code == 200
-    assert "Ese WhatsApp ya esta registrado." in result.text
+    assert result.status_code in (302, 303)

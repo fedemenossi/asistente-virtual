@@ -86,11 +86,37 @@ async def _tenant_whatsapp_number_exists(
     *,
     exclude_tenant_id: int | None = None,
 ) -> bool:
-    stmt = select(Tenant.id).where(Tenant.whatsapp_number == whatsapp_number)
+    stmt = select(Tenant.id).where(
+        Tenant.whatsapp_number == whatsapp_number,
+        Tenant.deleted_at.is_(None),
+    )
     if exclude_tenant_id is not None:
         stmt = stmt.where(Tenant.id != exclude_tenant_id)
     result = await session.execute(stmt)
     return result.scalar_one_or_none() is not None
+
+
+async def _release_soft_deleted_tenant_whatsapp_numbers(
+    session: AsyncSession,
+    whatsapp_number: str,
+) -> list[int]:
+    result = await session.execute(
+        select(Tenant).where(
+            Tenant.whatsapp_number == whatsapp_number,
+            Tenant.deleted_at.is_not(None),
+        )
+    )
+    tenants = list(result.scalars().all())
+    for tenant in tenants:
+        tenant.whatsapp_number = _released_tenant_whatsapp_number(tenant)
+    return [tenant.id for tenant in tenants]
+
+
+def _released_tenant_whatsapp_number(tenant: Tenant) -> str:
+    base = tenant.whatsapp_number or "deleted"
+    suffix = f"__deleted_{tenant.id}"
+    max_base_len = 32 - len(suffix)
+    return f"{base[:max_base_len]}{suffix}"
 
 
 def _tenant_form_context(
@@ -348,6 +374,10 @@ async def tenants_new_post(
                 "admin/tenant_form.html",
                 _tenant_form_context(request, None, errors, cleaned),
             )
+        released_tenant_ids = await _release_soft_deleted_tenant_whatsapp_numbers(
+            session,
+            cleaned["whatsapp_number"],
+        )
         session.add(tenant)
         await session.flush()
         await audit_log(
@@ -357,6 +387,7 @@ async def tenants_new_post(
             action="create",
             entity="tenant",
             entity_id=tenant.id,
+            metadata={"released_soft_deleted_tenant_ids": released_tenant_ids} if released_tenant_ids else None,
         )
     add_flash(request, "success", "Tenant creado")
     return RedirectResponse("/admin/tenants", status_code=303)
@@ -545,8 +576,10 @@ async def tenants_delete(
     validate_csrf(request, csrf_token)
     async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, tenant_id)
+        original_whatsapp_number = tenant.whatsapp_number
         tenant.deleted_at = now_ba()
         tenant.deleted_by = user.id
+        tenant.whatsapp_number = _released_tenant_whatsapp_number(tenant)
         await audit_log(
             session,
             request,
@@ -554,6 +587,10 @@ async def tenants_delete(
             action="delete",
             entity="tenant",
             entity_id=tenant.id,
+            metadata={
+                "released_whatsapp_number": True,
+                "original_whatsapp_number": original_whatsapp_number,
+            },
         )
         from app.core.notifications import create_notification
 
