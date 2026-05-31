@@ -113,13 +113,14 @@
           {% if errors.google_calendar %}<p class="mt-2 text-xs text-rose-600">{{ errors.google_calendar }}</p>{% endif %}
           {% if google_calendar_error %}<p class="mt-2 text-xs text-amber-700">{{ google_calendar_error }}</p>{% endif %}
         </div>
-        {% if is_edit %}
-          <div class="flex gap-2">
-            <button class="btn btn-secondary" type="button" data-google-calendars-url="/t/consultorios/{{ consultorio.id }}/google-calendars" data-google-calendars-button>Probar conexion</button>
-            <button class="btn btn-secondary" type="button" data-google-calendars-url="/t/consultorios/{{ consultorio.id }}/google-calendars" data-google-calendars-button>Actualizar calendarios</button>
+        <div class="flex gap-2">
+            {% set google_calendars_url = "/t/consultorios/" ~ consultorio.id ~ "/google-calendars" if is_edit else "/t/google-calendars" %}
+            <button class="btn btn-secondary" type="button" data-google-calendars-url="{{ google_calendars_url }}" data-google-calendars-button>Probar conexion</button>
+            <button class="btn btn-secondary" type="button" data-google-calendars-url="{{ google_calendars_url }}" data-google-calendars-button>Actualizar calendarios</button>
+          {% if is_edit %}
             <a class="btn btn-secondary" href="/t/consultorios/{{ consultorio.id }}/calendar-slots">Generar slots</a>
-          </div>
-        {% endif %}
+          {% endif %}
+        </div>
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700">Calendario detectado por Google</label>
@@ -134,7 +135,7 @@
         </select>
         <label class="mt-3 block text-sm font-medium text-slate-700">ID de calendario de este consultorio</label>
         <input class="input mt-1" name="gcal_calendar_id" value="{{ google_config.calendar_id }}" data-google-calendar-id-input placeholder="xxxx@group.calendar.google.com" />
-        <p class="mt-1 text-xs text-slate-500">Cada consultorio puede usar un calendario distinto. Si no aparece en la lista, pega aca el ID del calendario secundario.</p>
+        <p class="mt-1 text-xs text-slate-500">Cada consultorio puede usar un calendario distinto. Para calendarios secundarios, pega aca el ID y presiona Actualizar calendarios.</p>
         <p class="mt-1 text-xs text-slate-500">Compartí ese calendario con la service account del tenant con permisos para modificar eventos.</p>
         {% if google_service_account_email %}
           <p class="mt-1 text-xs text-slate-500">Service account: <span class="font-mono">{{ google_service_account_email }}</span></p>

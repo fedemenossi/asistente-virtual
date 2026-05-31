@@ -398,9 +398,15 @@ def _load_google_calendars_for_tenant(tenant: Tenant, candidate_calendar_id: str
         if not calendars:
             email = CalendarService().get_google_service_account_email(tenant)
             suffix = f" ({email})" if email else ""
+            if candidate_calendar_id:
+                return [], (
+                    "No se pudo validar ese Calendar ID con Google. Verifica que el ID sea correcto y que el "
+                    f"calendario este compartido con la service account{suffix} con permisos para modificar eventos."
+                )
             return [], (
-                "No se encontraron calendarios accesibles. Compartí el calendario con la service account"
-                f"{suffix} con permisos para modificar eventos."
+                "Google no devolvio calendarios en la lista de la service account. Para calendarios secundarios, "
+                "pega el Calendar ID en el campo del consultorio y volve a presionar Actualizar calendarios. "
+                f"Service account{suffix}."
             )
         return calendars, None
     except HTTPException as exc:
@@ -409,8 +415,8 @@ def _load_google_calendars_for_tenant(tenant: Tenant, candidate_calendar_id: str
         email = CalendarService().get_google_service_account_email(tenant)
         suffix = f" Service account: {email}." if email else ""
         return [], (
-            "No se pudieron listar calendarios. Verificá que Google Calendar API esté habilitada y que el "
-            f"calendario esté compartido con permisos suficientes.{suffix} Detalle: {type(exc).__name__}."
+            "No se pudieron listar calendarios. Verifica que Google Calendar API este habilitada y que el "
+            f"calendario este compartido con permisos suficientes.{suffix} Detalle: {type(exc).__name__}."
         )
 
 
@@ -817,6 +823,25 @@ async def consultorio_google_calendars(
 ) -> JSONResponse:
     validate_csrf(request, csrf_token)
     await get_tenant_entity_or_404(session, Consultorio, consultorio_id, user.tenant_id)
+    return await _google_calendars_response(session, user, gcal_calendar_id)
+
+
+async def tenant_google_calendars(
+    request: Request,
+    gcal_calendar_id: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("consultorio:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> JSONResponse:
+    validate_csrf(request, csrf_token)
+    return await _google_calendars_response(session, user, gcal_calendar_id)
+
+
+async def _google_calendars_response(
+    session: AsyncSession,
+    user: CurrentUser,
+    gcal_calendar_id: str,
+) -> JSONResponse:
     tenant = await session.get(Tenant, user.tenant_id)
     if tenant is None:
         raise HTTPException(status_code=404)

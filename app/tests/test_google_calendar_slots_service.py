@@ -143,6 +143,38 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
     saved_page = client.get(f"/t/consultorios/{consultorio_id}/edit")
     assert "Consultorio actualizado" in saved_page.text
 
+
+def test_new_consultorio_form_can_refresh_google_calendars_before_save(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Google New Form",
+            "whatsapp:+9407",
+            calendar_settings={"google_credentials_json": '{"client_email":"svc-calendar@example.com"}'},
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-google-new-form@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    monkeypatch.setattr(
+        "app.web.tenant.views._load_google_calendars_for_tenant",
+        lambda tenant: ([], None),
+    )
+    login(client, "tenant-google-new-form@test.com", "secret-123")
+
+    page = client.get("/t/consultorios/new")
+
+    assert page.status_code == 200
+    assert 'data-google-calendars-url="/t/google-calendars"' in page.text
+    assert "Para calendarios secundarios, pega aca el ID y presiona Actualizar calendarios" in page.text
+
+
 def test_calendar_slots_page_renders_progress_indicator(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Slots Progress", "whatsapp:+9403"))
     consultorio_id = asyncio.run(
