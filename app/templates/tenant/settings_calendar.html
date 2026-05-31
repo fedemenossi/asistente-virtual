@@ -18,13 +18,8 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <div class="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
       <h2 class="text-sm font-semibold text-slate-900">Datos generales de Google Calendar</h2>
-      <p class="text-xs text-slate-500 mt-1">Estas credenciales son del tenant. El calendario operativo se elige en cada consultorio.</p>
+      <p class="text-xs text-slate-500 mt-1">Estos valores son generales del tenant. El calendario operativo se configura en cada consultorio.</p>
       <div class="mt-4 grid gap-4 md:grid-cols-2">
-        <div>
-          <label class="text-xs text-slate-500">Google Calendar ID fallback opcional</label>
-          <input class="input" type="text" name="google_calendar_id" value="{{ calendar_settings.google_calendar_id }}" />
-          <p class="mt-1 text-xs text-slate-500">Usalo solo como fallback o para probar conexion. Cada consultorio puede tener su propio calendario.</p>
-        </div>
         <div>
           <label class="text-xs text-slate-500">Timezone por defecto</label>
           <input class="input" type="text" name="default_timezone" value="{{ calendar_settings.default_timezone }}" />
@@ -71,8 +66,8 @@
     <div class="w-full max-w-4xl rounded-2xl border border-slate-200 bg-white shadow-soft">
       <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
         <div>
-          <h2 class="text-lg font-semibold text-slate-900">Turnos disponibles</h2>
-          <p class="text-sm text-slate-600">Resultado de la conexion con Google Calendar.</p>
+          <h2 class="text-lg font-semibold text-slate-900">Prueba de Google Calendar</h2>
+          <p class="text-sm text-slate-600">Consulta disponibilidad usando el calendario configurado en un consultorio.</p>
         </div>
         <button class="btn btn-ghost" type="button" data-calendar-modal-close>Cerrar</button>
       </div>

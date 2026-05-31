@@ -2164,7 +2164,6 @@ async def calendar_settings_get(
 
 async def calendar_settings_post(
     request: Request,
-    google_calendar_id: str = Form(""),
     calendar_tags: str = Form(""),
     default_timezone: str = Form("America/Argentina/Buenos_Aires"),
     virtual_meet_enabled: str | None = Form(None),
@@ -2178,8 +2177,11 @@ async def calendar_settings_post(
     tags = [tag.strip() for tag in calendar_tags.split(",") if tag.strip()]
     async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+        previous_settings = tenant.calendar_settings or {}
         tenant.calendar_settings = {
-            "google_calendar_id": google_calendar_id.strip(),
+            # Compatibilidad con tenants antiguos: el calendario operativo nuevo
+            # se configura por consultorio, pero no borramos el fallback existente.
+            "google_calendar_id": previous_settings.get("google_calendar_id", ""),
             "calendar_tags": tags,
             "default_timezone": default_timezone.strip() or "UTC",
             "virtual_meet_enabled": bool(virtual_meet_enabled),

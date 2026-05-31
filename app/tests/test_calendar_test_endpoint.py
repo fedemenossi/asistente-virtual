@@ -53,3 +53,53 @@ def test_calendar_test_endpoint_returns_slots(client, db_session, monkeypatch):
     data = response.json()
     assert data["count"] == 1
     assert data["items"][0]["slot_id"] == "slot-1"
+
+
+def test_calendar_settings_hides_fallback_id_and_preserves_existing_value(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cal Settings", "whatsapp:+778"))
+    password_hash = hash_password("secret-123")
+    asyncio.run(
+        create_user(db_session, "tenantcalsettings@test.com", password_hash, UserRole.TENANT_ADMIN.value, tenant_id)
+    )
+
+    async def _set_calendar_settings():
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            async with session.begin():
+                tenant = await session.get(Tenant, tenant_id)
+                tenant.calendar_settings = {
+                    "google_calendar_id": "legacy-calendar-123",
+                    "default_timezone": "America/Argentina/Buenos_Aires",
+                    "calendar_tags": ["[TURNO DISPONIBLE]"],
+                }
+
+    asyncio.run(_set_calendar_settings())
+    login(client, "tenantcalsettings@test.com", "secret-123")
+    page = client.get("/t/settings/calendar")
+    csrf = page.text.split('name="csrf_token" value="')[1].split('"')[0]
+
+    assert "Google Calendar ID fallback opcional" not in page.text
+    assert 'name="google_calendar_id"' not in page.text
+    assert "El calendario operativo se configura en cada consultorio" in page.text
+
+    response = client.post(
+        "/t/settings/calendar",
+        data={
+            "csrf_token": csrf,
+            "default_timezone": "America/Argentina/Buenos_Aires",
+            "calendar_tags": "[TURNO DISPONIBLE]",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    async def _get_calendar_settings():
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            return tenant.calendar_settings
+
+    settings = asyncio.run(_get_calendar_settings())
+    assert settings["google_calendar_id"] == "legacy-calendar-123"
