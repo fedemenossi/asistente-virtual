@@ -6,12 +6,19 @@
 
 {% block content %}
   <div class="mb-6">
-    <p class="text-sm text-slate-600">Agenda diaria del tenant</p>
-    <h1 class="text-2xl font-semibold text-slate-900">Agenda por dia</h1>
+    <p class="text-sm text-slate-600">Agenda operativa del tenant</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Agenda por rango</h1>
   </div>
 
-  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
-    <input class="input" type="date" name="date" value="{{ date or '' }}" />
+  <form method="get" class="mb-4 grid gap-3 md:grid-cols-5">
+    <label class="space-y-1">
+      <span class="text-xs font-medium text-slate-500">Fecha desde</span>
+      <input class="input" type="date" name="date_from" value="{{ date_from or date or '' }}" />
+    </label>
+    <label class="space-y-1">
+      <span class="text-xs font-medium text-slate-500">Fecha hasta</span>
+      <input class="input" type="date" name="date_to" value="{{ date_to or date or '' }}" />
+    </label>
     <select class="select" name="consultorio_id">
       <option value="">Consultorio</option>
       {% for consultorio in consultorios %}
@@ -26,12 +33,14 @@
       <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelado</option>
       <option value="completed" {% if status_filter == 'completed' %}selected{% endif %}>Completado</option>
     </select>
-    <button class="btn btn-secondary" type="submit">Filtrar</button>
+    <div class="flex items-end">
+      <button class="btn btn-secondary w-full" type="submit">Filtrar</button>
+    </div>
   </form>
 
   <div class="mb-4 grid gap-4 md:grid-cols-3">
     <div class="card-sm border border-slate-200 bg-white">
-      <p class="text-xs uppercase tracking-wide text-slate-500">Turnos del dia</p>
+      <p class="text-xs uppercase tracking-wide text-slate-500">Turnos asignados</p>
       <p class="mt-2 text-2xl font-semibold text-slate-900">{{ daily_summary.count }}</p>
     </div>
     <div class="card-sm border border-slate-200 bg-white">
@@ -60,7 +69,7 @@
     <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h2 class="text-lg font-semibold text-slate-900">Agenda Google en vivo</h2>
-        <p class="mt-1 text-sm text-slate-600">Visualiza eventos reales del calendario del consultorio seleccionado. No persiste slots disponibles en la base local.</p>
+        <p class="mt-1 text-sm text-slate-600">Consulta Google Calendar en vivo para ver disponibilidad y eventos reales del consultorio seleccionado.</p>
       </div>
       {% if selected_consultorio %}
         <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">{{ selected_consultorio.nombre }}</span>
@@ -113,6 +122,8 @@
                         <input type="hidden" name="consultorio_id" value="{{ selected_consultorio.id }}" />
                         <input type="hidden" name="event_id" value="{{ event.event_id }}" />
                         <input type="hidden" name="date" value="{{ date or '' }}" />
+                        <input type="hidden" name="date_from" value="{{ date_from or date or '' }}" />
+                        <input type="hidden" name="date_to" value="{{ date_to or date or '' }}" />
                         <select class="select max-w-56" name="patient_id" required>
                           <option value="">Paciente</option>
                           {% for paciente in pacientes %}
@@ -136,6 +147,11 @@
     {% else %}
       <p class="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Google Calendar no devolvio eventos para la fecha seleccionada.</p>
     {% endif %}
+  </div>
+
+  <div class="mb-3">
+    <h2 class="text-lg font-semibold text-slate-900">Turnos asignados</h2>
+    <p class="mt-1 text-sm text-slate-600">Estos turnos salen de la base local y representan la agenda operativa del sistema.</p>
   </div>
 
   {% if rows %}
@@ -210,7 +226,7 @@
   {% else %}
     <div class="card p-10 text-center">
       <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
-      <p class="text-sm text-slate-600">No hay turnos para la fecha seleccionada.</p>
+      <p class="text-sm text-slate-600">No hay turnos asignados para el rango seleccionado.</p>
     </div>
   {% endif %}
 {% endblock %}

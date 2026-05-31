@@ -97,6 +97,31 @@ def test_agenda_by_date_filters_turnos(client, db_session):
     assert "PacienteDiaTres" not in response.text
 
 
+def test_agenda_filters_turnos_by_date_range(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Agenda Range", "whatsapp:+741"))
+    consultorio_id = asyncio.run(create_consultorio(db_session, tenant_id, "Consultorio Range"))
+    paciente_a = asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+7411", nombre="PacienteDos"))
+    paciente_b = asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+7412", nombre="PacienteTres"))
+    paciente_c = asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+7413", nombre="PacienteCinco"))
+
+    password_hash = hash_password("secret-123")
+    asyncio.run(create_user(db_session, "agenda-range@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+
+    asyncio.run(_seed_turno(db_session, tenant_id, consultorio_id, paciente_a, datetime(2026, 4, 2, 10, 0, tzinfo=timezone.utc)))
+    asyncio.run(_seed_turno(db_session, tenant_id, consultorio_id, paciente_b, datetime(2026, 4, 3, 10, 0, tzinfo=timezone.utc)))
+    asyncio.run(_seed_turno(db_session, tenant_id, consultorio_id, paciente_c, datetime(2026, 4, 5, 10, 0, tzinfo=timezone.utc)))
+
+    login(client, "agenda-range@test.com", "secret-123")
+    response = client.get("/t/appointments?date_from=2026-04-02&date_to=2026-04-03")
+
+    assert response.status_code == 200
+    assert "Agenda por rango" in response.text
+    assert "Turnos asignados" in response.text
+    assert "PacienteDos" in response.text
+    assert "PacienteTres" in response.text
+    assert "PacienteCinco" not in response.text
+
+
 def test_appointments_list_shows_live_google_calendar_events(client, db_session, monkeypatch):
     tenant_id = asyncio.run(
         create_tenant(
@@ -126,6 +151,8 @@ def test_appointments_list_shows_live_google_calendar_events(client, db_session,
     async def _fake_events(self, tenant, consultorio, start, end):
         assert tenant.id == tenant_id
         assert consultorio.id == consultorio_id
+        assert start.date().isoformat() == "2026-04-02"
+        assert end.date().isoformat() == "2026-04-04"
         start_at = datetime(2026, 4, 2, 9, 0, tzinfo=timezone(timedelta(hours=-3)))
         return [
             {
@@ -145,7 +172,7 @@ def test_appointments_list_shows_live_google_calendar_events(client, db_session,
     monkeypatch.setattr("app.services.calendar_service.CalendarService.list_calendar_events", _fake_events)
 
     login(client, "agenda-google@test.com", "secret-123")
-    response = client.get(f"/t/appointments?date=2026-04-02&consultorio_id={consultorio_id}")
+    response = client.get(f"/t/appointments?date_from=2026-04-02&date_to=2026-04-03&consultorio_id={consultorio_id}")
 
     assert response.status_code == 200
     assert "Agenda Google en vivo" in response.text

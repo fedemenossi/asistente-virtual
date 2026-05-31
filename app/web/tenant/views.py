@@ -153,6 +153,32 @@ def _selected_day(date_str: str | None) -> tuple[str, datetime, datetime]:
     return date_str, start_db, end_db
 
 
+def _selected_date_range(
+    date_from_str: str | None,
+    date_to_str: str | None,
+    legacy_date_str: str | None = None,
+) -> tuple[str, str, datetime, datetime, date, date]:
+    start_label = (date_from_str or legacy_date_str or "").strip()
+    end_label = (date_to_str or legacy_date_str or start_label).strip()
+    today = now_ba().date()
+    try:
+        start_date = date.fromisoformat(start_label) if start_label else today
+    except ValueError:
+        start_date = today
+    try:
+        end_date = date.fromisoformat(end_label) if end_label else start_date
+    except ValueError:
+        end_date = start_date
+    if end_date < start_date:
+        end_date = start_date
+    ba_tz = now_ba().tzinfo
+    start = datetime.combine(start_date, datetime.min.time(), tzinfo=ba_tz)
+    end = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=ba_tz)
+    start_db = start.astimezone(timezone.utc).replace(tzinfo=None)
+    end_db = end.astimezone(timezone.utc).replace(tzinfo=None)
+    return start_date.isoformat(), end_date.isoformat(), start_db, end_db, start_date, end_date
+
+
 def _turno_type_label(turno: Turno) -> str:
     return "Virtual" if str(turno.tipo.value if hasattr(turno.tipo, "value") else turno.tipo) == "virtual" else "Presencial"
 
@@ -2418,10 +2444,16 @@ async def appointments_list(
     user: CurrentUser = Depends(require_permission("appointment:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
-    date_str = request.query_params.get("date", "").strip()
+    legacy_date_str = request.query_params.get("date", "").strip()
+    date_from = request.query_params.get("date_from", "").strip()
+    date_to = request.query_params.get("date_to", "").strip()
     status_filter = request.query_params.get("status", "").strip()
     consultorio_id = request.query_params.get("consultorio_id", "").strip()
-    date_str, start, end = _selected_day(date_str)
+    date_from, date_to, start, end, live_start_date, live_end_date = _selected_date_range(
+        date_from,
+        date_to,
+        legacy_date_str,
+    )
 
     stmt = (
         select(Turno, Paciente, Consultorio)
@@ -2443,8 +2475,7 @@ async def appointments_list(
             stmt = stmt.where(Consultorio.id == int(consultorio_id))
         except ValueError:
             consultorio_id = ""
-    if date_str:
-        stmt = stmt.where(Turno.fecha_hora >= start, Turno.fecha_hora < end)
+    stmt = stmt.where(Turno.fecha_hora >= start, Turno.fecha_hora < end)
 
     result = await session.execute(stmt.order_by(Turno.fecha_hora.desc()))
     rows = list(result.all())
@@ -2500,9 +2531,8 @@ async def appointments_list(
                 live_tz = _resolve_timezone(
                     (get_google_calendar_config(selected_consultorio).get("timezone") or "America/Argentina/Buenos_Aires")
                 ) or timezone(timedelta(hours=-3))
-                live_day = datetime.fromisoformat(date_str).date()
-                live_start = datetime.combine(live_day, datetime.min.time(), tzinfo=live_tz)
-                live_end = live_start + timedelta(days=1)
+                live_start = datetime.combine(live_start_date, datetime.min.time(), tzinfo=live_tz)
+                live_end = datetime.combine(live_end_date + timedelta(days=1), datetime.min.time(), tzinfo=live_tz)
                 google_events = await CalendarService().list_calendar_events(
                     tenant,
                     selected_consultorio,
@@ -2528,7 +2558,9 @@ async def appointments_list(
             "consultorios": consultorios,
             "status_filter": status_filter,
             "consultorio_id": consultorio_id,
-            "date": date_str,
+            "date": date_from,
+            "date_from": date_from,
+            "date_to": date_to,
             "daily_summary": daily_summary,
             "consultorio_summary": consultorio_summary,
             "selected_consultorio": selected_consultorio,
@@ -2545,12 +2577,22 @@ async def appointment_google_assign(
     event_id: str = Form(...),
     patient_id: int = Form(...),
     date: str = Form(""),
+    date_from: str = Form(""),
+    date_to: str = Form(""),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("appointment:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    back_query = urlencode({"date": date, "consultorio_id": consultorio_id})
+    selected_from = date_from or date
+    selected_to = date_to or selected_from
+    back_query = urlencode(
+        {
+            "date_from": selected_from,
+            "date_to": selected_to,
+            "consultorio_id": consultorio_id,
+        }
+    )
     back_url = f"/t/appointments?{back_query}"
 
     stmt = (
