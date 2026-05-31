@@ -76,13 +76,7 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
             db_session,
             "Tenant Google Form",
             "whatsapp:+9401",
-            calendar_settings={
-                "google_credentials_json": '{"client_email":"svc-calendar@example.com"}',
-                "google_calendars": [
-                    {"name": "Consultorio Monroe", "calendar_id": "monroe-calendar-id"},
-                    {"name": "Consultorio Cabildo", "calendar_id": "cabildo-calendar-id"},
-                ],
-            },
+            calendar_settings={"google_credentials_json": '{"client_email":"svc-calendar@example.com"}'},
         )
     )
     consultorio_id = asyncio.run(create_consultorio(db_session, tenant_id, "Virtual"))
@@ -107,8 +101,7 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
     assert "gcal_calendar_id" in page.text
     assert "ID de calendario de este consultorio" in page.text
     assert "Cada consultorio puede usar un calendario distinto" in page.text
-    assert "Calendario cargado en settings" in page.text
-    assert "Consultorio Monroe - monroe-calendar-id" in page.text
+    assert "Calendario cargado en settings" not in page.text
     assert "svc-calendar@example.com" in page.text
 
     response = client.post(
@@ -148,55 +141,6 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
 
     saved_page = client.get(f"/t/consultorios/{consultorio_id}/edit")
     assert "Consultorio actualizado" in saved_page.text
-
-
-def test_calendar_settings_saves_multiple_consultorio_calendars(client, db_session):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Multi Calendars", "whatsapp:+9404"))
-    asyncio.run(
-        create_user(
-            db_session,
-            "tenant-multi-cal@test.com",
-            hash_password("secret-123"),
-            UserRole.TENANT_ADMIN.value,
-            tenant_id,
-        )
-    )
-    login(client, "tenant-multi-cal@test.com", "secret-123")
-    page = client.get("/t/settings/calendar")
-    csrf = page.text.split('name="csrf_token" value="')[1].split('"')[0]
-
-    assert "Calendarios por consultorio" in page.text
-    assert "Nombre consultorio" in page.text
-
-    response = client.post(
-        "/t/settings/calendar",
-        data={
-            "csrf_token": csrf,
-            "google_calendar_id": "fallback-calendar",
-            "default_timezone": "America/Argentina/Buenos_Aires",
-            "calendar_tags": "[TURNO DISPONIBLE]",
-            "configured_calendar_name": ["Consultorio Monroe", "Consultorio Cabildo", "Fila incompleta"],
-            "configured_calendar_id": ["monroe-calendar-id", "cabildo-calendar-id", ""],
-        },
-        follow_redirects=False,
-    )
-
-    assert response.status_code in (302, 303)
-
-    async def _fetch_settings():
-        from app.models.tenant import Tenant
-
-        async with db_session() as session:
-            tenant = await session.get(Tenant, tenant_id)
-            return tenant.calendar_settings
-
-    settings = asyncio.run(_fetch_settings())
-    assert settings["google_calendar_id"] == "fallback-calendar"
-    assert settings["google_calendars"] == [
-        {"name": "Consultorio Monroe", "calendar_id": "monroe-calendar-id"},
-        {"name": "Consultorio Cabildo", "calendar_id": "cabildo-calendar-id"},
-    ]
-
 
 def test_calendar_slots_page_renders_progress_indicator(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Slots Progress", "whatsapp:+9403"))

@@ -41,47 +41,6 @@
     </div>
 
     <div class="rounded-xl border border-slate-200 bg-white p-4">
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 class="text-sm font-semibold text-slate-900">Calendarios por consultorio</h2>
-          <p class="text-xs text-slate-500 mt-1">Carga un nombre visible y el Google Calendar ID. Despues vas a poder elegirlos desde la configuracion de cada consultorio.</p>
-        </div>
-        <button class="btn btn-secondary shrink-0" type="button" data-add-calendar-row>Agregar calendario</button>
-      </div>
-      <div class="mt-4 space-y-3" data-calendar-rows>
-        {% for calendar in calendar_settings.google_calendars %}
-          <div class="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]" data-calendar-row>
-            <div>
-              <label class="text-xs text-slate-500">Nombre consultorio</label>
-              <input class="input" type="text" name="configured_calendar_name" value="{{ calendar.name }}" placeholder="Consultorio Monroe" />
-            </div>
-            <div>
-              <label class="text-xs text-slate-500">Google Calendar ID</label>
-              <input class="input" type="text" name="configured_calendar_id" value="{{ calendar.calendar_id }}" placeholder="xxxx@group.calendar.google.com" />
-            </div>
-            <div class="flex items-end">
-              <button class="btn btn-ghost w-full" type="button" data-remove-calendar-row>Quitar</button>
-            </div>
-          </div>
-        {% endfor %}
-        <div class="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]" data-calendar-row>
-          <div>
-            <label class="text-xs text-slate-500">Nombre consultorio</label>
-            <input class="input" type="text" name="configured_calendar_name" value="" placeholder="Consultorio Monroe" />
-          </div>
-          <div>
-            <label class="text-xs text-slate-500">Google Calendar ID</label>
-            <input class="input" type="text" name="configured_calendar_id" value="" placeholder="xxxx@group.calendar.google.com" />
-          </div>
-          <div class="flex items-end">
-            <button class="btn btn-ghost w-full" type="button" data-remove-calendar-row>Quitar</button>
-          </div>
-        </div>
-      </div>
-      <p class="mt-3 text-xs text-slate-500">Estos IDs no reemplazan las credenciales. Cada calendario debe estar compartido con la service account del tenant.</p>
-    </div>
-
-    <div class="rounded-xl border border-slate-200 bg-white p-4">
       <h2 class="text-sm font-semibold text-slate-900">Credenciales</h2>
       <p class="text-xs text-slate-500 mt-1">Service Account y usuario delegado opcional.</p>
       <div class="mt-4 grid gap-4 md:grid-cols-2">
@@ -142,29 +101,4 @@
     </div>
   </div>
 
-  <script>
-    (() => {
-      const rows = document.querySelector("[data-calendar-rows]");
-      const addButton = document.querySelector("[data-add-calendar-row]");
-      if (!rows || !addButton) return;
-
-      const bindRemove = (row) => {
-        row.querySelector("[data-remove-calendar-row]")?.addEventListener("click", () => {
-          row.remove();
-        });
-      };
-
-      rows.querySelectorAll("[data-calendar-row]").forEach(bindRemove);
-      addButton.addEventListener("click", () => {
-        const template = rows.querySelector("[data-calendar-row]");
-        if (!template) return;
-        const row = template.cloneNode(true);
-        row.querySelectorAll("input").forEach((input) => {
-          input.value = "";
-        });
-        bindRemove(row);
-        rows.appendChild(row);
-      });
-    })();
-  </script>
 {% endblock %}

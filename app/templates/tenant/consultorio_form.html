@@ -122,16 +122,6 @@
         {% endif %}
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700">Calendario cargado en settings</label>
-        <select class="select mt-1" data-configured-calendar-select>
-          <option value="">Seleccionar calendario cargado</option>
-          {% for calendar in configured_google_calendars %}
-            <option value="{{ calendar.calendar_id }}" {% if google_config.calendar_id == calendar.calendar_id %}selected{% endif %}>{{ calendar.name }} - {{ calendar.calendar_id }}</option>
-          {% endfor %}
-        </select>
-        <p class="mt-1 text-xs text-slate-500">Estos calendarios se cargan en Settings calendario y pueden asignarse por consultorio.</p>
-      </div>
-      <div>
         <label class="block text-sm font-medium text-slate-700">Calendario detectado por Google</label>
         <select class="select mt-1" data-google-calendar-select>
           <option value="">Seleccionar calendario</option>
@@ -209,7 +199,6 @@
       const googleCalendarsButtons = document.querySelectorAll("[data-google-calendars-button]");
       const googleCalendarsResult = document.querySelector("[data-google-calendars-result]");
       const googleCalendarSelect = document.querySelector("[data-google-calendar-select]");
-      const configuredCalendarSelect = document.querySelector("[data-configured-calendar-select]");
       const googleCalendarInput = document.querySelector("[data-google-calendar-id-input]");
       const inputs = {
         cab_user: form?.querySelector("input[name='cab_user']"),
@@ -351,11 +340,6 @@
       googleCalendarSelect?.addEventListener("change", () => {
         if (googleCalendarInput) {
           googleCalendarInput.value = googleCalendarSelect.value;
-        }
-      });
-      configuredCalendarSelect?.addEventListener("change", () => {
-        if (googleCalendarInput) {
-          googleCalendarInput.value = configuredCalendarSelect.value;
         }
       });
       select.addEventListener("change", toggle);

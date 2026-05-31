@@ -370,7 +370,6 @@ def _consultorio_form_common_context(
     cabildo_defaults: dict | None = None,
     google_config: dict | None = None,
     google_calendars: list[dict] | None = None,
-    configured_google_calendars: list[dict] | None = None,
     google_calendar_error: str | None = None,
     google_service_account_email: str | None = None,
 ) -> dict:
@@ -388,44 +387,9 @@ def _consultorio_form_common_context(
         "google_config": google_config or (get_google_calendar_config(consultorio) if consultorio else default_google_calendar_config()),
         "google_weekdays": [(key, WEEKDAY_LABELS[key]) for key in WEEKDAY_KEYS],
         "google_calendars": google_calendars or [],
-        "configured_google_calendars": configured_google_calendars or [],
         "google_calendar_error": google_calendar_error,
         "google_service_account_email": google_service_account_email,
     }
-
-
-def _configured_google_calendars_from_settings(settings: dict | None) -> list[dict]:
-    settings = settings or {}
-    calendars: list[dict] = []
-    seen: set[str] = set()
-    for item in settings.get("google_calendars") or []:
-        if not isinstance(item, dict):
-            continue
-        calendar_id = (item.get("calendar_id") or item.get("id") or "").strip()
-        if not calendar_id or calendar_id in seen:
-            continue
-        name = (item.get("name") or item.get("summary") or calendar_id).strip()
-        calendars.append({"name": name, "calendar_id": calendar_id})
-        seen.add(calendar_id)
-    fallback_id = (settings.get("google_calendar_id") or "").strip()
-    if fallback_id and fallback_id not in seen:
-        calendars.append({"name": "Fallback", "calendar_id": fallback_id})
-    return calendars
-
-
-def _configured_google_calendars_from_form(form) -> list[dict]:
-    names = form.getlist("configured_calendar_name")
-    ids = form.getlist("configured_calendar_id")
-    calendars: list[dict] = []
-    seen: set[str] = set()
-    for index, calendar_id in enumerate(ids):
-        clean_id = (calendar_id or "").strip()
-        if not clean_id or clean_id in seen:
-            continue
-        name = (names[index] if index < len(names) else "").strip() or clean_id
-        calendars.append({"name": name, "calendar_id": clean_id})
-        seen.add(clean_id)
-    return calendars
 
 
 def _load_google_calendars_for_tenant(tenant: Tenant) -> tuple[list[dict], str | None]:
@@ -458,14 +422,12 @@ async def consultorios_new_get(
     tenant = await session.get(Tenant, user.tenant_id)
     google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
     google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
-    configured_google_calendars = _configured_google_calendars_from_settings(tenant.calendar_settings if tenant else {})
     return _template(
         request,
         "tenant/consultorio_form.html",
         _consultorio_form_common_context(
             None,
             google_calendars=google_calendars,
-            configured_google_calendars=configured_google_calendars,
             google_calendar_error=google_calendar_error,
             google_service_account_email=google_service_account_email,
         ),
@@ -495,7 +457,6 @@ async def consultorios_new_post(
     tenant = await session.get(Tenant, user.tenant_id)
     if tenant:
         google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant)
-    configured_google_calendars = _configured_google_calendars_from_settings(tenant.calendar_settings if tenant else {})
     google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
     if provider == "consultorio_movil":
         errors: dict[str, str] = {}
@@ -522,7 +483,6 @@ async def consultorios_new_post(
                     cabildo_defaults={"user": cab_user or "", "password": cab_password or "", "staff_id": cab_staff_id or "", "days": cab_days or 21},
                     google_config=google_config,
                     google_calendars=google_calendars,
-                    configured_google_calendars=configured_google_calendars,
                     google_calendar_error=google_calendar_error,
                     google_service_account_email=google_service_account_email,
                 ),
@@ -557,7 +517,6 @@ async def consultorios_new_post(
                     form_data={"nombre": nombre, "tipo": tipo, "proveedor_turnos": provider or ""},
                     google_config=google_config,
                     google_calendars=google_calendars,
-                    configured_google_calendars=configured_google_calendars,
                     google_calendar_error=google_calendar_error,
                     google_service_account_email=google_service_account_email,
                 ),
@@ -606,7 +565,6 @@ async def consultorios_edit_get(
     tenant = await session.get(Tenant, user.tenant_id)
     google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
     google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
-    configured_google_calendars = _configured_google_calendars_from_settings(tenant.calendar_settings if tenant else {})
     return _template(
         request,
         "tenant/consultorio_form.html",
@@ -619,7 +577,6 @@ async def consultorios_edit_get(
                 "days": cabildo_cfg.get("days") or 21,
             },
             google_calendars=google_calendars,
-            configured_google_calendars=configured_google_calendars,
             google_calendar_error=google_calendar_error,
             google_service_account_email=google_service_account_email,
         ),
@@ -650,7 +607,6 @@ async def consultorios_edit_post(
     tenant = await session.get(Tenant, user.tenant_id)
     google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
     google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
-    configured_google_calendars = _configured_google_calendars_from_settings(tenant.calendar_settings if tenant else {})
     google_config = get_google_calendar_config(consultorio)
     existing_days = (
         (consultorio.configuracion_externa or {}).get("cabildo") or {}
@@ -679,7 +635,6 @@ async def consultorios_edit_post(
                     cabildo_defaults={"user": cab_user or "", "password": cab_password or "", "staff_id": cab_staff_id or "", "days": cab_days or 21},
                     google_config=google_config,
                     google_calendars=google_calendars,
-                    configured_google_calendars=configured_google_calendars,
                     google_calendar_error=google_calendar_error,
                     google_service_account_email=google_service_account_email,
                 ),
@@ -699,7 +654,6 @@ async def consultorios_edit_post(
                     form_data={"nombre": nombre, "tipo": tipo, "proveedor_turnos": provider or ""},
                     google_config=google_config,
                     google_calendars=google_calendars,
-                    configured_google_calendars=configured_google_calendars,
                     google_calendar_error=google_calendar_error,
                     google_service_account_email=google_service_account_email,
                 ),
@@ -2127,7 +2081,6 @@ def _parse_calendar_settings(tenant: Tenant) -> dict:
     settings = tenant.calendar_settings or {}
     return {
         "google_calendar_id": settings.get("google_calendar_id", ""),
-        "google_calendars": _configured_google_calendars_from_settings(settings),
         "calendar_tags": ",".join(settings.get("calendar_tags", []) or []),
         "default_timezone": settings.get("default_timezone", "America/Argentina/Buenos_Aires"),
         "virtual_meet_enabled": bool(settings.get("virtual_meet_enabled", False)),
@@ -2222,14 +2175,11 @@ async def calendar_settings_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    form = await request.form()
     tags = [tag.strip() for tag in calendar_tags.split(",") if tag.strip()]
-    configured_calendars = _configured_google_calendars_from_form(form)
     async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
         tenant.calendar_settings = {
             "google_calendar_id": google_calendar_id.strip(),
-            "google_calendars": configured_calendars,
             "calendar_tags": tags,
             "default_timezone": default_timezone.strip() or "UTC",
             "virtual_meet_enabled": bool(virtual_meet_enabled),
