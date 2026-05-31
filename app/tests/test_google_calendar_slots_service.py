@@ -136,6 +136,36 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
     assert cfg["schedule"]["monday"]["buffer_minutes"] == 10
 
 
+def test_calendar_slots_page_renders_progress_indicator(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Slots Progress", "whatsapp:+9403"))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Progress",
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": _base_config(monday={"enabled": True})},
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-slots-progress@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-slots-progress@test.com", "secret-123")
+
+    response = client.get(f"/t/consultorios/{consultorio_id}/calendar-slots")
+
+    assert response.status_code == 200
+    assert "data-calendar-slots-progress" in response.text
+    assert "Consultando Google Calendar" in response.text
+    assert "Generando..." in response.text
+
+
 class _FakeCall:
     def __init__(self, value):
         self.value = value
