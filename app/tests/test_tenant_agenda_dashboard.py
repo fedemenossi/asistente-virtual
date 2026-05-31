@@ -122,6 +122,45 @@ def test_agenda_filters_turnos_by_date_range(client, db_session):
     assert "PacienteCinco" not in response.text
 
 
+def test_agenda_searches_assigned_turnos_by_patient_dni(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Agenda Search", "whatsapp:+742"))
+    consultorio_id = asyncio.run(create_consultorio(db_session, tenant_id, "Consultorio Search"))
+    paciente_a = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "whatsapp:+7421",
+            nombre="Buscado",
+            apellido="Correcto",
+            dni="30111222",
+        )
+    )
+    paciente_b = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "whatsapp:+7422",
+            nombre="NoBuscado",
+            apellido="Incorrecto",
+            dni="40999888",
+        )
+    )
+
+    password_hash = hash_password("secret-123")
+    asyncio.run(create_user(db_session, "agenda-search@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+
+    asyncio.run(_seed_turno(db_session, tenant_id, consultorio_id, paciente_a, datetime(2026, 4, 2, 10, 0, tzinfo=timezone.utc)))
+    asyncio.run(_seed_turno(db_session, tenant_id, consultorio_id, paciente_b, datetime(2026, 4, 2, 11, 0, tzinfo=timezone.utc)))
+
+    login(client, "agenda-search@test.com", "secret-123")
+    response = client.get("/t/appointments?date_from=2026-04-02&date_to=2026-04-02&q=30111222")
+
+    assert response.status_code == 200
+    assert "Buscado" in response.text
+    assert "Correcto" in response.text
+    assert "NoBuscado" not in response.text
+
+
 def test_appointments_list_shows_live_google_calendar_events(client, db_session, monkeypatch):
     tenant_id = asyncio.run(
         create_tenant(

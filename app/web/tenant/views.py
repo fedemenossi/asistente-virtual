@@ -12,7 +12,7 @@ from urllib.parse import urlencode
 
 from fastapi import Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -2449,6 +2449,7 @@ async def appointments_list(
     date_to = request.query_params.get("date_to", "").strip()
     status_filter = request.query_params.get("status", "").strip()
     consultorio_id = request.query_params.get("consultorio_id", "").strip()
+    q = request.query_params.get("q", "").strip()
     date_from, date_to, start, end, live_start_date, live_end_date = _selected_date_range(
         date_from,
         date_to,
@@ -2475,6 +2476,18 @@ async def appointments_list(
             stmt = stmt.where(Consultorio.id == int(consultorio_id))
         except ValueError:
             consultorio_id = ""
+    if q:
+        like_q = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                Paciente.nombre.ilike(like_q),
+                Paciente.apellido.ilike(like_q),
+                Paciente.dni.ilike(like_q),
+                Paciente.telefono.ilike(like_q),
+                Turno.external_event_id.ilike(like_q),
+                Turno.external_id.ilike(like_q),
+            )
+        )
     stmt = stmt.where(Turno.fecha_hora >= start, Turno.fecha_hora < end)
 
     result = await session.execute(stmt.order_by(Turno.fecha_hora.desc()))
@@ -2561,6 +2574,7 @@ async def appointments_list(
             "date": date_from,
             "date_from": date_from,
             "date_to": date_to,
+            "q": q,
             "daily_summary": daily_summary,
             "consultorio_summary": consultorio_summary,
             "selected_consultorio": selected_consultorio,
