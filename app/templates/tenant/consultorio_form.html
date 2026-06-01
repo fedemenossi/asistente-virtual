@@ -155,6 +155,13 @@
           <input class="input mt-1" name="gcal_reserved_tag_template" value="{{ google_config.reserved_tag_template }}" />
         </div>
       </div>
+      <label class="flex items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+        <input class="mt-1" type="checkbox" name="gcal_require_google_meet" value="1" {% if google_config.require_google_meet %}checked{% endif %} />
+        <span>
+          <span class="block text-sm font-medium text-slate-800">Requerir Google Meet para turnos virtuales</span>
+          <span class="mt-1 block text-xs text-slate-500">Si el calendario no permite crear Meet, no se reservara el turno virtual. Si se desactiva, el turno virtual puede reservarse sin link.</span>
+        </span>
+      </label>
       <div class="overflow-x-auto rounded-xl border border-slate-200">
         <table class="min-w-full text-sm">
           <thead class="bg-slate-50 text-slate-600">

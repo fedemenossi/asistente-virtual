@@ -46,6 +46,23 @@ class GoogleCalendarProvider(CalendarProvider):
             creds = creds.with_subject(self._delegated_user)
         return build("calendar", "v3", credentials=creds, cache_discovery=False)
 
+    def _calendar_supports_google_meet(self, service) -> bool:
+        try:
+            calendar = service.calendars().get(calendarId=self._calendar_id).execute()
+        except HttpError as exc:
+            logger.exception(
+                "google_calendar_conference_capabilities_failed calendar_id=%s status=%s reason=%s content=%s",
+                _mask_calendar_id(self._calendar_id),
+                getattr(getattr(exc, "resp", None), "status", None),
+                getattr(getattr(exc, "resp", None), "reason", None),
+                _safe_http_error_content(exc),
+            )
+            return False
+        conference_types = (
+            ((calendar.get("conferenceProperties") or {}).get("allowedConferenceSolutionTypes") or [])
+        )
+        return "hangoutsMeet" in conference_types
+
     @staticmethod
     def _is_slot_available(event: dict, tags: list[str] | None) -> bool:
         summary = (event.get("summary") or "").lower()
@@ -128,6 +145,7 @@ class GoogleCalendarProvider(CalendarProvider):
         consultorio_settings = get_google_calendar_config(consultorio)
         tags = settings.get("calendar_tags") or []
         timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
+        require_google_meet = bool(consultorio_settings.get("require_google_meet", True))
 
         service = self._build_service()
         events = (
@@ -360,6 +378,7 @@ class GoogleCalendarProvider(CalendarProvider):
         consultorio_settings = get_google_calendar_config(consultorio)
         tags = settings.get("calendar_tags") or []
         timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
+        require_google_meet = bool(consultorio_settings.get("require_google_meet", True))
 
         service = self._build_service()
         try:
@@ -418,7 +437,18 @@ class GoogleCalendarProvider(CalendarProvider):
             },
         }
         consultorio_type = consultorio.tipo.value if hasattr(consultorio.tipo, "value") else str(consultorio.tipo)
-        should_create_meet = consultorio_type == "virtual"
+        should_create_meet = consultorio_type == "virtual" and require_google_meet
+        if should_create_meet and not self._calendar_supports_google_meet(service):
+            logger.warning(
+                "google_calendar_reserve_meet_not_supported tenant_id=%s consultorio_id=%s calendar_id=%s event_id=%s",
+                tenant.id,
+                consultorio.id,
+                _mask_calendar_id(self._calendar_id),
+                slot_id,
+            )
+            raise RuntimeError(
+                "Este calendario no permite generar Google Meet. Revisá la configuración de Google Calendar/Workspace."
+            )
         if should_create_meet:
             body["conferenceData"] = {
                 "createRequest": {
@@ -440,6 +470,7 @@ class GoogleCalendarProvider(CalendarProvider):
                 .execute()
             )
         except HttpError as exc:
+            content = _safe_http_error_content(exc)
             logger.exception(
                 "google_calendar_reserve_patch_failed tenant_id=%s consultorio_id=%s calendar_id=%s event_id=%s consultorio_type=%s create_meet=%s status=%s reason=%s content=%s",
                 tenant.id,
@@ -450,8 +481,12 @@ class GoogleCalendarProvider(CalendarProvider):
                 should_create_meet,
                 getattr(getattr(exc, "resp", None), "status", None),
                 getattr(getattr(exc, "resp", None), "reason", None),
-                _safe_http_error_content(exc),
+                content,
             )
+            if should_create_meet and "Invalid conference type value" in content:
+                raise RuntimeError(
+                    "Este calendario no permite generar Google Meet. Revisá la configuración de Google Calendar/Workspace."
+                ) from exc
             raise
         start_info = updated.get("start") or {}
         end_info = updated.get("end") or {}

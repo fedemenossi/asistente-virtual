@@ -2686,6 +2686,17 @@ async def appointment_google_assign(
                 "consultorio_id": consultorio.id,
             },
         )
+    except RuntimeError as exc:
+        logger.warning(
+            "appointments_google_assign_rejected tenant_id=%s consultorio_id=%s patient_id=%s event_id=%s error=%s",
+            user.tenant_id,
+            consultorio.id,
+            paciente.id,
+            event_id,
+            str(exc),
+        )
+        add_flash(request, "error", str(exc))
+        return RedirectResponse(back_url, status_code=303)
     except Exception as exc:
         logger.exception(
             "appointments_google_assign_failed tenant_id=%s consultorio_id=%s patient_id=%s event_id=%s error=%s",

@@ -47,6 +47,7 @@ def default_google_calendar_config() -> dict[str, Any]:
         "available_tag": DEFAULT_AVAILABLE_TAG,
         "reserved_tag_template": DEFAULT_RESERVED_TAG_TEMPLATE,
         "timezone": DEFAULT_TIMEZONE,
+        "require_google_meet": True,
         "schedule": {
             key: {
                 "enabled": False,
@@ -92,6 +93,7 @@ def validate_google_calendar_config(data: dict[str, Any]) -> dict[str, Any]:
         or DEFAULT_RESERVED_TAG_TEMPLATE
     )
     config["timezone"] = str(config.get("timezone") or DEFAULT_TIMEZONE).strip() or DEFAULT_TIMEZONE
+    config["require_google_meet"] = _as_bool(config.get("require_google_meet"))
     _resolve_timezone(config["timezone"])
 
     schedule_input = data.get("schedule") if isinstance(data.get("schedule"), dict) else {}
@@ -132,6 +134,7 @@ def build_google_calendar_config_from_form(form) -> dict[str, Any]:
             "available_tag": form.get("gcal_available_tag") or DEFAULT_AVAILABLE_TAG,
             "reserved_tag_template": form.get("gcal_reserved_tag_template") or DEFAULT_RESERVED_TAG_TEMPLATE,
             "timezone": form.get("gcal_timezone") or DEFAULT_TIMEZONE,
+            "require_google_meet": form.get("gcal_require_google_meet") == "1",
             "schedule": schedule,
         }
     )

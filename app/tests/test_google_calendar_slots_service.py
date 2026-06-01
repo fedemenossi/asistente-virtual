@@ -117,6 +117,7 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
             "gcal_timezone": "America/Argentina/Buenos_Aires",
             "gcal_available_tag": "[TURNO DISPONIBLE]",
             "gcal_reserved_tag_template": "[TURNO {patient_full_name}]",
+            "gcal_require_google_meet": "1",
             "gcal_monday_enabled": "1",
             "gcal_monday_start": "09:00",
             "gcal_monday_end": "11:00",
@@ -140,6 +141,7 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
     assert consultorio.proveedor_turnos == "google"
     assert cfg["calendar_id"] == "cal-1"
     assert cfg["schedule"]["monday"]["buffer_minutes"] == 10
+    assert cfg["require_google_meet"] is True
 
     saved_page = client.get(f"/t/consultorios/{consultorio_id}/edit")
     assert "Consultorio actualizado" in saved_page.text
@@ -237,12 +239,25 @@ class _FakeEvents:
         return _FakeCall(event)
 
 
+class _FakeConferenceCalendars:
+    def __init__(self, supports_meet: bool = True):
+        self.supports_meet = supports_meet
+
+    def get(self, calendarId):
+        conference_types = ["hangoutsMeet"] if self.supports_meet else []
+        return _FakeCall({"id": calendarId, "conferenceProperties": {"allowedConferenceSolutionTypes": conference_types}})
+
+
 class _FakeService:
-    def __init__(self, store):
+    def __init__(self, store, *, supports_meet: bool = True):
         self.store = store
+        self.supports_meet = supports_meet
 
     def events(self):
         return _FakeEvents(self.store)
+
+    def calendars(self):
+        return _FakeConferenceCalendars(self.supports_meet)
 
 
 class _FakeCalendarList:
@@ -385,6 +400,96 @@ def test_google_provider_adds_meet_only_for_virtual_consultorio(db_session, monk
     monkeypatch.setattr(presential_provider, "_build_service", lambda: _FakeService(presential_event))
     asyncio.run(presential_provider.reserve_slot(tenant, presential, "evt-presential", paciente, {}))
     assert "conferenceData" not in presential_event[0]
+
+
+def test_google_provider_rejects_virtual_when_meet_required_and_calendar_does_not_support_it(db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Meet Required", "whatsapp:+9417"))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Meet Required",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {
+                    **_base_config(monday={"enabled": True}),
+                    "require_google_meet": True,
+                }
+            },
+        )
+    )
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+94171", nombre="Ana", apellido="Gomez"))
+
+    async def _load():
+        from app.models.consultorio import Consultorio
+        from app.models.paciente import Paciente
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            return (
+                await session.get(Tenant, tenant_id),
+                await session.get(Consultorio, consultorio_id),
+                await session.get(Paciente, paciente_id),
+            )
+
+    tenant, consultorio, paciente = asyncio.run(_load())
+    start = datetime(2026, 5, 4, 9, 0, tzinfo=timezone(timedelta(hours=-3)))
+    events = [_event("evt-no-meet", start, start + timedelta(minutes=30))]
+    provider = GoogleCalendarProvider("cal-no-meet", "{}")
+    monkeypatch.setattr(provider, "_build_service", lambda: _FakeService(events, supports_meet=False))
+
+    try:
+        asyncio.run(provider.reserve_slot(tenant, consultorio, "evt-no-meet", paciente, {}))
+    except RuntimeError as exc:
+        assert "no permite generar Google Meet" in str(exc)
+    else:
+        raise AssertionError("calendario sin Meet aceptado para virtual requerido")
+    assert events[0]["summary"] == "[TURNO DISPONIBLE]"
+
+
+def test_google_provider_can_reserve_virtual_without_meet_when_not_required(db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Meet Optional", "whatsapp:+9418"))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Meet Optional",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {
+                    **_base_config(monday={"enabled": True}),
+                    "require_google_meet": False,
+                }
+            },
+        )
+    )
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+94181", nombre="Ana", apellido="Gomez"))
+
+    async def _load():
+        from app.models.consultorio import Consultorio
+        from app.models.paciente import Paciente
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            return (
+                await session.get(Tenant, tenant_id),
+                await session.get(Consultorio, consultorio_id),
+                await session.get(Paciente, paciente_id),
+            )
+
+    tenant, consultorio, paciente = asyncio.run(_load())
+    start = datetime(2026, 5, 4, 9, 0, tzinfo=timezone(timedelta(hours=-3)))
+    events = [_event("evt-optional-meet", start, start + timedelta(minutes=30))]
+    provider = GoogleCalendarProvider("cal-optional-meet", "{}")
+    monkeypatch.setattr(provider, "_build_service", lambda: _FakeService(events, supports_meet=False))
+
+    reserve = asyncio.run(provider.reserve_slot(tenant, consultorio, "evt-optional-meet", paciente, {}))
+
+    assert reserve["event_id"] == "evt-optional-meet"
+    assert "conferenceData" not in events[0]
+    assert "Ana Gomez" in events[0]["summary"]
 
 
 def test_google_provider_registers_direct_calendar_when_calendar_list_is_empty(monkeypatch):
