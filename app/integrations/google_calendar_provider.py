@@ -362,8 +362,34 @@ class GoogleCalendarProvider(CalendarProvider):
         timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
 
         service = self._build_service()
-        event = service.events().get(calendarId=self._calendar_id, eventId=slot_id).execute()
+        try:
+            event = service.events().get(calendarId=self._calendar_id, eventId=slot_id).execute()
+        except HttpError as exc:
+            logger.exception(
+                "google_calendar_reserve_get_failed tenant_id=%s consultorio_id=%s calendar_id=%s event_id=%s status=%s reason=%s content=%s",
+                tenant.id,
+                consultorio.id,
+                _mask_calendar_id(self._calendar_id),
+                slot_id,
+                getattr(getattr(exc, "resp", None), "status", None),
+                getattr(getattr(exc, "resp", None), "reason", None),
+                _safe_http_error_content(exc),
+            )
+            raise
         if not self._is_slot_available(event, tags):
+            logger.warning(
+                "google_calendar_reserve_slot_unavailable tenant_id=%s consultorio_id=%s calendar_id=%s event_id=%s summary=%s slot_status=%s",
+                tenant.id,
+                consultorio.id,
+                _mask_calendar_id(self._calendar_id),
+                slot_id,
+                event.get("summary"),
+                str(
+                    (((event.get("extendedProperties") or {}).get("private") or {}).get("slot_status"))
+                    or (((event.get("extendedProperties") or {}).get("shared") or {}).get("slot_status"))
+                    or ""
+                ),
+            )
             raise RuntimeError("Slot no disponible")
 
         patient_full_name = f"{patient.nombre} {patient.apellido}".strip()
@@ -392,7 +418,8 @@ class GoogleCalendarProvider(CalendarProvider):
             },
         }
         consultorio_type = consultorio.tipo.value if hasattr(consultorio.tipo, "value") else str(consultorio.tipo)
-        if consultorio_type == "virtual":
+        should_create_meet = consultorio_type == "virtual"
+        if should_create_meet:
             body["conferenceData"] = {
                 "createRequest": {
                     "requestId": f"meet-{slot_id}",
@@ -400,17 +427,32 @@ class GoogleCalendarProvider(CalendarProvider):
                 }
             }
 
-        updated = (
-            service.events()
-            .patch(
-                calendarId=self._calendar_id,
-                eventId=slot_id,
-                body=body,
-                sendUpdates="all",
-                conferenceDataVersion=1,
+        try:
+            updated = (
+                service.events()
+                .patch(
+                    calendarId=self._calendar_id,
+                    eventId=slot_id,
+                    body=body,
+                    sendUpdates="all",
+                    conferenceDataVersion=1 if should_create_meet else 0,
+                )
+                .execute()
             )
-            .execute()
-        )
+        except HttpError as exc:
+            logger.exception(
+                "google_calendar_reserve_patch_failed tenant_id=%s consultorio_id=%s calendar_id=%s event_id=%s consultorio_type=%s create_meet=%s status=%s reason=%s content=%s",
+                tenant.id,
+                consultorio.id,
+                _mask_calendar_id(self._calendar_id),
+                slot_id,
+                consultorio_type,
+                should_create_meet,
+                getattr(getattr(exc, "resp", None), "status", None),
+                getattr(getattr(exc, "resp", None), "reason", None),
+                _safe_http_error_content(exc),
+            )
+            raise
         start_info = updated.get("start") or {}
         end_info = updated.get("end") or {}
         return {
@@ -517,6 +559,15 @@ def _safe_google_error(exc: Exception) -> str:
             pieces.append(str(detail))
         return " - ".join(pieces)
     return type(exc).__name__
+
+
+def _safe_http_error_content(exc: HttpError) -> str:
+    try:
+        content = exc.content.decode("utf-8") if isinstance(exc.content, bytes) else str(exc.content)
+    except Exception:
+        return ""
+    content = " ".join(content.split())
+    return content[:1000]
 
 
 def _mask_calendar_id(calendar_id: str | None) -> str:
