@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.core.security import hash_password
+from app.models.audit_log import AuditLog
 from app.models.consultorio import TipoConsultorio
 from app.models.turno import AppointmentStatus, EstadoTurno, TipoTurno, Turno
 from app.services.appointment_service import AppointmentService
@@ -254,7 +255,7 @@ def test_assign_google_live_event_creates_local_turno(client, db_session, monkey
         )
     )
     password_hash = hash_password("secret-123")
-    asyncio.run(create_user(db_session, "assign-google@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+    user_id = asyncio.run(create_user(db_session, "assign-google@test.com", password_hash, "TENANT_ADMIN", tenant_id))
 
     async def _fake_reserve(self, tenant, consultorio, slot_id, patient, metadata):
         assert tenant.id == tenant_id
@@ -303,6 +304,15 @@ def test_assign_google_live_event_creates_local_turno(client, db_session, monkey
                 )
             )
 
+    async def _load_audit_log():
+        async with db_session() as session:
+            return await session.scalar(
+                select(AuditLog).where(
+                    AuditLog.tenant_id == tenant_id,
+                    AuditLog.action == "assign_google_slot",
+                )
+            )
+
     turno = asyncio.run(_load_turno())
     assert turno is not None
     assert turno.consultorio_id == consultorio_id
@@ -312,6 +322,9 @@ def test_assign_google_live_event_creates_local_turno(client, db_session, monkey
     assert turno.external_calendar_provider == "google"
     assert turno.external_calendar_id == "calendar-assign"
     assert turno.referencia_externa == "https://meet.google.com/demo"
+    audit = asyncio.run(_load_audit_log())
+    assert audit is not None
+    assert audit.user_id == user_id
 
 
 def test_assign_google_live_event_rejects_other_tenant_patient(client, db_session, monkeypatch):

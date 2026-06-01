@@ -2672,37 +2672,72 @@ async def appointment_google_assign(
         add_flash(request, "error", "No se pudo reservar el evento en Google. Puede que el turno ya no este disponible.")
         return RedirectResponse(back_url, status_code=303)
 
+    logger.info(
+        "appointments_google_assign_reserved tenant_id=%s consultorio_id=%s patient_id=%s event_id=%s calendar_id=%s start_at=%s end_at=%s",
+        user.tenant_id,
+        consultorio.id,
+        paciente.id,
+        result.get("event_id") or event_id,
+        _mask_calendar_id(result.get("calendar_id")),
+        result.get("start_at"),
+        result.get("end_at"),
+    )
     tipo_turno = TipoTurno.VIRTUAL if consultorio.tipo == TipoConsultorio.VIRTUAL else TipoTurno.PRESENCIAL
     start_at = _parse_google_datetime(result.get("start_at"))
     end_at = _parse_google_datetime(result.get("end_at")) if result.get("end_at") else None
-    turno = await AppointmentService(session).create_local_turno(
-        tenant=tenant,
-        consultorio=consultorio,
-        paciente=paciente,
-        tipo=tipo_turno,
-        start_at=start_at,
-        end_at=end_at,
-        timezone_name=result.get("timezone") or get_google_calendar_config(consultorio).get("timezone"),
-        provider="google",
-        external_id=result.get("event_id") or event_id,
-        external_status="reserved",
-        status=AppointmentStatus.CONFIRMED,
-        estado=EstadoTurno.CONFIRMADO,
-        notes="Turno asignado desde evento disponible de Google Calendar.",
-    )
-    turno.external_calendar_id = result.get("calendar_id") or turno.external_calendar_id
-    if result.get("meet_link"):
-        turno.referencia_externa = result.get("meet_link")
-    await audit_log(
-        session,
-        request,
-        user.id,
-        action="assign_google_slot",
-        entity="turno",
-        entity_id=turno.id,
-        tenant_id=tenant.id,
-    )
-    await session.commit()
+    try:
+        turno = await AppointmentService(session).create_local_turno(
+            tenant=tenant,
+            consultorio=consultorio,
+            paciente=paciente,
+            tipo=tipo_turno,
+            start_at=start_at,
+            end_at=end_at,
+            timezone_name=result.get("timezone") or get_google_calendar_config(consultorio).get("timezone"),
+            provider="google",
+            external_id=result.get("event_id") or event_id,
+            external_status="reserved",
+            status=AppointmentStatus.CONFIRMED,
+            estado=EstadoTurno.CONFIRMADO,
+            notes="Turno asignado desde evento disponible de Google Calendar.",
+        )
+        turno.external_calendar_id = result.get("calendar_id") or turno.external_calendar_id
+        if result.get("meet_link"):
+            turno.referencia_externa = result.get("meet_link")
+        await session.flush()
+        await audit_log(
+            session,
+            request,
+            user,
+            action="assign_google_slot",
+            entity="turno",
+            entity_id=turno.id,
+            metadata={
+                "consultorio_id": consultorio.id,
+                "patient_id": paciente.id,
+                "provider": "google",
+                "external_event_id": result.get("event_id") or event_id,
+                "external_calendar_id": _mask_calendar_id(result.get("calendar_id")),
+            },
+            tenant_id=tenant.id,
+        )
+        await session.commit()
+    except Exception as exc:
+        logger.exception(
+            "appointments_google_assign_local_persist_failed tenant_id=%s consultorio_id=%s patient_id=%s event_id=%s error=%s",
+            user.tenant_id,
+            consultorio.id,
+            paciente.id,
+            result.get("event_id") or event_id,
+            type(exc).__name__,
+        )
+        await session.rollback()
+        add_flash(
+            request,
+            "error",
+            "Google reservo el evento, pero no se pudo grabar el turno local. Revisar logs y agenda.",
+        )
+        return RedirectResponse(back_url, status_code=303)
     logger.info(
         "appointments_google_assign_success tenant_id=%s consultorio_id=%s patient_id=%s turno_id=%s event_id=%s",
         user.tenant_id,

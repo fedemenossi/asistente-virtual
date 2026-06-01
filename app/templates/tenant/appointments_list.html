@@ -175,6 +175,7 @@
             <th class="px-4 py-3 text-left font-medium">Proveedor</th>
             <th class="px-4 py-3 text-left font-medium">Consultorio</th>
             <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-left font-medium">Externo</th>
             <th class="px-4 py-3 text-right font-medium">Acciones</th>
           </tr>
         </thead>
@@ -215,6 +216,15 @@
                   {{ badge("Cancelado", "warning") }}
                 {% else %}
                   {{ badge("Borrador", "neutral") }}
+                {% endif %}
+              </td>
+              <td class="px-4 py-3">
+                {% if turno.external_status == 'reserved' %}
+                  {{ badge("Reservado", "info") }}
+                {% elif turno.external_status %}
+                  {{ badge(turno.external_status, "neutral") }}
+                {% else %}
+                  <span class="text-xs text-slate-400">-</span>
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">
