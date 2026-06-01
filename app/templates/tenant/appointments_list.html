@@ -126,25 +126,14 @@
                 </td>
                 <td class="px-4 py-3 text-right">
                   {% if event.status == 'available' %}
-                    {% if pacientes %}
-                      <form class="flex min-w-[300px] justify-end gap-2" method="post" action="/t/appointments/google/assign">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                        <input type="hidden" name="consultorio_id" value="{{ selected_consultorio.id }}" />
-                        <input type="hidden" name="event_id" value="{{ event.event_id }}" />
-                        <input type="hidden" name="date" value="{{ date or '' }}" />
-                        <input type="hidden" name="date_from" value="{{ date_from or date or '' }}" />
-                        <input type="hidden" name="date_to" value="{{ date_to or date or '' }}" />
-                        <select class="select h-9 max-w-44 py-1 text-sm" name="patient_id" required>
-                          <option value="">Paciente</option>
-                          {% for paciente in pacientes %}
-                            <option value="{{ paciente.id }}">{{ paciente.apellido }}, {{ paciente.nombre }}{% if paciente.dni %} - {{ paciente.dni }}{% endif %}</option>
-                          {% endfor %}
-                        </select>
-                        <button class="btn btn-primary h-9 px-3 text-sm" type="submit">Asignar</button>
-                      </form>
-                    {% else %}
-                      <a class="btn btn-secondary h-9 px-3 text-sm" href="/t/pacientes/new">Crear paciente</a>
-                    {% endif %}
+                    <button
+                      class="btn btn-primary h-9 px-3 text-sm"
+                      type="button"
+                      data-assign-open
+                      data-event-id="{{ event.event_id }}"
+                      data-event-label="{{ event.start_at|format_ba('%H:%M') }} - {{ event.end_at|format_ba('%H:%M') }}"
+                      data-event-summary="{{ event.summary or 'Turno disponible' }}"
+                    >Asignar</button>
                   {% else %}
                     <span class="text-xs text-slate-400">-</span>
                   {% endif %}
@@ -158,6 +147,135 @@
       <p class="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Google Calendar no devolvio eventos para la fecha seleccionada.</p>
     {% endif %}
   </div>
+
+  <div class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/40 px-4" data-assign-modal>
+    <div class="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h3 class="text-lg font-semibold text-slate-900">Asignar turno</h3>
+          <p class="mt-1 text-sm text-slate-600" data-assign-slot-label>Selecciona un paciente para este slot.</p>
+        </div>
+        <button class="rounded-lg border border-slate-200 px-3 py-1 text-sm text-slate-600 hover:bg-slate-50" type="button" data-assign-close>cerrar</button>
+      </div>
+
+      <div class="mt-4">
+        <label class="space-y-1">
+          <span class="text-xs font-medium text-slate-500">Buscar paciente</span>
+          <input class="input" type="search" placeholder="Nombre, apellido o DNI" autocomplete="off" data-patient-search-input />
+        </label>
+        <div class="mt-3 max-h-64 overflow-y-auto rounded-xl border border-slate-200" data-patient-results>
+          <p class="px-4 py-3 text-sm text-slate-500">Escribi para buscar pacientes.</p>
+        </div>
+      </div>
+
+      <form class="mt-4 flex items-center justify-between gap-3" method="post" action="/t/appointments/google/assign" data-assign-form>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <input type="hidden" name="consultorio_id" value="{{ selected_consultorio.id if selected_consultorio else '' }}" />
+        <input type="hidden" name="event_id" value="" data-assign-event-id />
+        <input type="hidden" name="patient_id" value="" data-assign-patient-id />
+        <input type="hidden" name="date" value="{{ date or '' }}" />
+        <input type="hidden" name="date_from" value="{{ date_from or date or '' }}" />
+        <input type="hidden" name="date_to" value="{{ date_to or date or '' }}" />
+        <a class="text-sm font-medium text-slate-600 hover:text-slate-900" href="/t/pacientes/new">Crear paciente</a>
+        <button class="btn btn-primary" type="submit" data-assign-submit disabled>Asignar turno</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (() => {
+      const modal = document.querySelector("[data-assign-modal]");
+      if (!modal) return;
+      const input = modal.querySelector("[data-patient-search-input]");
+      const results = modal.querySelector("[data-patient-results]");
+      const slotLabel = modal.querySelector("[data-assign-slot-label]");
+      const eventInput = modal.querySelector("[data-assign-event-id]");
+      const patientInput = modal.querySelector("[data-assign-patient-id]");
+      const submit = modal.querySelector("[data-assign-submit]");
+      let searchTimer = null;
+
+      function escapeHtml(value) {
+        return String(value || "").replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#039;",
+        })[char]);
+      }
+
+      function openModal(button) {
+        eventInput.value = button.dataset.eventId || "";
+        patientInput.value = "";
+        submit.disabled = true;
+        slotLabel.textContent = `${button.dataset.eventLabel || "Slot"} - ${button.dataset.eventSummary || "Turno disponible"}`;
+        input.value = "";
+        results.innerHTML = '<p class="px-4 py-3 text-sm text-slate-500">Escribi para buscar pacientes.</p>';
+        modal.classList.remove("hidden");
+        modal.classList.add("flex");
+        setTimeout(() => input.focus(), 50);
+      }
+
+      function closeModal() {
+        modal.classList.add("hidden");
+        modal.classList.remove("flex");
+      }
+
+      function renderPatients(items) {
+        if (!items.length) {
+          results.innerHTML = '<p class="px-4 py-3 text-sm text-slate-500">No se encontraron pacientes.</p>';
+          return;
+        }
+        results.innerHTML = items.map((item) => `
+          <button class="block w-full border-b border-slate-100 px-4 py-3 text-left last:border-b-0 hover:bg-slate-50" type="button" data-patient-pick data-patient-id="${item.id}">
+            <span class="block text-sm font-medium text-slate-900">${escapeHtml(item.label)}</span>
+            <span class="block text-xs text-slate-500">DNI ${escapeHtml(item.dni || "-")} · ${escapeHtml(item.telefono || "-")}</span>
+          </button>
+        `).join("");
+        results.querySelectorAll("[data-patient-pick]").forEach((button, index) => {
+          button.addEventListener("click", () => {
+            const patient = items[index];
+            patientInput.value = patient.id;
+            submit.disabled = false;
+            results.querySelectorAll("[data-patient-pick]").forEach((item) => item.classList.remove("bg-emerald-50"));
+            button.classList.add("bg-emerald-50");
+          });
+        });
+      }
+
+      async function searchPatients() {
+        const q = input.value.trim();
+        patientInput.value = "";
+        submit.disabled = true;
+        if (!q) {
+          results.innerHTML = '<p class="px-4 py-3 text-sm text-slate-500">Escribi para buscar pacientes.</p>';
+          return;
+        }
+        results.innerHTML = '<p class="px-4 py-3 text-sm text-slate-500">Buscando...</p>';
+        const response = await fetch(`/t/appointments/patients/search?q=${encodeURIComponent(q)}`, {
+          headers: { "Accept": "application/json" },
+        });
+        if (!response.ok) {
+          results.innerHTML = '<p class="px-4 py-3 text-sm text-rose-600">No se pudo buscar pacientes.</p>';
+          return;
+        }
+        const data = await response.json();
+        renderPatients(data.items || []);
+      }
+
+      document.querySelectorAll("[data-assign-open]").forEach((button) => {
+        button.addEventListener("click", () => openModal(button));
+      });
+      modal.querySelector("[data-assign-close]").addEventListener("click", closeModal);
+      modal.addEventListener("click", (event) => {
+        if (event.target === modal) closeModal();
+      });
+      input.addEventListener("input", () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(searchPatients, 250);
+      });
+    })();
+  </script>
 
   <div class="mb-3">
     <h2 class="text-lg font-semibold text-slate-900">Turnos asignados</h2>

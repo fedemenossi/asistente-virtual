@@ -2504,17 +2504,6 @@ async def appointments_list(
         .scalars()
         .all()
     )
-    pacientes = list(
-        (
-            await session.execute(
-                select(Paciente)
-                .where(Paciente.tenant_id == user.tenant_id, Paciente.deleted_at.is_(None))
-                .order_by(Paciente.apellido.asc(), Paciente.nombre.asc())
-            )
-        )
-        .scalars()
-        .all()
-    )
     daily_summary = {
         "count": len(rows),
         "virtuales": sum(1 for turno, _, _ in rows if _turno_type_label(turno) == "Virtual"),
@@ -2580,8 +2569,45 @@ async def appointments_list(
             "selected_consultorio": selected_consultorio,
             "google_events": google_events,
             "google_events_error": google_events_error,
-            "pacientes": pacientes,
         },
+    )
+
+
+async def appointment_patient_search(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("appointment:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> JSONResponse:
+    q = request.query_params.get("q", "").strip()
+    stmt = select(Paciente).where(
+        Paciente.tenant_id == user.tenant_id,
+        Paciente.deleted_at.is_(None),
+    )
+    if q:
+        like_q = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                Paciente.nombre.ilike(like_q),
+                Paciente.apellido.ilike(like_q),
+                Paciente.dni.ilike(like_q),
+                Paciente.telefono.ilike(like_q),
+            )
+        )
+    result = await session.execute(stmt.order_by(Paciente.apellido.asc(), Paciente.nombre.asc()).limit(12))
+    pacientes = result.scalars().all()
+    return JSONResponse(
+        {
+            "items": [
+                {
+                    "id": paciente.id,
+                    "label": f"{paciente.apellido}, {paciente.nombre}".strip(", "),
+                    "dni": paciente.dni,
+                    "telefono": paciente.telefono,
+                    "email": paciente.email,
+                }
+                for paciente in pacientes
+            ]
+        }
     )
 
 

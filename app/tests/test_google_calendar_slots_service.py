@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from app.core.security import hash_password
 from app.integrations.google_calendar_provider import GoogleCalendarProvider
+from app.models.consultorio import TipoConsultorio
 from app.models.user import UserRole
 from app.services.calendar_service import CalendarService
 from app.services.google_calendar_slots_service import (
@@ -331,6 +332,59 @@ def test_google_provider_deduplicates_and_reserves_slot(db_session, monkeypatch)
         pass
     else:
         raise AssertionError("slot reservado aceptado de nuevo")
+
+
+def test_google_provider_adds_meet_only_for_virtual_consultorio(db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Meet", "whatsapp:+9406"))
+    virtual_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Meet",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": _base_config(monday={"enabled": True})},
+        )
+    )
+    presential_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Presencial Meet",
+            tipo=TipoConsultorio.PRESENCIAL,
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": _base_config(monday={"enabled": True})},
+        )
+    )
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, "whatsapp:+94061", nombre="Ana", apellido="Gomez"))
+
+    async def _load():
+        from app.models.consultorio import Consultorio
+        from app.models.paciente import Paciente
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            return (
+                await session.get(Tenant, tenant_id),
+                await session.get(Consultorio, virtual_id),
+                await session.get(Consultorio, presential_id),
+                await session.get(Paciente, paciente_id),
+            )
+
+    tenant, virtual, presential, paciente = asyncio.run(_load())
+    start = datetime(2026, 5, 4, 9, 0, tzinfo=timezone(timedelta(hours=-3)))
+    virtual_event = [_event("evt-virtual", start, start + timedelta(minutes=30))]
+    presential_event = [_event("evt-presential", start, start + timedelta(minutes=30))]
+
+    virtual_provider = GoogleCalendarProvider("cal-virtual", "{}")
+    monkeypatch.setattr(virtual_provider, "_build_service", lambda: _FakeService(virtual_event))
+    asyncio.run(virtual_provider.reserve_slot(tenant, virtual, "evt-virtual", paciente, {}))
+    assert "conferenceData" in virtual_event[0]
+
+    presential_provider = GoogleCalendarProvider("cal-presential", "{}")
+    monkeypatch.setattr(presential_provider, "_build_service", lambda: _FakeService(presential_event))
+    asyncio.run(presential_provider.reserve_slot(tenant, presential, "evt-presential", paciente, {}))
+    assert "conferenceData" not in presential_event[0]
 
 
 def test_google_provider_registers_direct_calendar_when_calendar_list_is_empty(monkeypatch):

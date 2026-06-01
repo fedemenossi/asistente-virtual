@@ -152,6 +152,12 @@ router.add_api_route(
     dependencies=[Depends(require_feature("appointments"))],
 )
 router.add_api_route(
+    "/appointments/patients/search",
+    views.appointment_patient_search,
+    methods=["GET"],
+    dependencies=[Depends(require_feature("appointments"))],
+)
+router.add_api_route(
     "/appointments/{turno_id}",
     views.appointment_detail,
     methods=["GET"],

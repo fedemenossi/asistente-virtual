@@ -162,6 +162,42 @@ def test_agenda_searches_assigned_turnos_by_patient_dni(client, db_session):
     assert "NoBuscado" not in response.text
 
 
+def test_appointment_patient_search_filters_by_tenant_and_dni(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient Search", "whatsapp:+743"))
+    other_tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient Search Other", "whatsapp:+744"))
+    asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "whatsapp:+7431",
+            nombre="Maria",
+            apellido="Lopez",
+            dni="28077008",
+        )
+    )
+    asyncio.run(
+        create_paciente(
+            db_session,
+            other_tenant_id,
+            "whatsapp:+7441",
+            nombre="Otro",
+            apellido="Paciente",
+            dni="28077008",
+        )
+    )
+    password_hash = hash_password("secret-123")
+    asyncio.run(create_user(db_session, "patient-search@test.com", password_hash, "TENANT_ADMIN", tenant_id))
+
+    login(client, "patient-search@test.com", "secret-123")
+    response = client.get("/t/appointments/patients/search?q=28077008")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["label"] == "Lopez, Maria"
+    assert payload["items"][0]["dni"] == "28077008"
+
+
 def test_appointments_list_shows_live_google_calendar_events(client, db_session, monkeypatch):
     tenant_id = asyncio.run(
         create_tenant(
@@ -218,6 +254,8 @@ def test_appointments_list_shows_live_google_calendar_events(client, db_session,
     assert "Agenda Google en vivo" in response.text
     assert "[TURNO DISPONIBLE]" in response.text
     assert "Disponible" in response.text
+    assert "data-assign-open" in response.text
+    assert "data-assign-modal" in response.text
 
 
 def test_assign_google_live_event_creates_local_turno(client, db_session, monkeypatch):

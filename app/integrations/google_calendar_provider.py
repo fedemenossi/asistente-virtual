@@ -360,7 +360,6 @@ class GoogleCalendarProvider(CalendarProvider):
         consultorio_settings = get_google_calendar_config(consultorio)
         tags = settings.get("calendar_tags") or []
         timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
-        virtual_meet_enabled = bool(settings.get("virtual_meet_enabled"))
 
         service = self._build_service()
         event = service.events().get(calendarId=self._calendar_id, eventId=slot_id).execute()
@@ -392,7 +391,8 @@ class GoogleCalendarProvider(CalendarProvider):
                 }
             },
         }
-        if consultorio.tipo.value == "virtual" and virtual_meet_enabled:
+        consultorio_type = consultorio.tipo.value if hasattr(consultorio.tipo, "value") else str(consultorio.tipo)
+        if consultorio_type == "virtual":
             body["conferenceData"] = {
                 "createRequest": {
                     "requestId": f"meet-{slot_id}",
