@@ -510,6 +510,45 @@ def _split_full_name(full_name: str) -> tuple[str, str]:
     return parts[0], " ".join(parts[1:])
 
 
+def _candidate_to_patient_payload(candidate: dict[str, Any]) -> dict[str, Any]:
+    document = candidate.get("document") if isinstance(candidate.get("document"), dict) else {}
+    raw_name = str(candidate.get("name") or candidate.get("fullName") or "").strip()
+    apellido = str(candidate.get("lastName") or candidate.get("last_name") or "").strip()
+    nombres = str(candidate.get("firstName") or candidate.get("first_name") or "").strip()
+    if raw_name and (not apellido or not nombres):
+        split_apellido, split_nombres = _split_full_name(raw_name)
+        apellido = apellido or split_apellido
+        nombres = nombres or split_nombres
+    return {
+        "Apellido": apellido,
+        "Nombres": nombres,
+        "Tipo de documento": str(
+            document.get("type")
+            or document.get("typeName")
+            or candidate.get("documentType")
+            or candidate.get("document_type")
+            or ""
+        ).strip(),
+        "Numero de documento": str(
+            document.get("number")
+            or candidate.get("documentNumber")
+            or candidate.get("document_number")
+            or candidate.get("dni")
+            or ""
+        ).strip(),
+        "Email": str(candidate.get("email") or candidate.get("mail") or "").strip(),
+        "Celular / Otro": str(
+            candidate.get("cellPhone")
+            or candidate.get("phone")
+            or candidate.get("mobile")
+            or candidate.get("telephone")
+            or ""
+        ).strip(),
+        "external_patient_id": str(candidate.get("id") or candidate.get("patientId") or "").strip(),
+        "_raw_fields": candidate,
+    }
+
+
 def _admin_fields_to_patient_payload(fields: dict[str, Any], source_url: str) -> dict[str, Any]:
     apellido = _first_field(fields, "Apellido")
     nombres = _first_field(fields, "Nombres", "Nombre")
@@ -542,6 +581,24 @@ def _admin_fields_to_patient_payload(fields: dict[str, Any], source_url: str) ->
         "_source_url": source_url,
         "_raw_fields": fields,
     }
+    return payload
+
+
+def fetch_patient_by_document(session: requests.Session, document_number: str | None) -> dict[str, Any] | None:
+    doc = _sanitize_digits(document_number or "")
+    if not doc:
+        return None
+    candidate = find_patient_by_document(session, doc)
+    if candidate is None:
+        logger.info("consultorio_movil_patient_search_no_match document_last4=%s", doc[-4:])
+        return None
+    payload = _candidate_to_patient_payload(candidate)
+    logger.info(
+        "consultorio_movil_patient_search_match document_last4=%s external_patient_id=%s",
+        doc[-4:],
+        payload.get("external_patient_id") or "",
+        extra={"document_last4": doc[-4:], "external_patient_id": payload.get("external_patient_id") or ""},
+    )
     return payload
 
 

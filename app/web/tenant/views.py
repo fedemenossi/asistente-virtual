@@ -48,6 +48,7 @@ from app.integrations.consultorio_movil import (
     CabildoConfigError,
     fetch_attended_consultations,
     fetch_all_patients,
+    fetch_patient_by_document,
     list_next_presential_slots,
     login as consultorio_movil_login,
 )
@@ -1456,6 +1457,71 @@ async def _fetch_consultorio_movil_patient_payloads(
     return payloads, None
 
 
+async def _fetch_consultorio_movil_patient_payload_by_document(
+    request: Request,
+    user: CurrentUser,
+    session: AsyncSession,
+    document_number: str | None,
+) -> tuple[dict | None, RedirectResponse | None]:
+    consultorio = await session.scalar(
+        select(Consultorio)
+        .where(
+            Consultorio.tenant_id == user.tenant_id,
+            Consultorio.deleted_at.is_(None),
+            Consultorio.proveedor_turnos == "consultorio_movil",
+        )
+        .order_by(Consultorio.id.asc())
+    )
+    if consultorio is None:
+        add_flash(request, "error", "No hay consultorios configurados con Consultorio Movil.")
+        return None, RedirectResponse("/t/pacientes", status_code=303)
+    cfg = _consultorio_movil_config(consultorio)
+    if not (cfg.get("user") and cfg.get("password")):
+        add_flash(request, "error", "Configuracion de Consultorio Movil incompleta.")
+        return None, RedirectResponse("/t/pacientes", status_code=303)
+
+    try:
+        external_session = consultorio_movil_login(str(cfg["user"]), str(cfg["password"]))
+        payload = fetch_patient_by_document(external_session, document_number)
+    except requests.RequestException as exc:
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        url = str(getattr(response, "url", ""))
+        logger.warning(
+            "consultorio_movil_patient_search_failed tenant_id=%s consultorio_id=%s document=%s error_type=%s status_code=%s url=%s",
+            user.tenant_id,
+            consultorio.id,
+            normalize_document(document_number or ""),
+            type(exc).__name__,
+            status_code,
+            url,
+            extra={
+                "tenant_id": user.tenant_id,
+                "consultorio_id": consultorio.id,
+                "error_type": type(exc).__name__,
+                "status_code": status_code,
+                "url": url,
+            },
+            exc_info=True,
+        )
+        detail = f" HTTP {status_code}" if status_code else ""
+        add_flash(request, "error", f"No se pudo buscar el paciente en Consultorio Movil.{detail}")
+        return None, RedirectResponse(f"/t/pacientes", status_code=303)
+    except RuntimeError as exc:
+        logger.warning(
+            "consultorio_movil_patient_search_login_failed tenant_id=%s consultorio_id=%s error_type=%s message=%s",
+            user.tenant_id,
+            consultorio.id,
+            type(exc).__name__,
+            str(exc),
+            extra={"tenant_id": user.tenant_id, "consultorio_id": consultorio.id, "error_type": type(exc).__name__},
+            exc_info=True,
+        )
+        add_flash(request, "error", str(exc) or "No se pudo iniciar sesion en Consultorio Movil.")
+        return None, RedirectResponse(f"/t/pacientes", status_code=303)
+    return payload, None
+
+
 def _patient_payload_matches(paciente: Paciente, payload: dict) -> bool:
     if paciente.external_patient_id and str(payload.get("external_patient_id") or "") == paciente.external_patient_id:
         return True
@@ -1570,6 +1636,43 @@ async def pacientes_sync_one_consultorio_movil(
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
     paciente = await get_tenant_entity_or_404(session, Paciente, paciente_id, user.tenant_id)
+    document_number = paciente.numero_documento or paciente.dni
+    payload, redirect = await _fetch_consultorio_movil_patient_payload_by_document(
+        request,
+        user,
+        session,
+        document_number,
+    )
+    if redirect is not None:
+        return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
+    if payload is not None and not _patient_payload_matches(paciente, payload):
+        logger.warning(
+            "consultorio_movil_patient_search_payload_no_match tenant_id=%s paciente_id=%s document=%s",
+            user.tenant_id,
+            paciente_id,
+            normalize_document(document_number or ""),
+            extra={"tenant_id": user.tenant_id, "paciente_id": paciente_id},
+        )
+        payload = None
+    if payload is not None:
+        async with session.begin_nested():
+            updated = await PatientSyncService(session).update_existing_from_payload(paciente, payload)
+            if updated:
+                await audit_log(
+                    session,
+                    request,
+                    user,
+                    action="sync_one_consultorio_movil",
+                    entity="paciente",
+                    entity_id=paciente.id,
+                    tenant_id=int(user.tenant_id),
+                )
+        if updated:
+            add_flash(request, "success", "Paciente actualizado desde Consultorio Movil.")
+        else:
+            add_flash(request, "warning", "No se pudo actualizar: el paciente externo no tiene documento.")
+        return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
+
     payloads, redirect = await _fetch_consultorio_movil_patient_payloads(request, user, session)
     if redirect is not None:
         return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)

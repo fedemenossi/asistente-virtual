@@ -409,31 +409,35 @@ def test_patient_detail_sync_from_consultorio_movil_updates_existing_patient(cli
         )
     )
 
-    calls = {"login": 0, "fetch": 0}
+    calls = {"login": 0, "search": 0, "fetch": 0}
 
     def fake_login(username, password):
         calls["login"] += 1
         assert (username, password) == ("cm-user", "cm-pass")
         return object()
 
+    def fake_fetch_patient_by_document(session, document_number):
+        calls["search"] += 1
+        assert document_number == "42249215"
+        return {
+            "Apellido": "Misitti",
+            "Nombres": "Candela",
+            "Fecha de nacimiento": "09-11-1999",
+            "Tipo de documento": "DNI",
+            "Numero de documento": "42249215",
+            "Financiador / Seguro": "SWISS MEDICAL S.A.",
+            "Nro. Afiliado": "800006",
+            "Email": "candela@example.com",
+            "Celular / Otro": "011 1159658188",
+            "external_patient_id": "cm-42249215",
+        }
+
     def fake_fetch_all_patients(session):
         calls["fetch"] += 1
-        return [
-            {
-                "Apellido": "Misitti",
-                "Nombres": "Candela",
-                "Fecha de nacimiento": "09-11-1999",
-                "Tipo de documento": "DNI",
-                "Numero de documento": "42249215",
-                "Financiador / Seguro": "SWISS MEDICAL S.A.",
-                "Nro. Afiliado": "800006",
-                "Email": "candela@example.com",
-                "Celular / Otro": "011 1159658188",
-                "external_patient_id": "cm-42249215",
-            }
-        ]
+        return []
 
     monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", fake_login)
+    monkeypatch.setattr("app.web.tenant.views.fetch_patient_by_document", fake_fetch_patient_by_document)
     monkeypatch.setattr("app.web.tenant.views.fetch_all_patients", fake_fetch_all_patients)
 
     login(client, "tenant-one-sync@test.com", "secret-123")
@@ -447,7 +451,7 @@ def test_patient_detail_sync_from_consultorio_movil_updates_existing_patient(cli
     )
 
     assert response.status_code == 200
-    assert calls == {"login": 1, "fetch": 1}
+    assert calls == {"login": 1, "search": 1, "fetch": 0}
 
     async def _fetch():
         async with db_session() as session:
@@ -497,6 +501,16 @@ def test_patient_detail_sync_matches_by_document_when_external_type_is_missing(c
     )
 
     monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", lambda username, password: object())
+    monkeypatch.setattr(
+        "app.web.tenant.views.fetch_patient_by_document",
+        lambda session, document_number: {
+            "Apellido": "Misitti",
+            "Nombres": "Candela",
+            "Numero de documento": "42249215",
+            "Email": "candela@example.com",
+            "Celular / Otro": "011 1159658188",
+        },
+    )
     monkeypatch.setattr(
         "app.web.tenant.views.fetch_all_patients",
         lambda session: [
