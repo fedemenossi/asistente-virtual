@@ -12,11 +12,18 @@
       <h1 class="text-2xl font-semibold text-slate-900">Pacientes</h1>
     </div>
     <div class="flex flex-wrap gap-2">
+      <a class="btn btn-primary" href="/t/pacientes/new">Nuevo paciente</a>
+      <form method="post" action="/t/pacientes/import-csv" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <label class="btn btn-secondary cursor-pointer">
+          Cargar con CSV
+          <input class="hidden" type="file" name="csv_file" accept=".csv,text/csv" onchange="this.form.submit()" />
+        </label>
+      </form>
       <form method="post" action="/t/pacientes/sync-consultorio-movil">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <button class="btn btn-secondary" type="submit">Sincronizar Consultorio Movil</button>
+        <button class="btn btn-secondary" type="submit">Sincronizar desde Consultorio Movil</button>
       </form>
-      <a class="btn btn-primary" href="/t/pacientes/new">Nuevo paciente</a>
     </div>
   </div>
 

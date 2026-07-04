@@ -11,7 +11,7 @@ import re
 from urllib.parse import urlencode
 
 import requests
-from fastapi import Depends, Form, HTTPException, Request
+from fastapi import Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,6 +66,8 @@ from app.services.patient_sync_service import (
     PatientSyncService,
     normalize_document,
     normalize_document_type,
+    parse_consultorio_movil_patients_csv_text,
+    patient_sync_row_from_payload,
 )
 from app.services.calendar_service import CalendarService
 from app.services.google_calendar_slots_service import (
@@ -1391,13 +1393,11 @@ async def pacientes_edit_post(
     return RedirectResponse("/t/pacientes", status_code=303)
 
 
-async def pacientes_sync_consultorio_movil(
+async def _fetch_consultorio_movil_patient_payloads(
     request: Request,
-    csrf_token: str = Form(""),
-    user: CurrentUser = Depends(require_permission("patient:write")),
-    session: AsyncSession = Depends(get_async_session),
-) -> RedirectResponse:
-    validate_csrf(request, csrf_token)
+    user: CurrentUser,
+    session: AsyncSession,
+) -> tuple[list[dict], RedirectResponse | None]:
     consultorio = await session.scalar(
         select(Consultorio)
         .where(
@@ -1409,11 +1409,11 @@ async def pacientes_sync_consultorio_movil(
     )
     if consultorio is None:
         add_flash(request, "error", "No hay consultorios configurados con Consultorio Movil.")
-        return RedirectResponse("/t/pacientes", status_code=303)
+        return [], RedirectResponse("/t/pacientes", status_code=303)
     cfg = _consultorio_movil_config(consultorio)
     if not (cfg.get("user") and cfg.get("password")):
         add_flash(request, "error", "Configuracion de Consultorio Movil incompleta.")
-        return RedirectResponse("/t/pacientes", status_code=303)
+        return [], RedirectResponse("/t/pacientes", status_code=303)
 
     try:
         external_session = consultorio_movil_login(str(cfg["user"]), str(cfg["password"]))
@@ -1432,7 +1432,7 @@ async def pacientes_sync_consultorio_movil(
             exc_info=True,
         )
         add_flash(request, "error", "No se pudo leer pacientes desde Consultorio Movil.")
-        return RedirectResponse("/t/pacientes", status_code=303)
+        return [], RedirectResponse("/t/pacientes", status_code=303)
     except RuntimeError as exc:
         logger.warning(
             "consultorio_movil_patient_sync_login_failed",
@@ -1440,7 +1440,76 @@ async def pacientes_sync_consultorio_movil(
             exc_info=True,
         )
         add_flash(request, "error", str(exc) or "No se pudo iniciar sesion en Consultorio Movil.")
+        return [], RedirectResponse("/t/pacientes", status_code=303)
+    return payloads, None
+
+
+def _patient_payload_matches(paciente: Paciente, payload: dict) -> bool:
+    if paciente.external_patient_id and str(payload.get("external_patient_id") or "") == paciente.external_patient_id:
+        return True
+    row = patient_sync_row_from_payload(payload)
+    if not row.document_number_normalized:
+        return False
+    patient_type = normalize_document_type(paciente.tipo_documento or "DNI")
+    patient_doc = normalize_document(paciente.numero_documento or paciente.dni)
+    return row.tipo_documento == patient_type and row.document_number_normalized == patient_doc
+
+
+async def pacientes_import_csv(
+    request: Request,
+    csrf_token: str = Form(""),
+    csv_file: UploadFile = File(...),
+    user: CurrentUser = Depends(require_permission("patient:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    content = await csv_file.read()
+    try:
+        text = content.decode("utf-8-sig")
+        rows = parse_consultorio_movil_patients_csv_text(text)
+    except Exception as exc:
+        logger.warning("patient_csv_upload_parse_failed", extra={"tenant_id": user.tenant_id, "filename": csv_file.filename}, exc_info=True)
+        add_flash(request, "error", f"No se pudo leer el CSV: {exc}")
         return RedirectResponse("/t/pacientes", status_code=303)
+    async with session.begin_nested():
+        result = await PatientSyncService(session).sync_rows(
+            int(user.tenant_id),
+            rows,
+            sync_source="csv",
+            log_source=csv_file.filename or "uploaded_csv",
+        )
+        await audit_log(
+            session,
+            request,
+            user,
+            action="sync_consultorio_movil_csv_upload",
+            entity="paciente",
+            entity_id=int(user.tenant_id),
+            tenant_id=int(user.tenant_id),
+            metadata=result.__dict__,
+        )
+    add_flash(
+        request,
+        "success" if result.errors == 0 else "warning",
+        (
+            f"CSV procesado. Creados: {result.created}. "
+            f"Existentes omitidos: {result.existing}. "
+            f"Sin documento: {result.missing_document}. Errores: {result.errors}."
+        ),
+    )
+    return RedirectResponse("/t/pacientes", status_code=303)
+
+
+async def pacientes_sync_consultorio_movil(
+    request: Request,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("patient:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    payloads, redirect = await _fetch_consultorio_movil_patient_payloads(request, user, session)
+    if redirect is not None:
+        return redirect
 
     async with session.begin_nested():
         result = await PatientSyncService(session).sync_from_payloads(int(user.tenant_id), payloads)
@@ -1464,6 +1533,41 @@ async def pacientes_sync_consultorio_movil(
         ),
     )
     return RedirectResponse("/t/pacientes", status_code=303)
+
+
+async def pacientes_sync_one_consultorio_movil(
+    request: Request,
+    paciente_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("patient:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    paciente = await get_tenant_entity_or_404(session, Paciente, paciente_id, user.tenant_id)
+    payloads, redirect = await _fetch_consultorio_movil_patient_payloads(request, user, session)
+    if redirect is not None:
+        return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
+    payload = next((item for item in payloads if _patient_payload_matches(paciente, item)), None)
+    if payload is None:
+        add_flash(request, "warning", "No se encontro este paciente en Consultorio Movil por documento.")
+        return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
+    async with session.begin_nested():
+        updated = await PatientSyncService(session).update_existing_from_payload(paciente, payload)
+        if updated:
+            await audit_log(
+                session,
+                request,
+                user,
+                action="sync_one_consultorio_movil",
+                entity="paciente",
+                entity_id=paciente.id,
+                tenant_id=int(user.tenant_id),
+            )
+    if updated:
+        add_flash(request, "success", "Paciente actualizado desde Consultorio Movil.")
+    else:
+        add_flash(request, "warning", "No se pudo actualizar: el paciente externo no tiene documento.")
+    return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
 
 
 async def pacientes_delete(

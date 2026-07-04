@@ -73,7 +73,18 @@ def _clean(value: Any) -> str:
 def _normalize_key(value: Any) -> str:
     text = str(value or "").strip().lower()
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
-    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+    key = re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+    replacements = {
+        "n_mero": "numero",
+        "tel_fono": "telefono",
+        "g_nero": "genero",
+        "direcci_n": "direccion",
+        "c_digo": "codigo",
+        "pa_s": "pais",
+    }
+    for broken, fixed in replacements.items():
+        key = key.replace(broken, fixed)
+    return key
 
 
 def _raw_value(raw: dict[str, Any], *names: str) -> Any:
@@ -128,6 +139,10 @@ def patient_sync_row_from_payload(raw: dict[str, Any]) -> PatientSyncRow:
 def parse_consultorio_movil_patients_csv(path: str | Path) -> list[PatientSyncRow]:
     csv_path = Path(path)
     text = csv_path.read_text(encoding="utf-8-sig")
+    return parse_consultorio_movil_patients_csv_text(text)
+
+
+def parse_consultorio_movil_patients_csv_text(text: str) -> list[PatientSyncRow]:
     reader = csv.DictReader(text.splitlines(), delimiter=",")
     return [patient_sync_row_from_payload(raw) for raw in reader]
 
@@ -272,3 +287,43 @@ class PatientSyncService:
             )
         )
         return legacy.scalar_one_or_none() is not None
+
+    async def update_existing_from_payload(
+        self,
+        paciente: Paciente,
+        payload: dict[str, Any],
+        *,
+        sync_source: str = "consultorio_movil",
+    ) -> bool:
+        row = patient_sync_row_from_payload(payload)
+        if not row.tipo_documento or not row.document_number_normalized:
+            return False
+        paciente.nombre = row.nombres or paciente.nombre
+        paciente.apellido = row.apellido or paciente.apellido
+        paciente.telefono = row.celular or paciente.telefono
+        paciente.dni = row.numero_documento or paciente.dni
+        paciente.email = row.email or paciente.email
+        paciente.obra_social = row.financiador_seguro or None
+        paciente.insurance_number = row.nro_afiliado or None
+        paciente.fecha_nacimiento = row.fecha_nacimiento
+        paciente.tipo_documento = row.tipo_documento
+        paciente.numero_documento = row.numero_documento
+        paciente.document_number_normalized = row.document_number_normalized
+        paciente.financiador_seguro = row.financiador_seguro or None
+        paciente.genero = row.genero or None
+        paciente.telefono_casa = row.telefono_casa or None
+        paciente.direccion = row.direccion or None
+        paciente.direccion_numero = row.direccion_numero or None
+        paciente.departamento = row.departamento or None
+        paciente.piso = row.piso or None
+        paciente.localidad = row.localidad or None
+        paciente.codigo_postal = row.codigo_postal or None
+        paciente.pais = row.pais or None
+        paciente.provincia = row.provincia or None
+        paciente.external_provider = "consultorio_movil"
+        paciente.external_patient_id = _clean(row.raw_payload.get("external_patient_id")) or paciente.external_patient_id
+        paciente.sync_source = sync_source
+        paciente.synced_at = now_ba().replace(tzinfo=None)
+        paciente.raw_payload_json = row.raw_payload
+        await self._session.flush()
+        return True

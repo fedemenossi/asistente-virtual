@@ -113,6 +113,18 @@ router.add_api_route(
     dependencies=[Depends(require_feature("pacientes"))],
 )
 router.add_api_route(
+    "/pacientes/import-csv",
+    views.pacientes_import_csv,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("pacientes"))],
+)
+router.add_api_route(
+    "/pacientes/{paciente_id}/sync-consultorio-movil",
+    views.pacientes_sync_one_consultorio_movil,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("pacientes"))],
+)
+router.add_api_route(
     "/pacientes/{paciente_id}/edit",
     views.pacientes_edit_get,
     methods=["GET"],
