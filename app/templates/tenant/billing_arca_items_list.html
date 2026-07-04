@@ -1,0 +1,55 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = "Items facturables" %}
+{% set breadcrumb = "Tenant / Facturacion ARCA / Items" %}
+
+{% block content %}
+  <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+    <div>
+      <p class="text-sm text-slate-600">Catalogo local para futuros comprobantes</p>
+      <h1 class="text-2xl font-semibold text-slate-900">Items facturables</h1>
+    </div>
+    <a class="btn btn-primary" href="/t/billing-arca/items/new">Nuevo item</a>
+  </div>
+
+  {% if items %}
+    <div class="card overflow-x-auto overflow-y-visible">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Codigo</th>
+            <th class="px-4 py-3 text-left font-medium">Nombre</th>
+            <th class="px-4 py-3 text-left font-medium">Precio</th>
+            <th class="px-4 py-3 text-left font-medium">IVA</th>
+            <th class="px-4 py-3 text-left font-medium">Concepto</th>
+            <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-right font-medium">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">{{ item.code }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ item.name }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ item.unit_price }} {{ item.currency }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ item.tax_rate or "0.00" }}{% if item.iva_id %} / {{ item.iva_id }}{% endif %}</td>
+              <td class="px-4 py-3 text-slate-600">{{ item.concepto }}</td>
+              <td class="px-4 py-3">
+                {{ badge("Activo", "success") if item.active else badge("Inactivo", "neutral") }}
+                {% if item.default_item %}<span class="ml-2">{{ badge("Default", "neutral") }}</span>{% endif %}
+              </td>
+              <td class="px-4 py-3 text-right">
+                <a class="btn btn-secondary" href="/t/settings/billing/items/{{ item.id }}/edit">Editar</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card p-10 text-center">
+      <p class="text-sm text-slate-600">No hay items facturables cargados.</p>
+    </div>
+  {% endif %}
+{% endblock %}

@@ -1,0 +1,169 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = "Consultas pendientes" %}
+{% set breadcrumb = "Tenant / Billing / Pendientes" %}
+
+{% block content %}
+  <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+    <div>
+      <p class="text-sm text-slate-600">Consultas atendidas importadas desde Consultorio Movil</p>
+      <h1 class="text-2xl font-semibold text-slate-900">Pendientes de facturacion</h1>
+    </div>
+    <a class="btn btn-secondary" href="/t/billing/invoices">Facturas emitidas</a>
+  </div>
+
+  <div class="mb-5 grid gap-4 lg:grid-cols-2">
+    <form method="get" class="card p-4">
+      <div class="grid gap-3 md:grid-cols-3">
+        <div>
+          <label class="text-xs text-slate-500">Desde</label>
+          <input class="input" type="date" name="date_from" value="{{ date_from }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Hasta</label>
+          <input class="input" type="date" name="date_to" value="{{ date_to }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Consultorio</label>
+          <select class="select" name="consultorio_id">
+            <option value="">Todos</option>
+            {% for consultorio in consultorios %}
+              <option value="{{ consultorio.id }}" {% if consultorio_id|string == consultorio.id|string %}selected{% endif %}>{{ consultorio.nombre }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Buscar</label>
+          <input class="input" name="q" value="{{ q or '' }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">DNI</label>
+          <input class="input" name="dni" value="{{ dni or '' }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Obra social</label>
+          <input class="input" name="obra_social" value="{{ obra_social or '' }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Staff / profesional</label>
+          <input class="input" name="staff_id" value="{{ staff_id or '' }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Estado</label>
+          <select class="select" name="status">
+            <option value="">Todos</option>
+            <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pendiente</option>
+            <option value="selected" {% if status == 'selected' %}selected{% endif %}>Seleccionada</option>
+            <option value="billed" {% if status == 'billed' %}selected{% endif %}>Facturada</option>
+            <option value="ignored" {% if status == 'ignored' %}selected{% endif %}>Ignorada</option>
+            <option value="error" {% if status == 'error' %}selected{% endif %}>Error</option>
+          </select>
+        </div>
+      </div>
+      <div class="mt-3">
+        <button class="btn btn-secondary" type="submit">Filtrar</button>
+      </div>
+    </form>
+
+    <form method="post" action="/t/billing/pending/import" class="card p-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <div class="grid gap-3 md:grid-cols-3">
+        <div>
+          <label class="text-xs text-slate-500">Desde</label>
+          <input class="input" type="date" name="date_from" value="{{ date_from }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Hasta</label>
+          <input class="input" type="date" name="date_to" value="{{ date_to }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Consultorio</label>
+          <select class="select" name="consultorio_id" required>
+            <option value="">Seleccionar</option>
+            {% for consultorio in consultorios %}
+              <option value="{{ consultorio.id }}" {% if consultorio_id|string == consultorio.id|string %}selected{% endif %}>{{ consultorio.nombre }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="mt-3">
+        <button class="btn btn-primary" type="submit">Importar atendidas</button>
+      </div>
+    </form>
+  </div>
+
+  {% if rows %}
+    <form id="preview-form" method="post" action="/t/billing/preview">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="date_from" value="{{ date_from }}" />
+      <input type="hidden" name="date_to" value="{{ date_to }}" />
+      <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
+      <input type="hidden" name="q" value="{{ q or '' }}" />
+      <input type="hidden" name="dni" value="{{ dni or '' }}" />
+      <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
+      <input type="hidden" name="staff_id" value="{{ staff_id or '' }}" />
+      <input type="hidden" name="status" value="{{ status or '' }}" />
+    </form>
+    <div class="mb-3 flex justify-end">
+      <button class="btn btn-primary" type="submit" form="preview-form">Previsualizar seleccion</button>
+    </div>
+    <div class="card overflow-x-auto overflow-y-visible">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Seleccionar</th>
+            <th class="px-4 py-3 text-left font-medium">Fecha</th>
+            <th class="px-4 py-3 text-left font-medium">Paciente</th>
+            <th class="px-4 py-3 text-left font-medium">Mail</th>
+            <th class="px-4 py-3 text-left font-medium">Obra social</th>
+            <th class="px-4 py-3 text-left font-medium">Consultorio</th>
+            <th class="px-4 py-3 text-left font-medium">Practica</th>
+            <th class="px-4 py-3 text-left font-medium">Diagnostico</th>
+            <th class="px-4 py-3 text-left font-medium">Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            {% set consultation = row[0] %}
+            {% set consultorio = row[1] %}
+            <tr class="border-t border-slate-200 align-top hover:bg-slate-50">
+              <td class="px-4 py-3">
+                <input class="h-4 w-4 rounded border-slate-300" form="preview-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" />
+              </td>
+              <td class="px-4 py-3 text-slate-600">{{ consultation.attended_at or "-" }}</td>
+              <td class="px-4 py-3 text-slate-900">
+                <p class="font-medium">{{ consultation.patient_name or "-" }}</p>
+                <p class="text-xs text-slate-500">{{ consultation.patient_document or "-" }}</p>
+              </td>
+              <td class="px-4 py-3 text-slate-600">{{ consultation.patient_email or "-" }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ consultation.insurance_name or "-" }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ consultorio.nombre if consultorio else "-" }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ consultation.practice_name or "-" }}</td>
+              <td class="px-4 py-3">
+                <form method="post" action="/t/billing/pending/{{ consultation.id }}/diagnosis" class="space-y-2">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                  <input type="hidden" name="date_from" value="{{ date_from }}" />
+                  <input type="hidden" name="date_to" value="{{ date_to }}" />
+                  <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
+                  <input type="hidden" name="q" value="{{ q or '' }}" />
+                  <input type="hidden" name="dni" value="{{ dni or '' }}" />
+                  <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
+                  <input type="hidden" name="staff_id" value="{{ staff_id or '' }}" />
+                  <input type="hidden" name="status" value="{{ status or '' }}" />
+                  <textarea class="textarea min-w-72" name="diagnosis" rows="2">{{ consultation.diagnosis or '' }}</textarea>
+                  <button class="btn btn-secondary text-xs" type="submit">Guardar</button>
+                </form>
+              </td>
+              <td class="px-4 py-3">{{ badge("Pendiente", "neutral") }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card p-10 text-center">
+      <p class="text-sm text-slate-600">No hay consultas pendientes para los filtros seleccionados.</p>
+    </div>
+  {% endif %}
+{% endblock %}

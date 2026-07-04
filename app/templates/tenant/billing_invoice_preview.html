@@ -1,0 +1,80 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = "Previsualizar facturas" %}
+{% set breadcrumb = "Tenant / Billing / Preview" %}
+
+{% block content %}
+  <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+    <div>
+      <p class="text-sm text-slate-600">Revision previa antes de solicitar CAE en ARCA</p>
+      <h1 class="text-2xl font-semibold text-slate-900">Previsualizar facturas</h1>
+    </div>
+    <a class="btn btn-secondary" href="{{ back_url }}">Volver</a>
+  </div>
+
+  <form method="post" action="/t/billing/emit" class="space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="date_from" value="{{ date_from }}" />
+    <input type="hidden" name="date_to" value="{{ date_to }}" />
+    <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
+    <input type="hidden" name="q" value="{{ q or '' }}" />
+    <input type="hidden" name="dni" value="{{ dni or '' }}" />
+    <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
+    <input type="hidden" name="staff_id" value="{{ staff_id or '' }}" />
+    <input type="hidden" name="status" value="{{ status or '' }}" />
+
+    <div class="card overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Consulta</th>
+            <th class="px-4 py-3 text-left font-medium">Paciente</th>
+            <th class="px-4 py-3 text-left font-medium">Mail / obra social</th>
+            <th class="px-4 py-3 text-left font-medium">Diagnostico</th>
+            <th class="px-4 py-3 text-left font-medium">Item facturable</th>
+            <th class="px-4 py-3 text-left font-medium">Accion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for consultation in consultations %}
+            <tr class="border-t border-slate-200 align-top">
+              <td class="px-4 py-3 text-slate-600">
+                <input type="hidden" name="consultation_ids" value="{{ consultation.id }}" />
+                <p>{{ consultation.attended_at or "-" }}</p>
+                <p class="text-xs text-slate-500">{{ consultation.practice_name or "-" }}</p>
+              </td>
+              <td class="px-4 py-3 text-slate-900">
+                <p class="font-medium">{{ consultation.patient_name or "-" }}</p>
+                <p class="text-xs text-slate-500">{{ consultation.patient_document or "-" }}</p>
+              </td>
+              <td class="px-4 py-3 text-slate-600">
+                <p>{{ consultation.patient_email or "-" }}</p>
+                <p class="text-xs text-slate-500">{{ consultation.insurance_name or "-" }}</p>
+              </td>
+              <td class="px-4 py-3 text-slate-700">
+                <p class="max-w-xl whitespace-pre-wrap">{{ consultation.diagnosis }}</p>
+                <div class="mt-2">{{ badge("Obligatorio", "neutral") }}</div>
+              </td>
+              <td class="px-4 py-3">
+                <select class="select min-w-56" name="item_id_{{ consultation.id }}" required>
+                  {% for item in items %}
+                    <option value="{{ item.id }}">{{ item.name }} - {{ item.currency }} {{ "%.2f"|format(item.unit_price) }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td class="px-4 py-3">
+                <button class="btn btn-secondary text-xs" type="submit" formaction="/t/billing/emit/{{ consultation.id }}">Emitir</button>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flex justify-end gap-2">
+      <a class="btn btn-secondary" href="{{ back_url }}">Cancelar</a>
+      <button class="btn btn-primary" type="submit">Emitir lote</button>
+    </div>
+  </form>
+{% endblock %}

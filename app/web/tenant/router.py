@@ -190,6 +190,151 @@ router.add_api_route(
     response_class=HTMLResponse,
     dependencies=[Depends(require_feature("payments"))],
 )
+router.add_api_route(
+    "/billing-arca",
+    views.billing_arca_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing",
+    views.billing_arca_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/invoices",
+    views.billing_arca_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/items",
+    views.billing_arca_items_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing/items",
+    views.billing_arca_items_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/items/new",
+    views.billing_arca_item_new_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/items/new",
+    views.billing_arca_item_new_post,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/{invoice_id}",
+    views.billing_arca_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/invoices/{invoice_id}",
+    views.billing_arca_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/{invoice_id}/comprobante.html",
+    views.billing_arca_invoice_html,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/{invoice_id}/comprobante.pdf",
+    views.billing_arca_invoice_pdf,
+    methods=["GET"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/{invoice_id}/send-email",
+    views.billing_arca_send_email,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/items/{item_id}/edit",
+    views.billing_arca_item_edit_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing/items/{item_id}/edit",
+    views.billing_arca_item_edit_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/items/{item_id}/edit",
+    views.billing_arca_item_edit_post,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing-arca/items/{item_id}/delete",
+    views.billing_arca_item_delete,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/pending",
+    views.billing_pending_consultations,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/pending/import",
+    views.billing_pending_import,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/preview",
+    views.billing_invoice_preview,
+    methods=["POST"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/emit",
+    views.billing_invoice_emit_batch,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/emit/{consultation_id}",
+    views.billing_invoice_emit_one,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/pending/{consultation_id}/diagnosis",
+    views.billing_pending_diagnosis_update,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
 
 router.add_api_route(
     "/conversation-states",
@@ -288,6 +433,44 @@ router.add_api_route(
     views.calendar_settings_test,
     methods=["GET"],
     dependencies=[Depends(require_feature("settings_calendar"))],
+)
+router.add_api_route(
+    "/settings/billing-arca",
+    views.billing_arca_settings,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing",
+    views.billing_arca_settings,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing-arca",
+    views.billing_arca_settings_post,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing",
+    views.billing_arca_settings_post,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing-arca/test",
+    views.billing_arca_settings_test,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing/test",
+    views.billing_arca_settings_test,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
     "/settings/notifications",

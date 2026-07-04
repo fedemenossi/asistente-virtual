@@ -13,6 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.core.db import engine
 from app.models import (  # noqa: F401
     AuditLog,
+    BillingEmailLog,
+    BillingInvoiceLine,
+    BillingSetting,
     ConversationHistory,
     Notification,
     Payment,
@@ -44,6 +47,7 @@ EXTRA_COLUMNS = {
         "calendar_settings": "JSON NULL",
         "whatsapp_settings": "JSON NULL",
         "ai_settings": "JSON NULL",
+        "arca_settings": "JSON NULL",
         "fantasy_name": "VARCHAR(200) NULL",
         "first_name": "VARCHAR(120) NULL",
         "last_name": "VARCHAR(120) NULL",
@@ -102,6 +106,29 @@ EXTRA_COLUMNS = {
     "push_subscriptions": {
         "created_at": "DATETIME NULL",
         "updated_at": "DATETIME NULL",
+    },
+    "billing_items": {
+        "tax_rate": "DECIMAL(5,2) NULL",
+        "iva_id": "VARCHAR(20) NULL",
+        "default_item": "BOOLEAN NOT NULL DEFAULT FALSE",
+    },
+    "billing_external_consultations": {
+        "patient_email": "VARCHAR(200) NULL",
+        "insurance_name": "VARCHAR(200) NULL",
+        "professional_name": "VARCHAR(200) NULL",
+        "diagnosis_original": "TEXT NULL",
+        "status": "VARCHAR(30) NOT NULL DEFAULT 'pending'",
+        "billed_at": "DATETIME NULL",
+    },
+    "billing_invoices": {
+        "external_consultation_id": "INT NULL",
+        "billing_item_id": "INT NULL",
+        "diagnosis_original_snapshot": "TEXT NULL",
+        "diagnosis_final_snapshot": "TEXT NULL",
+        "send_email": "BOOLEAN NULL",
+        "email_to": "VARCHAR(200) NULL",
+        "email_sent_at": "DATETIME NULL",
+        "created_by": "INT NULL",
     },
 }
 

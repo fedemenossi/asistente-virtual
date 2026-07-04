@@ -1,0 +1,178 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Configuracion ARCA" %}
+{% set breadcrumb = "Tenant / Settings / ARCA" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Parametros fiscales por tenant</p>
+    <h1 class="text-2xl font-semibold text-slate-900">Configuracion ARCA</h1>
+  </div>
+
+  <form method="post" class="card p-6 space-y-6">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    {% if errors %}
+      <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        Revisa los campos marcados.
+      </div>
+    {% endif %}
+
+    <div class="flex items-center gap-3">
+      <input class="h-4 w-4" type="checkbox" id="enabled" name="enabled" {% if settings.get("enabled") %}checked{% endif %} />
+      <label class="text-sm text-slate-700" for="enabled">Habilitar parametrizacion ARCA</label>
+    </div>
+
+    <div>
+      <h2 class="text-sm font-semibold text-slate-900">Datos de emision</h2>
+      <div class="mt-4 grid gap-4 md:grid-cols-3">
+        <div>
+          <label class="text-xs text-slate-500">CUIT representado</label>
+          <input class="input" name="represented_cuit" value="{{ settings.get('represented_cuit', '') }}" />
+          {% if errors.represented_cuit %}<p class="mt-1 text-xs text-rose-600">{{ errors.represented_cuit }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Ambiente</label>
+          <select class="select" name="environment">
+            <option value="homo" {% if settings.get('environment', 'homo') == 'homo' %}selected{% endif %}>Homologacion</option>
+            <option value="prod" {% if settings.get('environment') == 'prod' %}selected{% endif %}>Produccion</option>
+          </select>
+          {% if errors.environment %}<p class="mt-1 text-xs text-rose-600">{{ errors.environment }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Punto de venta</label>
+          <input class="input" name="default_pto_vta" value="{{ settings.get('default_pto_vta', '') }}" />
+          {% if errors.default_pto_vta %}<p class="mt-1 text-xs text-rose-600">{{ errors.default_pto_vta }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Tipo de comprobante</label>
+          <select class="select" name="default_cbte_tipo">
+            <option value="11" {% if settings.get('default_cbte_tipo', 11) == 11 %}selected{% endif %}>Factura C</option>
+            <option value="12" {% if settings.get('default_cbte_tipo') == 12 %}selected{% endif %}>Nota de debito C</option>
+            <option value="13" {% if settings.get('default_cbte_tipo') == 13 %}selected{% endif %}>Nota de credito C</option>
+          </select>
+          {% if errors.default_cbte_tipo %}<p class="mt-1 text-xs text-rose-600">{{ errors.default_cbte_tipo }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Concepto</label>
+          <select class="select" name="default_concepto">
+            <option value="1" {% if settings.get('default_concepto') == 1 %}selected{% endif %}>Productos</option>
+            <option value="2" {% if settings.get('default_concepto', 2) == 2 %}selected{% endif %}>Servicios</option>
+            <option value="3" {% if settings.get('default_concepto') == 3 %}selected{% endif %}>Productos y servicios</option>
+          </select>
+          {% if errors.default_concepto %}<p class="mt-1 text-xs text-rose-600">{{ errors.default_concepto }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Moneda</label>
+          <select class="select" name="default_currency">
+            <option value="PES" {% if settings.get('default_currency', 'PES') == 'PES' %}selected{% endif %}>PES</option>
+            <option value="DOL" {% if settings.get('default_currency') == 'DOL' %}selected{% endif %}>DOL</option>
+            <option value="EUR" {% if settings.get('default_currency') == 'EUR' %}selected{% endif %}>EUR</option>
+          </select>
+          {% if errors.default_currency %}<p class="mt-1 text-xs text-rose-600">{{ errors.default_currency }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Cotizacion</label>
+          <input class="input" name="default_mon_cotiz" value="{{ settings.get('default_mon_cotiz', '1') }}" />
+          {% if errors.default_mon_cotiz %}<p class="mt-1 text-xs text-rose-600">{{ errors.default_mon_cotiz }}</p>{% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h2 class="text-sm font-semibold text-slate-900">Datos fiscales</h2>
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <div>
+          <label class="text-xs text-slate-500">Razon social fiscal</label>
+          <input class="input" name="fiscal_name" value="{{ settings.get('fiscal_name', '') }}" />
+          {% if errors.fiscal_name %}<p class="mt-1 text-xs text-rose-600">{{ errors.fiscal_name }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Condicion fiscal</label>
+          <input class="input" name="tax_condition" value="{{ settings.get('tax_condition', '') }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Condicion IVA receptor por defecto</label>
+          <input class="input" name="receiver_tax_condition" value="{{ settings.get('receiver_tax_condition', '') }}" />
+        </div>
+        <div class="md:col-span-2">
+          <label class="text-xs text-slate-500">Domicilio fiscal</label>
+          <input class="input" name="fiscal_address" value="{{ settings.get('fiscal_address', '') }}" />
+          {% if errors.fiscal_address %}<p class="mt-1 text-xs text-rose-600">{{ errors.fiscal_address }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Ingresos brutos</label>
+          <input class="input" name="gross_income" value="{{ settings.get('gross_income', '') }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Actividad</label>
+          <input class="input" name="activity_code" value="{{ settings.get('activity_code', '') }}" />
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h2 class="text-sm font-semibold text-slate-900">Envio de facturas</h2>
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <label class="flex items-center gap-3 text-sm text-slate-700">
+          <input class="h-4 w-4" type="checkbox" name="email_invoice_enabled_default" {% if settings.get('email_invoice_enabled_default', true) %}checked{% endif %} />
+          Enviar factura por mail por defecto
+        </label>
+        <div>
+          <label class="text-xs text-slate-500">Asunto de mail</label>
+          <input class="input" name="email_subject_template" value="{{ settings.get('email_subject_template', '') }}" placeholder="Factura ARCA {{ '{numero}' }}" />
+        </div>
+        <div class="md:col-span-2">
+          <label class="text-xs text-slate-500">Cuerpo de mail</label>
+          <textarea class="textarea" name="email_body_template" rows="4">{{ settings.get('email_body_template', '') }}</textarea>
+        </div>
+        <div class="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+          Diagnostico obligatorio visible en factura: activo siempre.
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h2 class="text-sm font-semibold text-slate-900">Credenciales fiscales</h2>
+      <p class="mt-1 text-xs text-slate-500">El contenido se cifra antes de persistirse y no se vuelve a mostrar.</p>
+      <div class="mt-4 grid gap-4 md:grid-cols-2">
+        <div>
+          <label class="text-xs text-slate-500">Certificado CRT/PEM</label>
+          <textarea class="textarea" name="certificate_pem" rows="6" placeholder="{% if settings.get('has_certificate') %}Certificado ya cargado{% endif %}"></textarea>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Clave privada</label>
+          <textarea class="textarea" name="private_key_pem" rows="6" placeholder="{% if settings.get('has_private_key') %}Clave privada ya cargada{% endif %}"></textarea>
+        </div>
+        <div>
+          <label class="text-xs text-slate-500">Passphrase de clave privada</label>
+          <input class="input" type="password" name="key_passphrase" placeholder="{% if settings.get('has_key_passphrase') %}Passphrase ya cargada{% endif %}" />
+        </div>
+      </div>
+    </div>
+
+    <div class="grid gap-4 md:grid-cols-3">
+      <div>
+        <p class="text-xs text-slate-500">Certificado</p>
+        <p class="text-sm font-medium text-slate-900">{{ "Cargado" if settings.get("has_certificate") else "Pendiente" }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Clave privada</p>
+        <p class="text-sm font-medium text-slate-900">{{ "Cargada" if settings.get("has_private_key") else "Pendiente" }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-slate-500">Passphrase</p>
+        <p class="text-sm font-medium text-slate-900">{{ "Cargada" if settings.get("has_key_passphrase") else "No cargada" }}</p>
+      </div>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-3">
+      <button class="btn btn-primary" type="submit">Guardar</button>
+      <a class="btn btn-secondary" href="/t/billing/invoices">Volver</a>
+    </div>
+  </form>
+
+  <form method="post" action="/t/settings/billing/test" class="mt-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <button class="btn btn-secondary" type="submit">Probar conexion</button>
+  </form>
+{% endblock %}

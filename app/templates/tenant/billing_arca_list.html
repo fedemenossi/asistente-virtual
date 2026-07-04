@@ -1,0 +1,79 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = "Facturacion ARCA" %}
+{% set breadcrumb = "Tenant / Facturacion ARCA" %}
+
+{% block content %}
+  <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+    <div>
+      <p class="text-sm text-slate-600">Comprobantes fiscales del tenant</p>
+      <h1 class="text-2xl font-semibold text-slate-900">Facturacion ARCA</h1>
+    </div>
+    <div class="flex gap-2">
+      <a class="btn btn-secondary" href="/t/settings/billing/items">Items</a>
+      <a class="btn btn-secondary" href="/t/settings/billing">Configuracion</a>
+    </div>
+  </div>
+
+  <form method="get" class="mb-4 grid gap-3 md:grid-cols-3">
+    <select class="select" name="status">
+      <option value="">Estado</option>
+      <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Borrador</option>
+      <option value="pending_authorization" {% if status_filter == 'pending_authorization' %}selected{% endif %}>Pendiente</option>
+      <option value="authorized" {% if status_filter == 'authorized' %}selected{% endif %}>Autorizado</option>
+      <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rechazado</option>
+      <option value="needs_reconciliation" {% if status_filter == 'needs_reconciliation' %}selected{% endif %}>A reconciliar</option>
+      <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelado</option>
+    </select>
+    <button class="btn btn-secondary" type="submit">Filtrar</button>
+  </form>
+
+  {% if invoices %}
+    <div class="card overflow-x-auto overflow-y-visible">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Comprobante</th>
+            <th class="px-4 py-3 text-left font-medium">Ambiente</th>
+            <th class="px-4 py-3 text-left font-medium">CUIT</th>
+            <th class="px-4 py-3 text-left font-medium">Importe</th>
+            <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-right font-medium">Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for invoice in invoices %}
+            {% set status = invoice.status.value if invoice.status.value is defined else invoice.status %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">
+                {{ invoice.pto_vta }}-{{ invoice.cbte_tipo }}-{{ invoice.cbte_nro or "sin numero" }}
+              </td>
+              <td class="px-4 py-3 text-slate-600">{{ invoice.environment }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ invoice.represented_cuit }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ invoice.imp_total or "-" }} {{ invoice.mon_id }}</td>
+              <td class="px-4 py-3">
+                {% if status == 'authorized' %}
+                  {{ badge("Autorizado", "success") }}
+                {% elif status in ['rejected', 'cancelled'] %}
+                  {{ badge("Rechazado", "warning") }}
+                {% elif status == 'needs_reconciliation' %}
+                  {{ badge("A reconciliar", "warning") }}
+                {% else %}
+                  {{ badge("Borrador", "neutral") }}
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-right">
+                <a class="btn btn-secondary" href="/t/billing/invoices/{{ invoice.id }}">Ver</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card p-10 text-center">
+      <p class="text-sm text-slate-600">Todavia no hay comprobantes ARCA registrados.</p>
+    </div>
+  {% endif %}
+{% endblock %}

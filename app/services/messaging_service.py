@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import smtplib
+from email.message import EmailMessage
+from email.utils import formataddr
 
 from twilio.rest import Client
 
@@ -36,5 +39,43 @@ class MessagingService:
         except Exception:
             logger.exception("Error enviando WhatsApp")
 
-    def send_email(self, to_email: str, subject: str, body: str) -> None:
-        logger.info("Email pendiente de integrar: %s", to_email)
+    def send_email(
+        self,
+        to_email: str,
+        subject: str,
+        body: str,
+        *,
+        html_body: str | None = None,
+        attachments: list[tuple[str, bytes, str]] | None = None,
+    ) -> None:
+        if not self._settings.smtp_host:
+            logger.info("SMTP no configurado, omitido envio email: %s", to_email)
+            return
+        from_email = self._settings.smtp_from_email or self._settings.smtp_username
+        if not from_email:
+            logger.warning("SMTP_FROM_EMAIL o SMTP_USERNAME no configurado")
+            return
+
+        message = EmailMessage()
+        from_name = self._settings.smtp_from_name or self._settings.app_name
+        message["From"] = formataddr((from_name, from_email))
+        message["To"] = to_email
+        message["Subject"] = subject
+        message.set_content(body)
+        if html_body:
+            message.add_alternative(html_body, subtype="html")
+        for filename, content, mime_type in attachments or []:
+            maintype, _, subtype = mime_type.partition("/")
+            message.add_attachment(
+                content,
+                maintype=maintype or "application",
+                subtype=subtype or "octet-stream",
+                filename=filename,
+            )
+
+        with smtplib.SMTP(self._settings.smtp_host, self._settings.smtp_port, timeout=20) as smtp:
+            if self._settings.smtp_use_tls:
+                smtp.starttls()
+            if self._settings.smtp_username:
+                smtp.login(self._settings.smtp_username, self._settings.smtp_password or "")
+            smtp.send_message(message)

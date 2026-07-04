@@ -58,6 +58,8 @@ ROLE_PERMISSIONS: dict[UserRole, set[str]] = {
         "conversation:read",
         "payment:read",
         "payment:write",
+        "billing_arca:read",
+        "billing_arca:write",
         "settings:write",
         "notification:read",
     },

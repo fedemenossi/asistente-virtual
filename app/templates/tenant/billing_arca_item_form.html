@@ -1,0 +1,92 @@
+{% extends "layout/base.html" %}
+
+{% set is_edit = item is defined and item %}
+{% set title = "Editar item" if is_edit else "Nuevo item" %}
+{% set breadcrumb = "Tenant / Facturacion ARCA / Items" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Catalogo local de conceptos facturables</p>
+    <h1 class="text-2xl font-semibold text-slate-900">{{ title }}</h1>
+  </div>
+
+  <form method="post" class="card p-6 space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    {% if errors %}
+      <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        Revisa los campos marcados.
+      </div>
+    {% endif %}
+    <div class="grid gap-4 md:grid-cols-2">
+      <div>
+        <label class="text-xs text-slate-500">Codigo</label>
+        <input class="input" name="code" value="{{ form_data.get('code') if form_data else (item.code if item else '') }}" />
+        {% if errors.code %}<p class="mt-1 text-xs text-rose-600">{{ errors.code }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">Nombre</label>
+        <input class="input" name="name" value="{{ form_data.get('name') if form_data else (item.name if item else '') }}" />
+        {% if errors.name %}<p class="mt-1 text-xs text-rose-600">{{ errors.name }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">Precio unitario</label>
+        <input class="input" name="unit_price" value="{{ form_data.get('unit_price') if form_data else (item.unit_price if item else '') }}" />
+        {% if errors.unit_price %}<p class="mt-1 text-xs text-rose-600">{{ errors.unit_price }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">Tasa IVA / impuesto</label>
+        <input class="input" name="tax_rate" value="{{ form_data.get('tax_rate') if form_data else (item.tax_rate if item else '0') }}" />
+        {% if errors.tax_rate %}<p class="mt-1 text-xs text-rose-600">{{ errors.tax_rate }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">IVA ID</label>
+        <input class="input" name="iva_id" value="{{ form_data.get('iva_id') if form_data else (item.iva_id if item else '') }}" />
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">Moneda</label>
+        {% set selected_currency = form_data.get('currency') if form_data else (item.currency if item else 'PES') %}
+        <select class="select" name="currency">
+          {% for currency in currencies %}
+            <option value="{{ currency }}" {% if selected_currency == currency %}selected{% endif %}>{{ currency }}</option>
+          {% endfor %}
+        </select>
+        {% if errors.currency %}<p class="mt-1 text-xs text-rose-600">{{ errors.currency }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">Concepto ARCA</label>
+        {% set selected_concept = form_data.get('concepto') if form_data else (item.concepto|string if item else '2') %}
+        <select class="select" name="concepto">
+          <option value="1" {% if selected_concept == '1' %}selected{% endif %}>Productos</option>
+          <option value="2" {% if selected_concept == '2' %}selected{% endif %}>Servicios</option>
+          <option value="3" {% if selected_concept == '3' %}selected{% endif %}>Productos y servicios</option>
+        </select>
+        {% if errors.concepto %}<p class="mt-1 text-xs text-rose-600">{{ errors.concepto }}</p>{% endif %}
+      </div>
+      <div class="flex items-center gap-3 pt-6">
+        {% set is_active = form_data.get('active') if form_data else (item.active if item else true) %}
+        <input class="h-4 w-4" type="checkbox" name="active" id="active" {% if is_active %}checked{% endif %} />
+        <label class="text-sm text-slate-700" for="active">Activo</label>
+      </div>
+      <div class="flex items-center gap-3 pt-6">
+        {% set is_default = form_data.get('default_item') if form_data else (item.default_item if item else false) %}
+        <input class="h-4 w-4" type="checkbox" name="default_item" id="default_item" {% if is_default %}checked{% endif %} />
+        <label class="text-sm text-slate-700" for="default_item">Item por defecto</label>
+      </div>
+      <div class="md:col-span-2">
+        <label class="text-xs text-slate-500">Descripcion</label>
+        <textarea class="textarea" name="description" rows="3">{{ form_data.get('description') if form_data else (item.description if item else '') }}</textarea>
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-3">
+      <button class="btn btn-primary" type="submit">Guardar</button>
+      <a class="btn btn-secondary" href="/t/settings/billing/items">Volver</a>
+    </div>
+  </form>
+
+  {% if is_edit and item.active %}
+    <form method="post" action="/t/billing-arca/items/{{ item.id }}/delete" class="mt-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button class="btn btn-secondary" type="submit">Desactivar item</button>
+    </form>
+  {% endif %}
+{% endblock %}

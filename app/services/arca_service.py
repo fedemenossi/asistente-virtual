@@ -1,0 +1,504 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+from typing import Any, Callable
+
+import anyio
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.integrations.arca.config import ArcaWsSettings
+from app.integrations.arca.wsaa_client import AccessTicket, WsaaClient, WsaaError
+from app.integrations.arca.wsfe_client import WsfeClient, WsfeError
+from app.models.arca_billable_item import ArcaBillableItem
+from app.models.arca_invoice import ArcaInvoice, ArcaInvoiceStatus
+from app.models.arca_invoice_event import ArcaInvoiceEvent
+from app.models.billing_external_consultation import BillingExternalConsultation
+from app.models.billing_invoice_line import BillingInvoiceLine
+from app.models.tenant import Tenant
+from app.repositories.arca_ticket_repository import ArcaTicketRepository
+from app.services.billing_arca_settings_service import decrypt_secret
+
+
+class ArcaConfigurationError(RuntimeError):
+    pass
+
+
+class ArcaConnectivityError(RuntimeError):
+    pass
+
+
+class ArcaEmissionError(RuntimeError):
+    pass
+
+
+class ArcaInvoiceAlreadyExists(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class ArcaConnectionTestResult:
+    environment: str
+    represented_cuit: str
+    dummy: dict[str, Any]
+    points_of_sale: list[dict[str, Any]]
+    used_cached_ticket: bool
+
+
+@dataclass(frozen=True)
+class ArcaEmissionResult:
+    invoice: ArcaInvoice
+    recovered: bool = False
+
+
+class ArcaService:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        wsaa_factory: Callable[[ArcaWsSettings], WsaaClient] = WsaaClient,
+        wsfe_factory: Callable[[ArcaWsSettings, Callable[[], dict[str, Any]]], WsfeClient] = WsfeClient,
+    ) -> None:
+        self._session = session
+        self._ticket_repo = ArcaTicketRepository(session)
+        self._wsaa_factory = wsaa_factory
+        self._wsfe_factory = wsfe_factory
+        self._last_used_cached_ticket = False
+
+    def build_settings(self, tenant: Tenant) -> ArcaWsSettings:
+        data = tenant.arca_settings or {}
+        if not data.get("enabled"):
+            raise ArcaConfigurationError("La configuracion ARCA no esta habilitada.")
+        represented_cuit = str(data.get("represented_cuit") or "").strip()
+        environment = str(data.get("environment") or "homo").strip().lower()
+        service = str(data.get("service") or "wsfe").strip() or "wsfe"
+        cert_pem = decrypt_secret(data.get("certificate_encrypted"))
+        key_pem = decrypt_secret(data.get("private_key_encrypted"))
+        key_passphrase = decrypt_secret(data.get("key_passphrase_encrypted")) or None
+        if environment not in {"homo", "prod"}:
+            raise ArcaConfigurationError("Ambiente ARCA invalido.")
+        if not represented_cuit.isdigit() or len(represented_cuit) != 11:
+            raise ArcaConfigurationError("CUIT ARCA invalido.")
+        if not cert_pem:
+            raise ArcaConfigurationError("Certificado ARCA no configurado.")
+        if not key_pem:
+            raise ArcaConfigurationError("Clave privada ARCA no configurada.")
+        return ArcaWsSettings(
+            environment=environment,
+            represented_cuit=int(represented_cuit),
+            service=service,
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            key_passphrase=key_passphrase,
+        )
+
+    async def get_ticket(self, tenant: Tenant, settings: ArcaWsSettings) -> AccessTicket:
+        represented_cuit = str(settings.represented_cuit)
+        cached = await self._ticket_repo.load_ticket(
+            tenant.id,
+            represented_cuit,
+            settings.environment,
+            settings.service,
+        )
+        margin = datetime.now(timezone.utc) + timedelta(minutes=5)
+        if cached:
+            expiration = cached.expiration_time
+            if expiration.tzinfo is None:
+                expiration = expiration.replace(tzinfo=timezone.utc)
+            if expiration > margin:
+                self._last_used_cached_ticket = True
+                return cached
+
+        self._last_used_cached_ticket = False
+        try:
+            ticket = await anyio.to_thread.run_sync(
+                self._wsaa_factory(settings).request_ticket
+            )
+        except WsaaError as exc:
+            raise ArcaConnectivityError(str(exc)) from exc
+        await self._ticket_repo.save_ticket(
+            tenant.id,
+            represented_cuit,
+            settings.environment,
+            settings.service,
+            ticket,
+        )
+        return ticket
+
+    async def test_connection(self, tenant: Tenant) -> ArcaConnectionTestResult:
+        settings = self.build_settings(tenant)
+        ticket = await self.get_ticket(tenant, settings)
+
+        def auth_provider() -> dict[str, Any]:
+            return {
+                "Token": ticket.token,
+                "Sign": ticket.sign,
+                "Cuit": settings.represented_cuit,
+            }
+
+        wsfe = self._wsfe_factory(settings, auth_provider)
+        try:
+            dummy = await anyio.to_thread.run_sync(lambda: wsfe.dummy().data)
+            points = await anyio.to_thread.run_sync(lambda: wsfe.get_puntos_venta().data)
+        except WsfeError as exc:
+            raise ArcaConnectivityError(str(exc)) from exc
+
+        normalized_points: list[dict[str, Any]] = []
+        if isinstance(points, dict):
+            raw_points = points.get("PtoVenta") or points.get("ptoVenta") or []
+            if isinstance(raw_points, dict):
+                raw_points = [raw_points]
+            normalized_points = [item for item in raw_points if isinstance(item, dict)]
+        elif isinstance(points, list):
+            normalized_points = [item for item in points if isinstance(item, dict)]
+
+        return ArcaConnectionTestResult(
+            environment=settings.environment,
+            represented_cuit=str(settings.represented_cuit),
+            dummy=dummy if isinstance(dummy, dict) else {"result": dummy},
+            points_of_sale=normalized_points,
+            used_cached_ticket=self._last_used_cached_ticket,
+        )
+
+    async def emit_invoice_for_consultation(
+        self,
+        tenant: Tenant,
+        consultation: BillingExternalConsultation,
+        item: ArcaBillableItem,
+    ) -> ArcaEmissionResult:
+        if consultation.tenant_id != tenant.id or item.tenant_id != tenant.id:
+            raise ArcaEmissionError("La consulta o el item no pertenecen al tenant.")
+        await self._session.refresh(consultation, with_for_update=True)
+        if consultation.arca_invoice_id is not None:
+            raise ArcaInvoiceAlreadyExists("La consulta ya esta facturada.")
+        existing_authorized = await self._session.scalar(
+            select(ArcaInvoice.id).where(
+                ArcaInvoice.tenant_id == tenant.id,
+                ArcaInvoice.external_consultation_id == consultation.id,
+                ArcaInvoice.status == ArcaInvoiceStatus.AUTHORIZED,
+            )
+        )
+        if existing_authorized is not None:
+            raise ArcaInvoiceAlreadyExists("La consulta ya tiene una factura autorizada.")
+        diagnosis = (consultation.diagnosis or "").strip()
+        if not diagnosis:
+            raise ArcaEmissionError("El diagnostico es obligatorio para emitir la factura.")
+        if not item.active:
+            raise ArcaEmissionError("El item facturable esta inactivo.")
+
+        settings = self.build_settings(tenant)
+        ticket = await self.get_ticket(tenant, settings)
+
+        def auth_provider() -> dict[str, Any]:
+            return {
+                "Token": ticket.token,
+                "Sign": ticket.sign,
+                "Cuit": settings.represented_cuit,
+            }
+
+        wsfe = self._wsfe_factory(settings, auth_provider)
+        arca_cfg = tenant.arca_settings or {}
+        pto_vta = int(arca_cfg.get("default_pto_vta") or 0)
+        cbte_tipo = int(arca_cfg.get("default_cbte_tipo") or 11)
+        concepto = int(item.concepto or arca_cfg.get("default_concepto") or 2)
+        if pto_vta <= 0:
+            raise ArcaEmissionError("Punto de venta ARCA invalido.")
+
+        try:
+            latest = await anyio.to_thread.run_sync(
+                lambda: wsfe.get_ultimo_autorizado(pto_vta, cbte_tipo).data
+            )
+        except WsfeError as exc:
+            raise ArcaConnectivityError(str(exc)) from exc
+        last_number = _extract_int(latest, "CbteNro", 0)
+        cbte_nro = last_number + 1
+        request = self._build_fe_cae_request(
+            tenant=tenant,
+            consultation=consultation,
+            item=item,
+            pto_vta=pto_vta,
+            cbte_tipo=cbte_tipo,
+            cbte_nro=cbte_nro,
+            concepto=concepto,
+        )
+        invoice = self._build_invoice(
+            tenant=tenant,
+            consultation=consultation,
+            item=item,
+            request=request,
+            pto_vta=pto_vta,
+            cbte_tipo=cbte_tipo,
+            cbte_nro=cbte_nro,
+            concepto=concepto,
+            settings=settings,
+        )
+        self._session.add(invoice)
+        await self._session.flush()
+        self._session.add(
+            ArcaInvoiceEvent(
+                invoice_id=invoice.id,
+                event_type="authorization_requested",
+                payload_json={"consultation_id": consultation.id},
+            )
+        )
+        self._session.add(_build_invoice_line(invoice.id, item, diagnosis))
+
+        try:
+            response = await anyio.to_thread.run_sync(lambda: wsfe.solicitar_cae(request).data)
+        except WsfeError as exc:
+            recovered = await self._recover_invoice(wsfe, invoice, pto_vta, cbte_tipo, cbte_nro)
+            if recovered:
+                consultation.arca_invoice_id = invoice.id
+                consultation.status = "billed"
+                consultation.billed_at = datetime.now()
+                return ArcaEmissionResult(invoice=invoice, recovered=True)
+            invoice.status = ArcaInvoiceStatus.REJECTED
+            invoice.error_message = str(exc)
+            consultation.status = "error"
+            self._session.add(
+                ArcaInvoiceEvent(
+                    invoice_id=invoice.id,
+                    event_type="authorization_rejected",
+                    payload_json={"error": str(exc)},
+                )
+            )
+            raise ArcaEmissionError(str(exc)) from exc
+        self._apply_authorization_response(invoice, response)
+        if invoice.status != ArcaInvoiceStatus.AUTHORIZED:
+            self._session.add(
+                ArcaInvoiceEvent(
+                    invoice_id=invoice.id,
+                    event_type="authorization_rejected",
+                    payload_json={"result": "rejected"},
+                )
+            )
+            raise ArcaEmissionError(invoice.error_message or "ARCA rechazo la autorizacion.")
+        consultation.arca_invoice_id = invoice.id
+        consultation.status = "billed"
+        consultation.billed_at = datetime.now()
+        self._session.add(
+            ArcaInvoiceEvent(
+                invoice_id=invoice.id,
+                event_type="authorization_approved",
+                payload_json={"cae": invoice.cae, "cbte_nro": invoice.cbte_nro},
+            )
+        )
+        return ArcaEmissionResult(invoice=invoice, recovered=False)
+
+    def _build_fe_cae_request(
+        self,
+        *,
+        tenant: Tenant,
+        consultation: BillingExternalConsultation,
+        item: ArcaBillableItem,
+        pto_vta: int,
+        cbte_tipo: int,
+        cbte_nro: int,
+        concepto: int,
+    ) -> dict[str, Any]:
+        doc_tipo, doc_nro = _document_for_arca(consultation.patient_document)
+        amount = Decimal(str(item.unit_price)).quantize(Decimal("0.01"))
+        today = datetime.now().date()
+        service_date = (consultation.attended_at or datetime.now()).date()
+        diagnosis = (consultation.diagnosis or "").strip()
+        description = f"{item.name} - Diagnostico: {diagnosis}"
+        detail = {
+            "Concepto": concepto,
+            "DocTipo": doc_tipo,
+            "DocNro": doc_nro,
+            "CbteDesde": cbte_nro,
+            "CbteHasta": cbte_nro,
+            "CbteFch": today.strftime("%Y%m%d"),
+            "ImpTotal": float(amount),
+            "ImpTotConc": 0,
+            "ImpNeto": float(amount),
+            "ImpOpEx": 0,
+            "ImpTrib": 0,
+            "ImpIVA": 0,
+            "MonId": item.currency,
+            "MonCotiz": 1,
+            "Diagnostico": diagnosis,
+            "Descripcion": description,
+        }
+        if concepto in {2, 3}:
+            detail["FchServDesde"] = service_date.strftime("%Y%m%d")
+            detail["FchServHasta"] = service_date.strftime("%Y%m%d")
+            detail["FchVtoPago"] = today.strftime("%Y%m%d")
+        return {
+            "FeCabReq": {
+                "CantReg": 1,
+                "PtoVta": pto_vta,
+                "CbteTipo": cbte_tipo,
+            },
+            "FeDetReq": {
+                "FECAEDetRequest": [detail],
+            },
+            "metadata": {
+                "tenant_id": tenant.id,
+                "external_consultation_id": consultation.id,
+                "external_id": consultation.external_id,
+                "billable_item_id": item.id,
+                "diagnosis": diagnosis,
+                "description": description,
+            },
+        }
+
+    def _build_invoice(
+        self,
+        *,
+        tenant: Tenant,
+        consultation: BillingExternalConsultation,
+        item: ArcaBillableItem,
+        request: dict[str, Any],
+        pto_vta: int,
+        cbte_tipo: int,
+        cbte_nro: int,
+        concepto: int,
+        settings: ArcaWsSettings,
+    ) -> ArcaInvoice:
+        detail = request["FeDetReq"]["FECAEDetRequest"][0]
+        return ArcaInvoice(
+            tenant_id=tenant.id,
+            external_consultation_id=consultation.id,
+            billing_item_id=item.id,
+            represented_cuit=str(settings.represented_cuit),
+            environment=settings.environment,
+            pto_vta=pto_vta,
+            cbte_tipo=cbte_tipo,
+            cbte_nro=cbte_nro,
+            concepto=concepto,
+            doc_tipo=detail["DocTipo"],
+            doc_nro=str(detail["DocNro"]),
+            cbte_fch=datetime.strptime(detail["CbteFch"], "%Y%m%d").date(),
+            imp_total=Decimal(str(detail["ImpTotal"])),
+            imp_tot_conc=Decimal("0.00"),
+            imp_neto=Decimal(str(detail["ImpNeto"])),
+            imp_op_ex=Decimal("0.00"),
+            imp_trib=Decimal("0.00"),
+            imp_iva=Decimal("0.00"),
+            mon_id=item.currency,
+            mon_cotiz=Decimal("1.000000"),
+            status=ArcaInvoiceStatus.PENDING_AUTHORIZATION,
+            diagnosis_original_snapshot=(consultation.diagnosis_original or consultation.diagnosis or "").strip(),
+            diagnosis_final_snapshot=(consultation.diagnosis or "").strip(),
+            email_to=consultation.patient_email,
+            request_json=request,
+        )
+
+    def _apply_authorization_response(self, invoice: ArcaInvoice, response: Any) -> None:
+        data = response if isinstance(response, dict) else {"response": response}
+        det = _first_detail_response(data)
+        cae = str(_get_any(det, "CAE", "Cae", "CodAutorizacion") or "")
+        cae_vto = str(_get_any(det, "CAEFchVto", "FchVto") or "")
+        result = str(_get_any(det, "Resultado") or _get_any(data.get("FeCabResp", {}) if isinstance(data, dict) else {}, "Resultado") or "")
+        invoice.response_json = data
+        invoice.cae = cae or None
+        invoice.cae_fch_vto = _parse_arca_date(cae_vto)
+        invoice.authorized_at = datetime.now()
+        invoice.status = ArcaInvoiceStatus.AUTHORIZED if cae and result != "R" else ArcaInvoiceStatus.REJECTED
+        if invoice.status == ArcaInvoiceStatus.REJECTED:
+            invoice.error_message = "ARCA rechazo la autorizacion."
+
+    async def _recover_invoice(
+        self,
+        wsfe: Any,
+        invoice: ArcaInvoice,
+        pto_vta: int,
+        cbte_tipo: int,
+        cbte_nro: int,
+    ) -> bool:
+        try:
+            response = await anyio.to_thread.run_sync(
+                lambda: wsfe.consultar_comprobante(pto_vta, cbte_tipo, cbte_nro).data
+            )
+        except WsfeError:
+            return False
+        data = response if isinstance(response, dict) else {"response": response}
+        cae = str(_get_any(data, "CodAutorizacion", "CAE") or "")
+        if not cae:
+            return False
+        invoice.response_json = data
+        invoice.cae = cae
+        invoice.cae_fch_vto = _parse_arca_date(str(_get_any(data, "FchVto") or ""))
+        invoice.authorized_at = datetime.now()
+        invoice.status = ArcaInvoiceStatus.AUTHORIZED
+        self._session.add(
+            ArcaInvoiceEvent(
+                invoice_id=invoice.id,
+                event_type="authorization_recovered",
+                payload_json={"cae": invoice.cae, "cbte_nro": cbte_nro},
+            )
+        )
+        return True
+
+
+def _extract_int(data: Any, key: str, default: int = 0) -> int:
+    if isinstance(data, dict):
+        value = data.get(key, data.get(key[:1].lower() + key[1:], default))
+    else:
+        value = getattr(data, key, default)
+    try:
+        return int(value or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _document_for_arca(document: str | None) -> tuple[int, int]:
+    digits = "".join(ch for ch in str(document or "") if ch.isdigit())
+    if len(digits) == 11:
+        return 80, int(digits)
+    if digits:
+        return 96, int(digits)
+    return 99, 0
+
+
+def _get_any(data: Any, *keys: str) -> Any:
+    if not isinstance(data, dict):
+        return None
+    for key in keys:
+        if key in data and data[key] not in (None, ""):
+            return data[key]
+        alt = key[:1].lower() + key[1:]
+        if alt in data and data[alt] not in (None, ""):
+            return data[alt]
+    return None
+
+
+def _first_detail_response(data: dict[str, Any]) -> dict[str, Any]:
+    det = data.get("FeDetResp") or data.get("feDetResp") or data
+    if isinstance(det, dict):
+        det = det.get("FEDetResponse") or det.get("feDetResponse") or det
+    if isinstance(det, list):
+        det = det[0] if det else {}
+    return det if isinstance(det, dict) else {}
+
+
+def _parse_arca_date(value: str):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y%m%d").date()
+    except ValueError:
+        return None
+
+
+def _build_invoice_line(
+    invoice_id: int,
+    item: ArcaBillableItem,
+    diagnosis: str,
+) -> BillingInvoiceLine:
+    amount = Decimal(str(item.unit_price)).quantize(Decimal("0.01"))
+    description = item.description or item.name
+    return BillingInvoiceLine(
+        invoice_id=invoice_id,
+        item_code=item.code,
+        description=description,
+        diagnosis_text=diagnosis,
+        quantity=Decimal("1.00"),
+        unit_price=amount,
+        subtotal=amount,
+        tax_rate=item.tax_rate,
+        total=amount,
+    )

@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     cab_turnos_password: str | None = Field(default=None, alias="CAB_TURNOS_PASSWORD")
     cab_turnos_staff_id: str | None = Field(default=None, alias="CAB_TURNOS_STAFF_ID")
     cab_turnos_days: int = Field(default=21, alias="CAB_TURNOS_DAYS")
+    smtp_host: str | None = Field(default=None, alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT")
+    smtp_username: str | None = Field(default=None, alias="SMTP_USERNAME")
+    smtp_password: str | None = Field(default=None, alias="SMTP_PASSWORD")
+    smtp_from_email: str | None = Field(default=None, alias="SMTP_FROM_EMAIL")
+    smtp_from_name: str | None = Field(default=None, alias="SMTP_FROM_NAME")
+    smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
 
     model_config = SettingsConfigDict(
         env_file=".env", case_sensitive=False, extra="ignore"

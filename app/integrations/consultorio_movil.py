@@ -21,6 +21,7 @@ PATIENT_SAVE_URL = "https://office.consultoriomovil.net/office/patient/save"
 APPOINTMENT_SAVE_URL = "https://office.consultoriomovil.net/office/appointment/appointment/save"
 APPOINTMENT_PRACTICES_URL = "https://office.consultoriomovil.net/office/appointment/appointment/loadPractices"
 APPOINTMENT_STATUS_URL = "https://office.consultoriomovil.net/office/appointment/list/status"
+APPOINTMENT_LIST_URL = "https://office.consultoriomovil.net/office/appointment/list/ajax"
 XHR_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 DAY_NAMES_ES = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
 SIMPLE_TIMEZONES: dict[str, tzinfo] = {
@@ -61,6 +62,22 @@ class SlotSelection:
     duration_minutes: int
     timezone: str
     label: str
+
+
+@dataclass(frozen=True)
+class AttendedConsultation:
+    external_id: str
+    attended_at: datetime | None
+    patient_external_id: str | None
+    patient_name: str | None
+    patient_document: str | None
+    patient_email: str | None
+    patient_phone: str | None
+    insurance_name: str | None
+    professional_name: str | None
+    practice_name: str | None
+    diagnosis: str | None
+    raw_payload: dict[str, Any]
 
 
 def login(username: str, password: str) -> requests.Session:
@@ -191,6 +208,33 @@ def _sanitize_digits(value: str) -> str:
     return re.sub(r"\D+", "", value)
 
 
+def _first_present(data: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if name in data and data[name] not in (None, ""):
+            return data[name]
+    return None
+
+
+def _parse_consultorio_datetime(value: Any, tz: tzinfo) -> datetime | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)) or str(value).isdigit():
+        raw = int(value)
+        if raw > 10_000_000_000:
+            raw = raw // 1000
+        return datetime.fromtimestamp(raw, tz=tz).replace(tzinfo=None)
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
 def _search_patients(session: requests.Session, query: str) -> list[dict[str, Any]]:
     if not query:
         return []
@@ -202,6 +246,107 @@ def _search_patients(session: requests.Session, query: str) -> list[dict[str, An
     resp.raise_for_status()
     data = resp.json()
     return data.get("content") or []
+
+
+def fetch_attended_consultations(
+    session: requests.Session,
+    staff_id: str,
+    date_from: date,
+    date_to: date,
+    tz: tzinfo | None = None,
+) -> list[AttendedConsultation]:
+    tz = tz or SIMPLE_TIMEZONES["America/Argentina/Buenos_Aires"]
+    payload = {
+        "staff_id": staff_id,
+        "staff": staff_id,
+        "dateFrom": date_from.strftime("%Y-%m-%d"),
+        "dateTo": date_to.strftime("%Y-%m-%d"),
+        "status": "attended",
+        "status_id": "attended",
+        "X-REQUESTED_WITH": "XMLHttpRequest",
+    }
+    resp = session.post(
+        APPOINTMENT_LIST_URL,
+        data=payload,
+        headers={**XHR_HEADERS, "Accept": "application/json, text/javascript, */*; q=0.01"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    raw_items = data.get("content") or data.get("data") or data.get("items") or []
+    if isinstance(raw_items, dict):
+        raw_items = raw_items.get("items") or raw_items.get("appointments") or []
+
+    consultations: list[AttendedConsultation] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        external_id = str(_first_present(item, "id", "appointment_id", "appointmentId") or "").strip()
+        if not external_id:
+            continue
+        patient = item.get("patient") if isinstance(item.get("patient"), dict) else {}
+        document = patient.get("document") if isinstance(patient.get("document"), dict) else {}
+        insurance = item.get("insurance") if isinstance(item.get("insurance"), dict) else {}
+        professional = item.get("professional") if isinstance(item.get("professional"), dict) else {}
+        practice = item.get("practice") if isinstance(item.get("practice"), dict) else {}
+        attended_raw = _first_present(
+            item,
+            "attended_at",
+            "attendedAt",
+            "start",
+            "start_at",
+            "date",
+            "appointmentDate",
+        )
+        consultations.append(
+            AttendedConsultation(
+                external_id=external_id,
+                attended_at=_parse_consultorio_datetime(attended_raw, tz),
+                patient_external_id=str(_first_present(patient, "id", "patient_id", "patientId") or ""),
+                patient_name=str(
+                    _first_present(item, "patientName", "patient_name")
+                    or _first_present(patient, "name", "fullName")
+                    or " ".join(
+                        part
+                        for part in [
+                            str(patient.get("firstName") or "").strip(),
+                            str(patient.get("lastName") or "").strip(),
+                        ]
+                        if part
+                    )
+                    or ""
+                ),
+                patient_document=str(
+                    _first_present(item, "patientDocument", "document")
+                    or _first_present(document, "number")
+                    or ""
+                ),
+                patient_email=str(
+                    _first_present(item, "patientEmail", "email")
+                    or _first_present(patient, "email", "mail")
+                    or ""
+                ),
+                patient_phone=str(_first_present(item, "patientPhone") or _first_present(patient, "phone", "cellPhone") or ""),
+                insurance_name=str(
+                    _first_present(item, "insuranceName", "obraSocial", "healthInsurance")
+                    or _first_present(insurance, "name", "description")
+                    or ""
+                ),
+                professional_name=str(
+                    _first_present(item, "professionalName", "staffName")
+                    or _first_present(professional, "name", "fullName")
+                    or ""
+                ),
+                practice_name=str(
+                    _first_present(item, "practiceName", "subjectName")
+                    or _first_present(practice, "name", "description")
+                    or ""
+                ),
+                diagnosis=str(_first_present(item, "diagnosis", "diagnostico", "notes", "note") or ""),
+                raw_payload=item,
+            )
+        )
+    return consultations
 
 
 def find_patient_by_document(session: requests.Session, document_number: str | None) -> dict[str, Any] | None:

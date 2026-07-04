@@ -1,0 +1,108 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = "Detalle ARCA" %}
+{% set breadcrumb = "Tenant / Facturacion ARCA" %}
+
+{% block content %}
+  {% set status = invoice.status.value if invoice.status.value is defined else invoice.status %}
+  <div class="mb-6">
+    <h1 class="text-2xl font-semibold text-slate-900">Comprobante ARCA #{{ invoice.id }}</h1>
+    <p class="text-sm text-slate-600">Detalle fiscal, comprobante visual y envio al paciente.</p>
+  </div>
+
+  <div class="grid gap-6 lg:grid-cols-3">
+    <div class="card p-6 space-y-4 lg:col-span-2">
+      <div class="flex items-center justify-between">
+        <p class="text-sm text-slate-500">Estado</p>
+        {% if status == 'authorized' %}
+          {{ badge("Autorizado", "success") }}
+        {% elif status in ['rejected', 'cancelled'] %}
+          {{ badge("Rechazado", "warning") }}
+        {% elif status == 'needs_reconciliation' %}
+          {{ badge("A reconciliar", "warning") }}
+        {% else %}
+          {{ badge("Borrador", "neutral") }}
+        {% endif %}
+      </div>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div>
+          <p class="text-xs text-slate-500">CUIT representado</p>
+          <p class="text-sm font-medium text-slate-900">{{ invoice.represented_cuit }}</p>
+        </div>
+        <div>
+          <p class="text-xs text-slate-500">Ambiente</p>
+          <p class="text-sm font-medium text-slate-900">{{ invoice.environment }}</p>
+        </div>
+        <div>
+          <p class="text-xs text-slate-500">Punto / tipo / numero</p>
+          <p class="text-sm font-medium text-slate-900">{{ invoice.pto_vta }} / {{ invoice.cbte_tipo }} / {{ invoice.cbte_nro or "-" }}</p>
+        </div>
+        <div>
+          <p class="text-xs text-slate-500">Importe</p>
+          <p class="text-sm font-medium text-slate-900">{{ invoice.imp_total or "-" }} {{ invoice.mon_id }}</p>
+        </div>
+        <div>
+          <p class="text-xs text-slate-500">CAE</p>
+          <p class="text-sm font-medium text-slate-900">{{ invoice.cae or "-" }}</p>
+        </div>
+        <div>
+          <p class="text-xs text-slate-500">Vencimiento CAE</p>
+          <p class="text-sm font-medium text-slate-900">{{ invoice.cae_fch_vto or "-" }}</p>
+        </div>
+      </div>
+      <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+        <p class="text-xs uppercase tracking-[0.2em] text-slate-500">Diagnostico en factura</p>
+        {% if diagnosis %}
+          <p class="mt-2 whitespace-pre-wrap text-sm font-semibold text-slate-900">{{ diagnosis }}</p>
+        {% else %}
+          <p class="mt-2 text-sm font-semibold text-rose-700">{{ document_error or "Diagnostico no disponible." }}</p>
+        {% endif %}
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <a class="btn btn-secondary" href="/t/billing-arca/{{ invoice.id }}/comprobante.html" target="_blank">Ver HTML</a>
+        <a class="btn btn-secondary" href="/t/billing-arca/{{ invoice.id }}/comprobante.pdf" target="_blank">Ver PDF</a>
+      </div>
+      <form method="post" action="/t/billing-arca/{{ invoice.id }}/send-email" class="rounded-lg border border-slate-200 p-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <label class="block text-sm font-medium text-slate-700">Email del paciente</label>
+        <div class="mt-2 flex flex-col gap-2 md:flex-row">
+          <input class="input" type="email" name="to_email" value="{{ patient_email }}" placeholder="paciente@correo.com" required />
+          <button class="btn btn-primary" type="submit" {% if not diagnosis or not invoice.cae %}disabled{% endif %}>Enviar / reenviar</button>
+        </div>
+        <p class="mt-2 text-xs text-slate-500">El diagnostico se incluye siempre en el HTML, PDF y cuerpo del email.</p>
+      </form>
+    </div>
+    <div class="card p-6">
+      <p class="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">Eventos</p>
+      <div class="space-y-3">
+        {% for event in events %}
+          <div class="rounded-lg border border-slate-200 p-3">
+            <p class="text-xs text-slate-500">{{ event.created_at }}</p>
+            <p class="text-sm font-medium text-slate-900">{{ event.event_type }}</p>
+          </div>
+        {% else %}
+          <p class="text-sm text-slate-600">Sin eventos.</p>
+        {% endfor %}
+      </div>
+      <div class="mt-6 border-t border-slate-200 pt-5">
+        <p class="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">Envios por mail</p>
+        <div class="space-y-3">
+          {% for log in email_logs %}
+            <div class="rounded-lg border border-slate-200 p-3">
+              <p class="text-xs text-slate-500">{{ log.created_at }}</p>
+              <p class="text-sm font-medium text-slate-900">{{ log.recipient_email }}</p>
+              <p class="text-xs text-slate-600">{{ log.status }}</p>
+              {% if log.error_message %}
+                <p class="mt-1 text-xs text-rose-700">{{ log.error_message }}</p>
+              {% endif %}
+            </div>
+          {% else %}
+            <p class="text-sm text-slate-600">Sin envios registrados.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <a class="btn btn-secondary mt-6" href="/t/billing/invoices">Volver</a>
+{% endblock %}

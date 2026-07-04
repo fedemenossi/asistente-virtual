@@ -29,12 +29,19 @@
       {% if features.get("pacientes", true) %}<a href="/t/pacientes" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Pacientes</a>{% endif %}
       {% if features.get("appointments", true) %}<a href="/t/appointments" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Turnos</a>{% endif %}
       {% if features.get("payments", true) %}<a href="/t/payments" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Pagos</a>{% endif %}
+      {% if features.get("billing_arca", true) %}<div class="mt-4 mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">Facturacion</div>{% endif %}
+      {% if features.get("billing_arca", true) %}<a href="/t/billing-arca" class="sr-only">Facturacion ARCA</a>{% endif %}
+      {% if features.get("billing_arca", true) %}<a href="/t/settings/billing-arca" class="sr-only">Settings ARCA</a>{% endif %}
+      {% if features.get("billing_arca", true) %}<a href="/t/billing/pending" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Consultas a facturar</a>{% endif %}
+      {% if features.get("billing_arca", true) %}<a href="/t/billing/invoices" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Facturas emitidas</a>{% endif %}
+      {% if features.get("billing_arca", true) %}<a href="/t/settings/billing/items" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Items facturables</a>{% endif %}
       {% if features.get("conversaciones", true) %}<a href="/t/conversation-states" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Conversaciones</a>{% endif %}
       {% if features.get("audit_logs", true) %}<a href="/t/audit-logs" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Audit logs</a>{% endif %}
       {% if features.get("notifications", true) %}<a href="/t/notifications" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Notificaciones</a>{% endif %}
       {% if features.get("settings", true) %}<a href="/t/settings" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Settings</a>{% endif %}
       {% if features.get("settings_payments", true) %}<a href="/t/settings/payments" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Settings pagos</a>{% endif %}
       {% if features.get("settings_calendar", true) %}<a href="/t/settings/calendar" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Settings calendario</a>{% endif %}
+      {% if features.get("billing_arca", true) %}<a href="/t/settings/billing" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Configuracion ARCA</a>{% endif %}
       {% if features.get("settings_notifications", true) %}<a href="/t/settings/notifications" class="mb-2 flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Settings notificaciones</a>{% endif %}
     {% endif %}
   </nav>

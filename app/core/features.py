@@ -31,6 +31,18 @@ FEATURE_REGISTRY: dict[str, dict] = {
         "routes": ["/t/payments"],
         "default_enabled": True,
     },
+    "billing_arca": {
+        "label": "Facturacion ARCA",
+        "routes": [
+            "/t/billing",
+            "/t/billing-arca",
+            "/t/billing/pending",
+            "/t/billing/invoices",
+            "/t/settings/billing",
+            "/t/settings/billing-arca",
+        ],
+        "default_enabled": True,
+    },
     "conversaciones": {
         "label": "Conversaciones",
         "routes": ["/t/conversation-states"],

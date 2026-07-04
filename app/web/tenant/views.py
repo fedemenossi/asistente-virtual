@@ -27,6 +27,12 @@ from app.core.timezone import now_ba
 from app.core.ui import add_flash
 from app.core.tenancy import get_entity_or_404, get_tenant_entity_or_404
 from app.models.audit_log import AuditLog
+from app.models.arca_invoice import ArcaInvoice
+from app.models.arca_billable_item import ArcaBillableItem
+from app.models.arca_invoice_event import ArcaInvoiceEvent
+from app.models.billing_email_log import BillingEmailLog
+from app.models.billing_external_consultation import BillingExternalConsultation
+from app.models.billing_setting import BillingSetting
 from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.conversation_history import ConversationHistory
 from app.models.conversacion import EstadoConversacion
@@ -37,7 +43,12 @@ from app.models.notification import Notification
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
 from app.repositories.conversacion_repository import ConversacionRepository
-from app.integrations.consultorio_movil import CabildoConfigError, list_next_presential_slots
+from app.integrations.consultorio_movil import (
+    CabildoConfigError,
+    fetch_attended_consultations,
+    list_next_presential_slots,
+    login as consultorio_movil_login,
+)
 from app.services.appointment_service import AppointmentService
 from app.services.conversation_intents import (
     CATEGORY_LABELS,
@@ -60,6 +71,26 @@ from app.services.google_calendar_slots_service import (
     normalize_provider,
 )
 from app.services.holiday_service import HolidayService
+from app.services.billing_arca_settings_service import (
+    ARCA_CONCEPTS,
+    ARCA_CURRENCIES,
+    normalize_decimal,
+    public_arca_settings,
+    validate_arca_settings,
+)
+from app.services.billing_invoice_document_service import (
+    BillingInvoiceDocumentError,
+    BillingInvoiceDocumentService,
+    BillingInvoiceEmailService,
+)
+from app.services.billing_service import BillingService
+from app.services.arca_service import (
+    ArcaConfigurationError,
+    ArcaConnectivityError,
+    ArcaEmissionError,
+    ArcaInvoiceAlreadyExists,
+    ArcaService,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -105,6 +136,10 @@ def _calendar_generation_log_result(result: dict | None) -> dict:
         "errors": len(result.get("errors") or []),
         "first_error": (result.get("errors") or [None])[0],
     }
+
+
+def _consultorio_movil_config(consultorio: Consultorio) -> dict:
+    return ((consultorio.configuracion_externa or {}).get("cabildo") or {})
 
 
 def _collect_tenant_profile_changes(tenant: Tenant, updates: dict[str, str | None]) -> dict:
@@ -2316,6 +2351,243 @@ async def notifications_settings(
     )
 
 
+async def billing_arca_settings(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    tenant = await session.get(Tenant, user.tenant_id)
+    return _template(
+        request,
+        "tenant/settings_billing_arca.html",
+        {
+            "settings": public_arca_settings(tenant.arca_settings if tenant else {}),
+            "errors": {},
+            "form_data": {},
+        },
+    )
+
+
+async def billing_arca_settings_post(
+    request: Request,
+    enabled: str | None = Form(None),
+    represented_cuit: str = Form(""),
+    environment: str = Form("homo"),
+    default_pto_vta: str = Form(""),
+    default_cbte_tipo: str = Form("11"),
+    default_concepto: str = Form("2"),
+    default_currency: str = Form("PES"),
+    default_mon_cotiz: str = Form("1"),
+    fiscal_name: str = Form(""),
+    fiscal_address: str = Form(""),
+    gross_income: str = Form(""),
+    tax_condition: str = Form(""),
+    receiver_tax_condition: str = Form(""),
+    activity_code: str = Form(""),
+    email_invoice_enabled_default: str | None = Form(None),
+    email_subject_template: str = Form(""),
+    email_body_template: str = Form(""),
+    certificate_pem: str = Form(""),
+    private_key_pem: str = Form(""),
+    key_passphrase: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    data = {
+        "enabled": "on" if enabled else "",
+        "represented_cuit": represented_cuit,
+        "environment": environment,
+        "default_pto_vta": default_pto_vta,
+        "default_cbte_tipo": default_cbte_tipo,
+        "default_concepto": default_concepto,
+        "default_currency": default_currency,
+        "default_mon_cotiz": default_mon_cotiz,
+        "fiscal_name": fiscal_name,
+        "fiscal_address": fiscal_address,
+        "gross_income": gross_income,
+        "tax_condition": tax_condition,
+        "receiver_tax_condition": receiver_tax_condition,
+        "activity_code": activity_code,
+        "email_invoice_enabled_default": "on" if email_invoice_enabled_default else "",
+        "email_subject_template": email_subject_template,
+        "email_body_template": email_body_template,
+        "certificate_pem": certificate_pem,
+        "private_key_pem": private_key_pem,
+        "key_passphrase": key_passphrase,
+    }
+    settings, errors = validate_arca_settings(data, tenant.arca_settings)
+    if errors:
+        display_settings = public_arca_settings({**settings, **data})
+        return _template(
+            request,
+            "tenant/settings_billing_arca.html",
+            {"settings": display_settings, "errors": errors, "form_data": data},
+        )
+    async with session.begin_nested():
+        tenant.arca_settings = settings
+        flag_modified(tenant, "arca_settings")
+        billing_setting = await session.scalar(
+            select(BillingSetting).where(BillingSetting.tenant_id == tenant.id)
+        )
+        if billing_setting is None:
+            billing_setting = BillingSetting(tenant_id=tenant.id)
+            session.add(billing_setting)
+        billing_setting.enabled = bool(settings.get("enabled"))
+        billing_setting.environment = str(settings.get("environment") or "homo")
+        billing_setting.cuit_emisor = settings.get("represented_cuit")
+        billing_setting.punto_venta = settings.get("default_pto_vta")
+        billing_setting.cbte_tipo_default = settings.get("default_cbte_tipo")
+        billing_setting.concepto_default = settings.get("default_concepto")
+        billing_setting.moneda_default = settings.get("default_currency") or "PES"
+        billing_setting.condicion_iva_emisor = settings.get("tax_condition")
+        billing_setting.condicion_iva_receptor_default = settings.get("receiver_tax_condition")
+        billing_setting.cert_pem_encrypted = settings.get("certificate_encrypted")
+        billing_setting.private_key_pem_encrypted = settings.get("private_key_encrypted")
+        billing_setting.arca_service = settings.get("service") or "wsfe"
+        billing_setting.email_invoice_enabled_default = bool(settings.get("email_invoice_enabled_default"))
+        billing_setting.email_subject_template = settings.get("email_subject_template")
+        billing_setting.email_body_template = settings.get("email_body_template")
+        billing_setting.diagnosis_required = True
+        billing_setting.diagnosis_visible_on_invoice = True
+        await audit_log(
+            session,
+            request,
+            user,
+            action="update",
+            entity="billing_arca_settings",
+            entity_id=tenant.id,
+            tenant_id=tenant.id,
+            metadata={
+                "environment": settings.get("environment"),
+                "represented_cuit": settings.get("represented_cuit"),
+                "has_certificate": settings.get("has_certificate"),
+                "has_private_key": settings.get("has_private_key"),
+            },
+        )
+    add_flash(request, "success", "Configuracion ARCA actualizada")
+    return RedirectResponse("/t/settings/billing-arca", status_code=303)
+
+
+async def billing_arca_settings_test(
+    request: Request,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    try:
+        result = await ArcaService(session).test_connection(tenant)
+    except (ArcaConfigurationError, ArcaConnectivityError) as exc:
+        add_flash(request, "error", f"No se pudo probar ARCA: {exc}")
+    else:
+        async with session.begin_nested():
+            await audit_log(
+                session,
+                request,
+                user,
+                action="test_connection",
+                entity="billing_arca_settings",
+                entity_id=tenant.id,
+                tenant_id=tenant.id,
+                metadata={
+                    "environment": result.environment,
+                    "represented_cuit": result.represented_cuit,
+                    "points_of_sale": len(result.points_of_sale),
+                    "used_cached_ticket": result.used_cached_ticket,
+                },
+            )
+        add_flash(
+            request,
+            "success",
+            f"Conexion ARCA OK. Puntos de venta detectados: {len(result.points_of_sale)}.",
+        )
+    return RedirectResponse("/t/settings/billing-arca", status_code=303)
+
+
+def _billing_item_form_context(
+    item: ArcaBillableItem | None = None,
+    *,
+    errors: dict[str, str] | None = None,
+    form_data: dict | None = None,
+) -> dict:
+    return {
+        "item": item,
+        "errors": errors or {},
+        "form_data": form_data or {},
+        "currencies": sorted(ARCA_CURRENCIES),
+        "concepts": sorted(ARCA_CONCEPTS),
+    }
+
+
+def _billing_item_form_data(
+    code: str,
+    name: str,
+    description: str,
+    unit_price: str,
+    tax_rate: str,
+    iva_id: str,
+    currency: str,
+    concepto: str,
+    active: str | None,
+    default_item: str | None,
+) -> dict:
+    return {
+        "code": code.strip(),
+        "name": name.strip(),
+        "description": description.strip(),
+        "unit_price": unit_price.strip(),
+        "tax_rate": tax_rate.strip(),
+        "iva_id": iva_id.strip(),
+        "currency": currency.strip().upper() or "PES",
+        "concepto": concepto.strip() or "2",
+        "active": bool(active),
+        "default_item": bool(default_item),
+    }
+
+
+async def _validate_billing_item(
+    session: AsyncSession,
+    tenant_id: int,
+    data: dict,
+    *,
+    item_id: int | None = None,
+) -> dict[str, str]:
+    errors: dict[str, str] = {}
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,50}", data["code"]):
+        errors["code"] = "Usa hasta 50 caracteres alfanumericos, punto, guion o guion bajo."
+    if not data["name"]:
+        errors["name"] = "El nombre es obligatorio."
+    amount = normalize_decimal(data["unit_price"])
+    if not amount:
+        errors["unit_price"] = "El precio debe ser un numero mayor o igual a cero."
+    else:
+        data["unit_price"] = amount
+    tax_rate = normalize_decimal(data.get("tax_rate") or "0")
+    if data.get("tax_rate") and not tax_rate:
+        errors["tax_rate"] = "La tasa debe ser numerica y mayor o igual a cero."
+    else:
+        data["tax_rate"] = tax_rate or "0.00"
+    if data["currency"] not in ARCA_CURRENCIES:
+        errors["currency"] = "Moneda invalida."
+    if not data["concepto"].isdigit() or int(data["concepto"]) not in ARCA_CONCEPTS:
+        errors["concepto"] = "Concepto invalido."
+    if data["code"]:
+        stmt = select(ArcaBillableItem.id).where(
+            ArcaBillableItem.tenant_id == tenant_id,
+            ArcaBillableItem.code == data["code"],
+        )
+        if item_id is not None:
+            stmt = stmt.where(ArcaBillableItem.id != item_id)
+        exists = await session.scalar(stmt)
+        if exists is not None:
+            errors["code"] = "Ya existe un item con ese codigo."
+    return errors
+
+
 async def audit_logs(
     request: Request,
     user: CurrentUser = Depends(require_permission("tenant:read")),
@@ -2437,6 +2709,860 @@ async def payment_detail(
         "tenant/payment_detail.html",
         {"row": row, "events": events},
     )
+
+
+async def billing_arca_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    status_filter = request.query_params.get("status", "").strip()
+    stmt = select(ArcaInvoice).where(ArcaInvoice.tenant_id == user.tenant_id)
+    if status_filter:
+        stmt = stmt.where(ArcaInvoice.status == status_filter)
+    result = await session.execute(stmt.order_by(desc(ArcaInvoice.created_at)))
+    invoices = list(result.scalars().all())
+    return _template(
+        request,
+        "tenant/billing_arca_list.html",
+        {"invoices": invoices, "status_filter": status_filter},
+    )
+
+
+async def billing_arca_detail(
+    request: Request,
+    invoice_id: int,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    result = await session.execute(
+        select(ArcaInvoice).where(
+            ArcaInvoice.id == invoice_id,
+            ArcaInvoice.tenant_id == user.tenant_id,
+        )
+    )
+    invoice = result.scalar_one_or_none()
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
+    events_result = await session.execute(
+        select(ArcaInvoiceEvent)
+        .where(ArcaInvoiceEvent.invoice_id == invoice.id)
+        .order_by(desc(ArcaInvoiceEvent.created_at))
+    )
+    events = list(events_result.scalars().all())
+    consultation = await session.scalar(
+        select(BillingExternalConsultation).where(
+            BillingExternalConsultation.tenant_id == user.tenant_id,
+            BillingExternalConsultation.arca_invoice_id == invoice.id,
+        )
+    )
+    email_logs_result = await session.execute(
+        select(BillingEmailLog)
+        .where(
+            BillingEmailLog.tenant_id == user.tenant_id,
+            BillingEmailLog.invoice_id == invoice.id,
+        )
+        .order_by(desc(BillingEmailLog.created_at))
+    )
+    email_logs = list(email_logs_result.scalars().all())
+    document_service = BillingInvoiceDocumentService(session)
+    diagnosis = ""
+    patient_email = ""
+    document_error = ""
+    try:
+        document = await document_service.build_document(
+            await get_entity_or_404(session, Tenant, user.tenant_id),
+            invoice,
+            consultation=consultation,
+        )
+        diagnosis = document.diagnosis
+        patient_email = document.patient_email or ""
+    except BillingInvoiceDocumentError as exc:
+        document_error = str(exc)
+    return _template(
+        request,
+        "tenant/billing_arca_detail.html",
+        {
+            "invoice": invoice,
+            "events": events,
+            "consultation": consultation,
+            "email_logs": email_logs,
+            "diagnosis": diagnosis,
+            "patient_email": patient_email,
+            "document_error": document_error,
+        },
+    )
+
+
+async def billing_arca_invoice_html(
+    request: Request,
+    invoice_id: int,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    del request
+    invoice = await session.scalar(
+        select(ArcaInvoice).where(
+            ArcaInvoice.id == invoice_id,
+            ArcaInvoice.tenant_id == user.tenant_id,
+        )
+    )
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    document = await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
+    return Response(document.html, media_type="text/html; charset=utf-8")
+
+
+async def billing_arca_invoice_pdf(
+    request: Request,
+    invoice_id: int,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    del request
+    invoice = await session.scalar(
+        select(ArcaInvoice).where(
+            ArcaInvoice.id == invoice_id,
+            ArcaInvoice.tenant_id == user.tenant_id,
+        )
+    )
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    document = await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
+    filename = f"factura-arca-{invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}.pdf"
+    return Response(
+        document.pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+async def billing_arca_send_email(
+    request: Request,
+    invoice_id: int,
+    to_email: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    invoice = await session.scalar(
+        select(ArcaInvoice).where(
+            ArcaInvoice.id == invoice_id,
+            ArcaInvoice.tenant_id == user.tenant_id,
+        )
+    )
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
+    if not invoice.cae:
+        add_flash(request, "error", "Solo se pueden enviar facturas autorizadas con CAE.")
+        return RedirectResponse(f"/t/billing-arca/{invoice.id}", status_code=303)
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    document_service = BillingInvoiceDocumentService(session)
+    try:
+        document = await document_service.build_document(tenant, invoice)
+        recipient = to_email.strip() or document.patient_email or ""
+        await BillingInvoiceEmailService(session).send_invoice(
+            tenant,
+            invoice,
+            to_email=recipient,
+            document=document,
+        )
+    except BillingInvoiceDocumentError as exc:
+        add_flash(request, "error", f"No se pudo enviar la factura: {exc}")
+    else:
+        async with session.begin_nested():
+            await audit_log(
+                session,
+                request,
+                user,
+                action="send_email",
+                entity="arca_invoice",
+                entity_id=invoice.id,
+                tenant_id=int(user.tenant_id),
+                metadata={"to_email": recipient},
+            )
+        add_flash(request, "success", "Factura enviada por email.")
+    return RedirectResponse(f"/t/billing-arca/{invoice.id}", status_code=303)
+
+
+async def billing_arca_items_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    result = await session.execute(
+        select(ArcaBillableItem)
+        .where(ArcaBillableItem.tenant_id == user.tenant_id)
+        .order_by(ArcaBillableItem.active.desc(), ArcaBillableItem.name.asc())
+    )
+    items = list(result.scalars().all())
+    return _template(
+        request,
+        "tenant/billing_arca_items_list.html",
+        {"items": items},
+    )
+
+
+async def billing_arca_item_new_get(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+) -> Response:
+    return _template(
+        request,
+        "tenant/billing_arca_item_form.html",
+        _billing_item_form_context(),
+    )
+
+
+async def billing_arca_item_new_post(
+    request: Request,
+    code: str = Form(""),
+    name: str = Form(""),
+    description: str = Form(""),
+    unit_price: str = Form(""),
+    tax_rate: str = Form("0"),
+    iva_id: str = Form(""),
+    currency: str = Form("PES"),
+    concepto: str = Form("2"),
+    active: str | None = Form(None),
+    default_item: str | None = Form(None),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    data = _billing_item_form_data(
+        code,
+        name,
+        description,
+        unit_price,
+        tax_rate,
+        iva_id,
+        currency,
+        concepto,
+        active,
+        default_item,
+    )
+    errors = await _validate_billing_item(session, int(user.tenant_id), data)
+    if errors:
+        return _template(
+            request,
+            "tenant/billing_arca_item_form.html",
+            _billing_item_form_context(errors=errors, form_data=data),
+        )
+    async with session.begin_nested():
+        item = ArcaBillableItem(
+            tenant_id=int(user.tenant_id),
+            code=data["code"],
+            name=data["name"],
+            description=data["description"] or None,
+            unit_price=data["unit_price"],
+            tax_rate=data["tax_rate"],
+            iva_id=data["iva_id"] or None,
+            currency=data["currency"],
+            concepto=int(data["concepto"]),
+            active=bool(data["active"]),
+            default_item=bool(data["default_item"]),
+        )
+        session.add(item)
+        await session.flush()
+        if item.default_item:
+            await session.execute(
+                ArcaBillableItem.__table__.update()
+                .where(
+                    ArcaBillableItem.tenant_id == user.tenant_id,
+                    ArcaBillableItem.id != item.id,
+                )
+                .values(default_item=False)
+            )
+        await audit_log(
+            session,
+            request,
+            user,
+            action="create",
+            entity="billing_arca_item",
+            entity_id=item.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"code": item.code},
+        )
+    add_flash(request, "success", "Item facturable creado")
+    return RedirectResponse("/t/billing-arca/items", status_code=303)
+
+
+async def billing_arca_item_edit_get(
+    request: Request,
+    item_id: int,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    item = await session.scalar(
+        select(ArcaBillableItem).where(
+            ArcaBillableItem.id == item_id,
+            ArcaBillableItem.tenant_id == user.tenant_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item facturable no encontrado")
+    return _template(
+        request,
+        "tenant/billing_arca_item_form.html",
+        _billing_item_form_context(item=item),
+    )
+
+
+async def billing_arca_item_edit_post(
+    request: Request,
+    item_id: int,
+    code: str = Form(""),
+    name: str = Form(""),
+    description: str = Form(""),
+    unit_price: str = Form(""),
+    tax_rate: str = Form("0"),
+    iva_id: str = Form(""),
+    currency: str = Form("PES"),
+    concepto: str = Form("2"),
+    active: str | None = Form(None),
+    default_item: str | None = Form(None),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    item = await session.scalar(
+        select(ArcaBillableItem).where(
+            ArcaBillableItem.id == item_id,
+            ArcaBillableItem.tenant_id == user.tenant_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item facturable no encontrado")
+    data = _billing_item_form_data(
+        code,
+        name,
+        description,
+        unit_price,
+        tax_rate,
+        iva_id,
+        currency,
+        concepto,
+        active,
+        default_item,
+    )
+    errors = await _validate_billing_item(session, int(user.tenant_id), data, item_id=item.id)
+    if errors:
+        return _template(
+            request,
+            "tenant/billing_arca_item_form.html",
+            _billing_item_form_context(item=item, errors=errors, form_data=data),
+        )
+    async with session.begin_nested():
+        item.code = data["code"]
+        item.name = data["name"]
+        item.description = data["description"] or None
+        item.unit_price = data["unit_price"]
+        item.tax_rate = data["tax_rate"]
+        item.iva_id = data["iva_id"] or None
+        item.currency = data["currency"]
+        item.concepto = int(data["concepto"])
+        item.active = bool(data["active"])
+        item.default_item = bool(data["default_item"])
+        if item.default_item:
+            await session.execute(
+                ArcaBillableItem.__table__.update()
+                .where(
+                    ArcaBillableItem.tenant_id == user.tenant_id,
+                    ArcaBillableItem.id != item.id,
+                )
+                .values(default_item=False)
+            )
+        await audit_log(
+            session,
+            request,
+            user,
+            action="update",
+            entity="billing_arca_item",
+            entity_id=item.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"code": item.code},
+        )
+    add_flash(request, "success", "Item facturable actualizado")
+    return RedirectResponse("/t/billing-arca/items", status_code=303)
+
+
+async def billing_arca_item_delete(
+    request: Request,
+    item_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    item = await session.scalar(
+        select(ArcaBillableItem).where(
+            ArcaBillableItem.id == item_id,
+            ArcaBillableItem.tenant_id == user.tenant_id,
+        )
+    )
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item facturable no encontrado")
+    async with session.begin_nested():
+        item.active = False
+        await audit_log(
+            session,
+            request,
+            user,
+            action="deactivate",
+            entity="billing_arca_item",
+            entity_id=item.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"code": item.code},
+        )
+    add_flash(request, "success", "Item facturable desactivado")
+    return RedirectResponse("/t/billing-arca/items", status_code=303)
+
+
+async def _billing_consultorios(session: AsyncSession, tenant_id: int) -> list[Consultorio]:
+    result = await session.execute(
+        select(Consultorio)
+        .where(
+            Consultorio.tenant_id == tenant_id,
+            Consultorio.deleted_at.is_(None),
+            Consultorio.proveedor_turnos == "consultorio_movil",
+        )
+        .order_by(Consultorio.nombre.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def billing_pending_consultations(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    raw_date_from = request.query_params.get("date_from", "").strip()
+    raw_date_to = request.query_params.get("date_to", "").strip()
+    date_from = raw_date_from
+    date_to = raw_date_to
+    consultorio_id = request.query_params.get("consultorio_id", "").strip()
+    q = request.query_params.get("q", "").strip()
+    dni = request.query_params.get("dni", "").strip()
+    obra_social = request.query_params.get("obra_social", "").strip()
+    staff_id = request.query_params.get("staff_id", "").strip()
+    status = request.query_params.get("status", "").strip()
+    date_from, date_to, start, end, _, _ = _selected_date_range(date_from, date_to)
+
+    stmt = (
+        select(BillingExternalConsultation, Consultorio)
+        .outerjoin(Consultorio, BillingExternalConsultation.consultorio_id == Consultorio.id)
+        .where(
+            BillingExternalConsultation.tenant_id == user.tenant_id,
+            BillingExternalConsultation.arca_invoice_id.is_(None),
+        )
+    )
+    if consultorio_id:
+        try:
+            stmt = stmt.where(BillingExternalConsultation.consultorio_id == int(consultorio_id))
+        except ValueError:
+            consultorio_id = ""
+    if q:
+        like_q = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                BillingExternalConsultation.patient_name.ilike(like_q),
+                BillingExternalConsultation.patient_document.ilike(like_q),
+                BillingExternalConsultation.patient_email.ilike(like_q),
+                BillingExternalConsultation.insurance_name.ilike(like_q),
+                BillingExternalConsultation.practice_name.ilike(like_q),
+                BillingExternalConsultation.diagnosis.ilike(like_q),
+            )
+        )
+    if dni:
+        stmt = stmt.where(BillingExternalConsultation.patient_document.ilike(f"%{dni}%"))
+    if obra_social:
+        stmt = stmt.where(BillingExternalConsultation.insurance_name.ilike(f"%{obra_social}%"))
+    if staff_id:
+        stmt = stmt.where(BillingExternalConsultation.external_staff_id.ilike(f"%{staff_id}%"))
+    if status:
+        stmt = stmt.where(BillingExternalConsultation.status == status)
+    if raw_date_from or raw_date_to or not (q or dni or obra_social or staff_id or status):
+        stmt = stmt.where(
+            or_(
+                BillingExternalConsultation.attended_at.is_(None),
+                BillingExternalConsultation.attended_at >= start,
+            ),
+            or_(
+                BillingExternalConsultation.attended_at.is_(None),
+                BillingExternalConsultation.attended_at < end,
+            ),
+        )
+    result = await session.execute(stmt.order_by(BillingExternalConsultation.attended_at.desc()))
+    rows = list(result.all())
+    consultorios = await _billing_consultorios(session, int(user.tenant_id))
+    return _template(
+        request,
+        "tenant/billing_pending.html",
+        {
+            "rows": rows,
+            "consultorios": consultorios,
+            "date_from": date_from,
+            "date_to": date_to,
+            "consultorio_id": consultorio_id,
+            "q": q,
+            "dni": dni,
+            "obra_social": obra_social,
+            "staff_id": staff_id,
+            "status": status,
+        },
+    )
+
+
+async def billing_pending_import(
+    request: Request,
+    consultorio_id: int = Form(...),
+    date_from: str = Form(""),
+    date_to: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    date_from, date_to, _, _, start_date, end_date = _selected_date_range(date_from, date_to)
+    consultorio = await session.scalar(
+        select(Consultorio).where(
+            Consultorio.id == consultorio_id,
+            Consultorio.tenant_id == user.tenant_id,
+            Consultorio.deleted_at.is_(None),
+        )
+    )
+    if consultorio is None:
+        raise HTTPException(status_code=404, detail="Consultorio no encontrado")
+    if (consultorio.proveedor_turnos or "").strip().lower() != "consultorio_movil":
+        raise HTTPException(status_code=400, detail="El consultorio no usa Consultorio Movil")
+    cfg = _consultorio_movil_config(consultorio)
+    if not (cfg.get("user") and cfg.get("password") and cfg.get("staff_id")):
+        add_flash(request, "error", "Configuracion de Consultorio Movil incompleta")
+        return RedirectResponse(f"/t/billing/pending?date_from={date_from}&date_to={date_to}", status_code=303)
+
+    imported = 0
+    skipped_invoiced = 0
+    external_session = consultorio_movil_login(str(cfg["user"]), str(cfg["password"]))
+    consultations = fetch_attended_consultations(
+        external_session,
+        str(cfg["staff_id"]),
+        start_date,
+        end_date,
+    )
+    async with session.begin_nested():
+        for consultation in consultations:
+            existing = await session.scalar(
+                select(BillingExternalConsultation).where(
+                    BillingExternalConsultation.tenant_id == user.tenant_id,
+                    BillingExternalConsultation.external_provider == "consultorio_movil",
+                    BillingExternalConsultation.external_id == consultation.external_id,
+                )
+            )
+            if existing and existing.arca_invoice_id is not None:
+                skipped_invoiced += 1
+                continue
+            row = existing or BillingExternalConsultation(
+                tenant_id=int(user.tenant_id),
+                external_provider="consultorio_movil",
+                external_id=consultation.external_id,
+            )
+            row.consultorio_id = consultorio.id
+            row.external_staff_id = str(cfg["staff_id"])
+            row.attended_at = consultation.attended_at
+            row.patient_external_id = consultation.patient_external_id or None
+            row.patient_name = consultation.patient_name or None
+            row.patient_document = consultation.patient_document or None
+            row.patient_email = consultation.patient_email or None
+            row.patient_phone = consultation.patient_phone or None
+            row.insurance_name = consultation.insurance_name or None
+            row.professional_name = consultation.professional_name or None
+            row.practice_name = consultation.practice_name or None
+            if not row.diagnosis_original:
+                row.diagnosis_original = consultation.diagnosis or None
+            if not row.diagnosis:
+                row.diagnosis = consultation.diagnosis or None
+            row.status = row.status or "pending"
+            row.raw_payload_json = consultation.raw_payload
+            if existing is None:
+                session.add(row)
+                imported += 1
+        await audit_log(
+            session,
+            request,
+            user,
+            action="import",
+            entity="billing_external_consultations",
+            entity_id=consultorio.id,
+            tenant_id=int(user.tenant_id),
+            metadata={
+                "consultorio_id": consultorio.id,
+                "date_from": date_from,
+                "date_to": date_to,
+                "fetched": len(consultations),
+                "inserted": imported,
+                "skipped_invoiced": skipped_invoiced,
+            },
+        )
+    add_flash(
+        request,
+        "success",
+        f"Consultas importadas: {imported}. Ya facturadas omitidas: {skipped_invoiced}.",
+    )
+    return RedirectResponse(
+        f"/t/billing/pending?date_from={date_from}&date_to={date_to}&consultorio_id={consultorio.id}",
+        status_code=303,
+    )
+
+
+async def _load_pending_consultations(
+    session: AsyncSession,
+    tenant_id: int,
+    ids: list[int],
+) -> list[BillingExternalConsultation]:
+    if not ids:
+        return []
+    result = await session.execute(
+        select(BillingExternalConsultation)
+        .where(
+            BillingExternalConsultation.tenant_id == tenant_id,
+            BillingExternalConsultation.id.in_(ids),
+        )
+        .order_by(BillingExternalConsultation.attended_at.asc())
+    )
+    rows = list(result.scalars().all())
+    found = {row.id for row in rows}
+    if len(found) != len(set(ids)):
+        raise HTTPException(status_code=404, detail="Una o mas consultas no existen")
+    return rows
+
+
+async def _active_billing_items(session: AsyncSession, tenant_id: int) -> list[ArcaBillableItem]:
+    result = await session.execute(
+        select(ArcaBillableItem)
+        .where(ArcaBillableItem.tenant_id == tenant_id, ArcaBillableItem.active.is_(True))
+        .order_by(ArcaBillableItem.name.asc())
+    )
+    return list(result.scalars().all())
+
+
+def _selected_ids_from_form(form) -> list[int]:
+    values = form.getlist("consultation_ids")
+    ids: list[int] = []
+    for value in values:
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
+def _pending_back_url(form) -> str:
+    params = urlencode(
+        {
+            "date_from": str(form.get("date_from") or ""),
+            "date_to": str(form.get("date_to") or ""),
+            "consultorio_id": str(form.get("consultorio_id") or ""),
+            "q": str(form.get("q") or ""),
+            "dni": str(form.get("dni") or ""),
+            "obra_social": str(form.get("obra_social") or ""),
+            "staff_id": str(form.get("staff_id") or ""),
+            "status": str(form.get("status") or ""),
+        }
+    )
+    return f"/t/billing/pending?{params}"
+
+
+def _validate_preview_consultations(consultations: list[BillingExternalConsultation]) -> list[str]:
+    errors: list[str] = []
+    for row in consultations:
+        if row.arca_invoice_id is not None:
+            errors.append(f"La consulta #{row.id} ya esta facturada.")
+        if not (row.diagnosis or "").strip():
+            errors.append(f"La consulta #{row.id} no tiene diagnostico.")
+    return errors
+
+
+async def billing_invoice_preview(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    form = await request.form()
+    validate_csrf(request, str(form.get("csrf_token") or ""))
+    ids = _selected_ids_from_form(form)
+    if not ids:
+        add_flash(request, "error", "Selecciona al menos una consulta.")
+        return RedirectResponse(_pending_back_url(form), status_code=303)
+    consultations = await _load_pending_consultations(session, int(user.tenant_id), ids)
+    errors = _validate_preview_consultations(consultations)
+    items = await _active_billing_items(session, int(user.tenant_id))
+    if not items:
+        errors.append("No hay items facturables activos.")
+    if errors:
+        for error in errors:
+            add_flash(request, "error", error)
+        return RedirectResponse(_pending_back_url(form), status_code=303)
+    return _template(
+        request,
+        "tenant/billing_invoice_preview.html",
+        {
+            "consultations": consultations,
+            "items": items,
+            "back_url": _pending_back_url(form),
+            "date_from": str(form.get("date_from") or ""),
+            "date_to": str(form.get("date_to") or ""),
+            "consultorio_id": str(form.get("consultorio_id") or ""),
+            "q": str(form.get("q") or ""),
+            "dni": str(form.get("dni") or ""),
+            "obra_social": str(form.get("obra_social") or ""),
+            "staff_id": str(form.get("staff_id") or ""),
+            "status": str(form.get("status") or ""),
+        },
+    )
+
+
+async def _emit_selected_consultations(
+    request: Request,
+    session: AsyncSession,
+    tenant: Tenant,
+    consultation_ids: list[int],
+    form,
+) -> tuple[int, int]:
+    service = BillingService(session)
+    success = 0
+    failed = 0
+    consultations = await _load_pending_consultations(session, tenant.id, consultation_ids)
+    for consultation in consultations:
+        item_key = f"item_id_{consultation.id}"
+        try:
+            item_id = int(form.get(item_key) or form.get("item_id") or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        item = await session.scalar(
+            select(ArcaBillableItem).where(
+                ArcaBillableItem.id == item_id,
+                ArcaBillableItem.tenant_id == tenant.id,
+                ArcaBillableItem.active.is_(True),
+            )
+        )
+        if item is None:
+            failed += 1
+            add_flash(request, "error", f"Item facturable invalido para consulta #{consultation.id}.")
+            continue
+        try:
+            result = await service.issue_invoice(tenant, consultation, item)
+        except ArcaInvoiceAlreadyExists as exc:
+            failed += 1
+            add_flash(request, "warning", f"Consulta #{consultation.id}: {exc}")
+        except (ArcaConfigurationError, ArcaConnectivityError, ArcaEmissionError) as exc:
+            failed += 1
+            add_flash(request, "error", f"Consulta #{consultation.id}: {exc}")
+        else:
+            success += 1
+            suffix = " recuperada" if result.recovered else ""
+            add_flash(
+                request,
+                "success",
+                f"Factura #{result.invoice.cbte_nro}{suffix} emitida para consulta #{consultation.id}.",
+            )
+    return success, failed
+
+
+async def billing_invoice_emit_batch(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    form = await request.form()
+    validate_csrf(request, str(form.get("csrf_token") or ""))
+    ids = _selected_ids_from_form(form)
+    if not ids:
+        add_flash(request, "error", "Selecciona al menos una consulta.")
+        return RedirectResponse("/t/billing/pending", status_code=303)
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    success, failed = await _emit_selected_consultations(request, session, tenant, ids, form)
+    await audit_log(
+        session,
+        request,
+        user,
+        action="emit_batch",
+        entity="billing_arca",
+        entity_id=tenant.id,
+        tenant_id=tenant.id,
+        metadata={"selected": len(ids), "success": success, "failed": failed},
+    )
+    return RedirectResponse("/t/billing/pending", status_code=303)
+
+
+async def billing_invoice_emit_one(
+    request: Request,
+    consultation_id: int,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    form = await request.form()
+    validate_csrf(request, str(form.get("csrf_token") or ""))
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    await _emit_selected_consultations(request, session, tenant, [consultation_id], form)
+    return RedirectResponse("/t/billing/pending", status_code=303)
+
+
+async def billing_pending_diagnosis_update(
+    request: Request,
+    consultation_id: int,
+    diagnosis: str = Form(""),
+    date_from: str = Form(""),
+    date_to: str = Form(""),
+    consultorio_id: str = Form(""),
+    q: str = Form(""),
+    dni: str = Form(""),
+    obra_social: str = Form(""),
+    staff_id: str = Form(""),
+    status: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    consultation = await session.scalar(
+        select(BillingExternalConsultation).where(
+            BillingExternalConsultation.id == consultation_id,
+            BillingExternalConsultation.tenant_id == user.tenant_id,
+        )
+    )
+    if consultation is None:
+        raise HTTPException(status_code=404, detail="Consulta externa no encontrada")
+    async with session.begin_nested():
+        consultation.diagnosis = diagnosis.strip() or None
+        await audit_log(
+            session,
+            request,
+            user,
+            action="update_diagnosis",
+            entity="billing_external_consultation",
+            entity_id=consultation.id,
+            tenant_id=int(user.tenant_id),
+        )
+    params = urlencode(
+        {
+            "date_from": date_from,
+            "date_to": date_to,
+            "consultorio_id": consultorio_id,
+            "q": q,
+            "dni": dni,
+            "obra_social": obra_social,
+            "staff_id": staff_id,
+            "status": status,
+        }
+    )
+    add_flash(request, "success", "Diagnostico actualizado")
+    return RedirectResponse(f"/t/billing/pending?{params}", status_code=303)
 
 
 async def appointments_list(
