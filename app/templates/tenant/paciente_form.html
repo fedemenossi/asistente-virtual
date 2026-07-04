@@ -7,10 +7,14 @@
 {% block content %}
   <div class="mb-6">
     <h1 class="text-2xl font-semibold text-slate-900">{{ title }}</h1>
-    <p class="text-sm text-slate-600">Datos basicos para el registro.</p>
+    <p class="text-sm text-slate-600">Datos del paciente e informacion sincronizable con Consultorio Movil.</p>
   </div>
   <form method="post" class="card p-6 space-y-4">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div>
+      <p class="text-sm font-semibold text-slate-900">Identificacion</p>
+      <p class="text-xs text-slate-500">El documento se usa para evitar duplicados por tenant.</p>
+    </div>
     <div class="grid gap-4 md:grid-cols-2">
       <div>
         <label class="block text-sm font-medium text-slate-700">Nombre</label>
@@ -21,24 +25,98 @@
         <input class="input mt-1" name="apellido" value="{{ paciente.apellido if paciente else '' }}" required />
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700">Telefono</label>
-        <input class="input mt-1" name="telefono" value="{{ paciente.telefono if paciente else '' }}" required />
+        <label class="block text-sm font-medium text-slate-700">Tipo de documento</label>
+        <input class="input mt-1" name="tipo_documento" value="{{ paciente.tipo_documento if paciente and paciente.tipo_documento else 'DNI' }}" />
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700">DNI</label>
+        <label class="block text-sm font-medium text-slate-700">Numero de documento</label>
+        <input class="input mt-1" name="numero_documento" value="{{ paciente.numero_documento if paciente and paciente.numero_documento else paciente.dni if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">DNI compatibilidad</label>
         <input class="input mt-1" name="dni" value="{{ paciente.dni if paciente else '' }}" required />
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700">Email</label>
-        <input class="input mt-1" type="email" name="email" value="{{ paciente.email if paciente else '' }}" required />
+        <label class="block text-sm font-medium text-slate-700">Fecha de nacimiento</label>
+        <input class="input mt-1" type="date" name="fecha_nacimiento" value="{{ paciente.fecha_nacimiento if paciente and paciente.fecha_nacimiento else '' }}" />
       </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Email</label>
+        <input class="input mt-1" type="email" name="email" value="{{ paciente.email if paciente else '' }}" />
+      </div>
+    </div>
+
+    <div class="border-t border-slate-200 pt-4">
+      <p class="text-sm font-semibold text-slate-900">Contacto</p>
+    </div>
+    <div class="grid gap-4 md:grid-cols-2">
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Celular / otro</label>
+        <input class="input mt-1" name="telefono" value="{{ paciente.telefono if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Telefono de casa</label>
+        <input class="input mt-1" name="telefono_casa" value="{{ paciente.telefono_casa if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Genero</label>
+        <input class="input mt-1" name="genero" value="{{ paciente.genero if paciente else '' }}" />
+      </div>
+    </div>
+
+    <div class="border-t border-slate-200 pt-4">
+      <p class="text-sm font-semibold text-slate-900">Cobertura</p>
+    </div>
+    <div class="grid gap-4 md:grid-cols-2">
       <div>
         <label class="block text-sm font-medium text-slate-700">Obra social</label>
         <input class="input mt-1" name="obra_social" value="{{ paciente.obra_social if paciente else '' }}" />
       </div>
       <div>
+        <label class="block text-sm font-medium text-slate-700">Financiador / seguro</label>
+        <input class="input mt-1" name="financiador_seguro" value="{{ paciente.financiador_seguro if paciente else '' }}" />
+      </div>
+      <div>
         <label class="block text-sm font-medium text-slate-700">Numero de afiliado</label>
         <input class="input mt-1" name="insurance_number" value="{{ paciente.insurance_number if paciente else '' }}" />
+      </div>
+    </div>
+
+    <div class="border-t border-slate-200 pt-4">
+      <p class="text-sm font-semibold text-slate-900">Direccion</p>
+    </div>
+    <div class="grid gap-4 md:grid-cols-3">
+      <div class="md:col-span-2">
+        <label class="block text-sm font-medium text-slate-700">Direccion</label>
+        <input class="input mt-1" name="direccion" value="{{ paciente.direccion if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Numero</label>
+        <input class="input mt-1" name="direccion_numero" value="{{ paciente.direccion_numero if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Departamento</label>
+        <input class="input mt-1" name="departamento" value="{{ paciente.departamento if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Piso</label>
+        <input class="input mt-1" name="piso" value="{{ paciente.piso if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Localidad</label>
+        <input class="input mt-1" name="localidad" value="{{ paciente.localidad if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Codigo postal</label>
+        <input class="input mt-1" name="codigo_postal" value="{{ paciente.codigo_postal if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Pais</label>
+        <input class="input mt-1" name="pais" value="{{ paciente.pais if paciente else '' }}" />
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Provincia</label>
+        <input class="input mt-1" name="provincia" value="{{ paciente.provincia if paciente else '' }}" />
       </div>
     </div>
     <div class="flex items-center gap-3">

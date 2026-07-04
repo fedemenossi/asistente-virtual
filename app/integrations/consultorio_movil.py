@@ -301,6 +301,11 @@ def _search_patients(session: requests.Session, query: str) -> list[dict[str, An
     return data.get("content") or []
 
 
+def fetch_all_patients(session: requests.Session) -> list[dict[str, Any]]:
+    _ = session
+    raise NotImplementedError("La sincronizacion inicial usa CSV; implementar API/scraping de Consultorio Movil en una etapa posterior.")
+
+
 class _HtmlTableParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()

@@ -6,16 +6,22 @@
 {% set breadcrumb = "Tenant / Pacientes" %}
 
 {% block content %}
-  <div class="mb-6 flex items-center justify-between">
+  <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
     <div>
       <p class="text-sm text-slate-600">Gestion de pacientes</p>
       <h1 class="text-2xl font-semibold text-slate-900">Pacientes</h1>
     </div>
-    <a class="btn btn-primary" href="/t/pacientes/new">Nuevo paciente</a>
+    <div class="flex flex-wrap gap-2">
+      <form method="post" action="/t/pacientes/sync-consultorio-movil">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+        <button class="btn btn-secondary" type="submit">Sincronizar Consultorio Movil</button>
+      </form>
+      <a class="btn btn-primary" href="/t/pacientes/new">Nuevo paciente</a>
+    </div>
   </div>
 
   <form method="get" class="mb-4 grid gap-3 md:grid-cols-3">
-    <input class="input" type="search" name="q" placeholder="Buscar por nombre" value="{{ q }}" />
+    <input class="input" type="search" name="q" placeholder="Nombre, documento, email, telefono" value="{{ q }}" />
     <input class="input" type="text" name="obra" placeholder="Obra social" value="{{ obra }}" />
     <button class="btn btn-secondary" type="submit">Filtrar</button>
   </form>
@@ -27,11 +33,12 @@
           <tr>
             <th class="px-4 py-3 text-left font-medium">Nombre</th>
             <th class="px-4 py-3 text-left font-medium">Apellido</th>
-            <th class="px-4 py-3 text-left font-medium">DNI</th>
+            <th class="px-4 py-3 text-left font-medium">Documento</th>
             <th class="px-4 py-3 text-left font-medium">Telefono</th>
             <th class="px-4 py-3 text-left font-medium">Email</th>
             <th class="px-4 py-3 text-left font-medium">Obra social</th>
             <th class="px-4 py-3 text-left font-medium">Afiliado</th>
+            <th class="px-4 py-3 text-left font-medium">Sync</th>
             <th class="px-4 py-3 text-right font-medium">Acciones</th>
           </tr>
         </thead>
@@ -40,11 +47,18 @@
             <tr class="border-t border-slate-200 hover:bg-slate-50">
               <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }}</td>
               <td class="px-4 py-3 text-slate-900">{{ paciente.apellido }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ paciente.dni or '-' }}</td>
+              <td class="px-4 py-3 text-slate-600">
+                <p>{{ paciente.tipo_documento or 'DNI' }} {{ paciente.numero_documento or paciente.dni or '-' }}</p>
+                {% if paciente.fecha_nacimiento %}<p class="text-xs text-slate-500">Nac. {{ paciente.fecha_nacimiento }}</p>{% endif %}
+              </td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.telefono }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.email }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.obra_social or '-' }}</td>
               <td class="px-4 py-3 text-slate-600">{{ paciente.insurance_number or '-' }}</td>
+              <td class="px-4 py-3 text-slate-600">
+                <p>{{ paciente.sync_source or '-' }}</p>
+                {% if paciente.synced_at %}<p class="text-xs text-slate-500">{{ paciente.synced_at }}</p>{% endif %}
+              </td>
               <td class="px-4 py-3 text-right">
                 <div data-dropdown class="relative inline-block text-left">
                   <button data-dropdown-toggle type="button" class="btn btn-ghost">...</button>

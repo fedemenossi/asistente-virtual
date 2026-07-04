@@ -61,6 +61,12 @@ from app.services.ai_conversation_summary_service import (
     sanitize_context_for_display,
 )
 from app.services.messaging_service import MessagingService
+from app.services.patient_sync_service import (
+    DEFAULT_CONSULTORIO_MOVIL_PATIENTS_CSV,
+    PatientSyncService,
+    normalize_document,
+    normalize_document_type,
+)
 from app.services.calendar_service import CalendarService
 from app.services.google_calendar_slots_service import (
     WEEKDAY_KEYS,
@@ -1127,10 +1133,16 @@ async def pacientes_list(
         Paciente.tenant_id == user.tenant_id, Paciente.deleted_at.is_(None)
     )
     if q:
+        like_q = f"%{q}%"
         stmt = stmt.where(
-            (Paciente.nombre.ilike(f"%{q}%"))
-            | (Paciente.apellido.ilike(f"%{q}%"))
-            | (Paciente.telefono.ilike(f"%{q}%"))
+            (Paciente.nombre.ilike(like_q))
+            | (Paciente.apellido.ilike(like_q))
+            | (Paciente.telefono.ilike(like_q))
+            | (Paciente.dni.ilike(like_q))
+            | (Paciente.numero_documento.ilike(like_q))
+            | (Paciente.document_number_normalized.ilike(like_q))
+            | (Paciente.email.ilike(like_q))
+            | (Paciente.obra_social.ilike(like_q))
         )
     if obra:
         stmt = stmt.where(Paciente.obra_social.ilike(f"%{obra}%"))
@@ -1169,17 +1181,34 @@ async def pacientes_new_post(
     request: Request,
     nombre: str = Form(...),
     apellido: str = Form(...),
-    telefono: str = Form(...),
+    telefono: str = Form(""),
     dni: str = Form(...),
-    email: str = Form(...),
+    email: str = Form(""),
     obra_social: str | None = Form(None),
     insurance_number: str | None = Form(None),
+    fecha_nacimiento: str | None = Form(None),
+    tipo_documento: str | None = Form(None),
+    numero_documento: str | None = Form(None),
+    financiador_seguro: str | None = Form(None),
+    genero: str | None = Form(None),
+    telefono_casa: str | None = Form(None),
+    direccion: str | None = Form(None),
+    direccion_numero: str | None = Form(None),
+    departamento: str | None = Form(None),
+    piso: str | None = Form(None),
+    localidad: str | None = Form(None),
+    codigo_postal: str | None = Form(None),
+    pais: str | None = Form(None),
+    provincia: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("patient:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
     normalized_phone = _sanitize_phone(telefono)
+    normalized_type = normalize_document_type(tipo_documento or "DNI")
+    final_document = (numero_documento or dni).strip()
+    normalized_document = normalize_document(final_document)
     duplicate_result = await session.execute(
         select(Paciente).where(
             Paciente.tenant_id == user.tenant_id,
@@ -1191,7 +1220,13 @@ async def pacientes_new_post(
         (
             p
             for p in duplicates
-            if _sanitize_phone(p.telefono) == normalized_phone or (p.dni and p.dni == dni)
+            if (normalized_phone and _sanitize_phone(p.telefono) == normalized_phone)
+            or (p.dni and p.dni == dni)
+            or (
+                p.tipo_documento == normalized_type
+                and p.document_number_normalized
+                and p.document_number_normalized == normalized_document
+            )
         ),
         None,
     )
@@ -1212,6 +1247,21 @@ async def pacientes_new_post(
         email=email,
         obra_social=obra_social,
         insurance_number=insurance_number,
+        fecha_nacimiento=_parse_optional_date(fecha_nacimiento),
+        tipo_documento=normalized_type or None,
+        numero_documento=final_document or None,
+        document_number_normalized=normalized_document or None,
+        financiador_seguro=(financiador_seguro or obra_social or "").strip() or None,
+        genero=(genero or "").strip() or None,
+        telefono_casa=_sanitize_phone(telefono_casa),
+        direccion=(direccion or "").strip() or None,
+        direccion_numero=(direccion_numero or "").strip() or None,
+        departamento=(departamento or "").strip() or None,
+        piso=(piso or "").strip() or None,
+        localidad=(localidad or "").strip() or None,
+        codigo_postal=(codigo_postal or "").strip() or None,
+        pais=(pais or "").strip() or None,
+        provincia=(provincia or "").strip() or None,
     )
     async with session.begin_nested():
         session.add(paciente)
@@ -1245,17 +1295,34 @@ async def pacientes_edit_post(
     paciente_id: int,
     nombre: str = Form(...),
     apellido: str = Form(...),
-    telefono: str = Form(...),
+    telefono: str = Form(""),
     dni: str = Form(...),
-    email: str = Form(...),
+    email: str = Form(""),
     obra_social: str | None = Form(None),
     insurance_number: str | None = Form(None),
+    fecha_nacimiento: str | None = Form(None),
+    tipo_documento: str | None = Form(None),
+    numero_documento: str | None = Form(None),
+    financiador_seguro: str | None = Form(None),
+    genero: str | None = Form(None),
+    telefono_casa: str | None = Form(None),
+    direccion: str | None = Form(None),
+    direccion_numero: str | None = Form(None),
+    departamento: str | None = Form(None),
+    piso: str | None = Form(None),
+    localidad: str | None = Form(None),
+    codigo_postal: str | None = Form(None),
+    pais: str | None = Form(None),
+    provincia: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("patient:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
     normalized_phone = _sanitize_phone(telefono)
+    normalized_type = normalize_document_type(tipo_documento or "DNI")
+    final_document = (numero_documento or dni).strip()
+    normalized_document = normalize_document(final_document)
     duplicate_result = await session.execute(
         select(Paciente).where(
             Paciente.tenant_id == user.tenant_id,
@@ -1268,7 +1335,13 @@ async def pacientes_edit_post(
         (
             p
             for p in duplicates
-            if _sanitize_phone(p.telefono) == normalized_phone or (p.dni and p.dni == dni)
+            if (normalized_phone and _sanitize_phone(p.telefono) == normalized_phone)
+            or (p.dni and p.dni == dni)
+            or (
+                p.tipo_documento == normalized_type
+                and p.document_number_normalized
+                and p.document_number_normalized == normalized_document
+            )
         ),
         None,
     )
@@ -1291,6 +1364,21 @@ async def pacientes_edit_post(
         paciente.email = email
         paciente.obra_social = obra_social
         paciente.insurance_number = insurance_number
+        paciente.fecha_nacimiento = _parse_optional_date(fecha_nacimiento)
+        paciente.tipo_documento = normalized_type or None
+        paciente.numero_documento = final_document or None
+        paciente.document_number_normalized = normalized_document or None
+        paciente.financiador_seguro = (financiador_seguro or obra_social or "").strip() or None
+        paciente.genero = (genero or "").strip() or None
+        paciente.telefono_casa = _sanitize_phone(telefono_casa)
+        paciente.direccion = (direccion or "").strip() or None
+        paciente.direccion_numero = (direccion_numero or "").strip() or None
+        paciente.departamento = (departamento or "").strip() or None
+        paciente.piso = (piso or "").strip() or None
+        paciente.localidad = (localidad or "").strip() or None
+        paciente.codigo_postal = (codigo_postal or "").strip() or None
+        paciente.pais = (pais or "").strip() or None
+        paciente.provincia = (provincia or "").strip() or None
         await audit_log(
             session,
             request,
@@ -1300,6 +1388,40 @@ async def pacientes_edit_post(
             entity_id=paciente.id,
         )
     add_flash(request, "success", "Paciente actualizado")
+    return RedirectResponse("/t/pacientes", status_code=303)
+
+
+async def pacientes_sync_consultorio_movil(
+    request: Request,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("patient:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    async with session.begin_nested():
+        result = await PatientSyncService(session).sync_from_csv(
+            int(user.tenant_id),
+            DEFAULT_CONSULTORIO_MOVIL_PATIENTS_CSV,
+        )
+        await audit_log(
+            session,
+            request,
+            user,
+            action="sync_consultorio_movil_csv",
+            entity="paciente",
+            entity_id=int(user.tenant_id),
+            tenant_id=int(user.tenant_id),
+            metadata=result.__dict__,
+        )
+    add_flash(
+        request,
+        "success" if result.errors == 0 else "warning",
+        (
+            f"Sincronizacion finalizada. Creados: {result.created}. "
+            f"Existentes omitidos: {result.existing}. "
+            f"Sin documento: {result.missing_document}. Errores: {result.errors}."
+        ),
+    )
     return RedirectResponse("/t/pacientes", status_code=303)
 
 
@@ -1620,6 +1742,18 @@ async def conversation_states(
 
 def _sanitize_phone(value: str | None) -> str:
     return re.sub(r"\D+", "", value or "")
+
+
+def _parse_optional_date(value: str | None) -> date | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _build_whatsapp_link(phone: str | None) -> str | None:

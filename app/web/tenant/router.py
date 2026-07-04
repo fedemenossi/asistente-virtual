@@ -107,6 +107,12 @@ router.add_api_route(
     dependencies=[Depends(require_feature("pacientes"))],
 )
 router.add_api_route(
+    "/pacientes/sync-consultorio-movil",
+    views.pacientes_sync_consultorio_movil,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("pacientes"))],
+)
+router.add_api_route(
     "/pacientes/{paciente_id}/edit",
     views.pacientes_edit_get,
     methods=["GET"],
