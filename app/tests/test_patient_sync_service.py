@@ -62,6 +62,24 @@ def test_normalize_document_keeps_letters_for_passport():
     assert normalize_document(" D 0042215 ") == "D0042215"
 
 
+def test_patient_payload_limits_long_email_field():
+    from app.services.patient_sync_service import patient_sync_row_from_payload
+
+    row = patient_sync_row_from_payload(
+        {
+            "Apellido": "Misitti",
+            "Nombres": "Candela",
+            "Tipo de documento": "DNI",
+            "Numero de documento": "42249215",
+            "Email": "candela@example.com " + ("texto largo " * 80),
+            "Financiador / Seguro": "OSDE " * 80,
+        }
+    )
+
+    assert row.email == "candela@example.com"
+    assert len(row.financiador_seguro) == 200
+
+
 class FakeResponse:
     def __init__(self, text: str, *, status_code: int = 200, url: str = "https://office.consultoriomovil.net/test") -> None:
         self.text = text

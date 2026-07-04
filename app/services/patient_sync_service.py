@@ -70,6 +70,21 @@ def _clean(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _limit(value: Any, max_length: int) -> str:
+    text = " ".join(_clean(value).split())
+    return text[:max_length]
+
+
+def _email_value(value: Any) -> str:
+    text = _clean(value).lower()
+    if not text:
+        return ""
+    match = re.search(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}", text)
+    if match:
+        return match.group(0)[:200]
+    return _limit(text, 200)
+
+
 def _normalize_key(value: Any) -> str:
     text = str(value or "").strip().lower()
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
@@ -109,29 +124,29 @@ def _parse_date(value: Any) -> date | None:
 
 
 def patient_sync_row_from_payload(raw: dict[str, Any]) -> PatientSyncRow:
-    tipo_documento = normalize_document_type(_raw_value(raw, "tipo de documento"))
-    numero_documento = _clean(_raw_value(raw, "numero de documento", "documento", "nro documento"))
+    tipo_documento = _limit(normalize_document_type(_raw_value(raw, "tipo de documento")), 50)
+    numero_documento = _limit(_raw_value(raw, "numero de documento", "documento", "nro documento"), 64)
     return PatientSyncRow(
-        apellido=_clean(_raw_value(raw, "apellido")),
-        nombres=_clean(_raw_value(raw, "nombres", "nombre")),
+        apellido=_limit(_raw_value(raw, "apellido"), 100),
+        nombres=_limit(_raw_value(raw, "nombres", "nombre"), 100),
         fecha_nacimiento=_parse_date(_raw_value(raw, "fecha de nacimiento", "nacimiento")),
         tipo_documento=tipo_documento,
         numero_documento=numero_documento,
         document_number_normalized=normalize_document(numero_documento),
-        financiador_seguro=_clean(_raw_value(raw, "financiador seguro", "financiador", "seguro", "obra social")),
-        nro_afiliado=_clean(_raw_value(raw, "nro afiliado", "numero de afiliado", "afiliado")),
-        email=_clean(_raw_value(raw, "email", "correo")).lower(),
-        celular=normalize_phone(_raw_value(raw, "celular otro", "celular", "telefono celular")),
-        telefono_casa=normalize_phone(_raw_value(raw, "telefono de casa", "telefono fijo")),
-        genero=_clean(_raw_value(raw, "genero", "sexo")),
-        direccion=_clean(_raw_value(raw, "direccion", "domicilio")),
-        direccion_numero=_clean(_raw_value(raw, "numero", "altura")),
-        departamento=_clean(_raw_value(raw, "departamento", "depto")),
-        piso=_clean(_raw_value(raw, "piso")),
-        localidad=_clean(_raw_value(raw, "localidad")),
-        codigo_postal=_clean(_raw_value(raw, "codigo postal", "cp")),
-        pais=_clean(_raw_value(raw, "pais")),
-        provincia=_clean(_raw_value(raw, "provincia")),
+        financiador_seguro=_limit(_raw_value(raw, "financiador seguro", "financiador", "seguro", "obra social"), 200),
+        nro_afiliado=_limit(_raw_value(raw, "nro afiliado", "numero de afiliado", "afiliado"), 100),
+        email=_email_value(_raw_value(raw, "email", "correo")),
+        celular=normalize_phone(_raw_value(raw, "celular otro", "celular", "telefono celular"))[:32],
+        telefono_casa=normalize_phone(_raw_value(raw, "telefono de casa", "telefono fijo"))[:64],
+        genero=_limit(_raw_value(raw, "genero", "sexo"), 50),
+        direccion=_limit(_raw_value(raw, "direccion", "domicilio"), 200),
+        direccion_numero=_limit(_raw_value(raw, "numero", "altura"), 40),
+        departamento=_limit(_raw_value(raw, "departamento", "depto"), 40),
+        piso=_limit(_raw_value(raw, "piso"), 40),
+        localidad=_limit(_raw_value(raw, "localidad"), 120),
+        codigo_postal=_limit(_raw_value(raw, "codigo postal", "cp"), 20),
+        pais=_limit(_raw_value(raw, "pais"), 80),
+        provincia=_limit(_raw_value(raw, "provincia"), 120),
         raw_payload={str(key): value for key, value in raw.items() if key is not None},
     )
 
