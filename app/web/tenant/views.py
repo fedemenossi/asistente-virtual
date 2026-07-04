@@ -1510,6 +1510,18 @@ async def pacientes_sync_consultorio_movil(
     payloads, redirect = await _fetch_consultorio_movil_patient_payloads(request, user, session)
     if redirect is not None:
         return redirect
+    if not payloads:
+        logger.warning(
+            "consultorio_movil_patient_sync_empty tenant_id=%s",
+            user.tenant_id,
+            extra={"tenant_id": user.tenant_id},
+        )
+        add_flash(
+            request,
+            "warning",
+            "Consultorio Movil autentico correctamente, pero no se encontraron fichas administrativas para sincronizar.",
+        )
+        return RedirectResponse("/t/pacientes", status_code=303)
 
     async with session.begin_nested():
         result = await PatientSyncService(session).sync_from_payloads(int(user.tenant_id), payloads)
@@ -1547,9 +1559,39 @@ async def pacientes_sync_one_consultorio_movil(
     payloads, redirect = await _fetch_consultorio_movil_patient_payloads(request, user, session)
     if redirect is not None:
         return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
+    if not payloads:
+        logger.warning(
+            "consultorio_movil_patient_sync_one_empty tenant_id=%s paciente_id=%s",
+            user.tenant_id,
+            paciente_id,
+            extra={"tenant_id": user.tenant_id, "paciente_id": paciente_id},
+        )
+        add_flash(
+            request,
+            "warning",
+            "Consultorio Movil autentico correctamente, pero no se encontraron fichas administrativas para sincronizar.",
+        )
+        return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
     payload = next((item for item in payloads if _patient_payload_matches(paciente, item)), None)
     if payload is None:
-        add_flash(request, "warning", "No se encontro este paciente en Consultorio Movil por documento.")
+        logger.warning(
+            "consultorio_movil_patient_sync_one_no_match tenant_id=%s paciente_id=%s document=%s payloads_count=%s",
+            user.tenant_id,
+            paciente_id,
+            paciente.document_number_normalized or paciente.dni,
+            len(payloads),
+            extra={
+                "tenant_id": user.tenant_id,
+                "paciente_id": paciente_id,
+                "document": paciente.document_number_normalized or paciente.dni,
+                "payloads_count": len(payloads),
+            },
+        )
+        add_flash(
+            request,
+            "warning",
+            f"No se encontro este paciente en Consultorio Movil por documento. Pacientes leidos: {len(payloads)}.",
+        )
         return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
     async with session.begin_nested():
         updated = await PatientSyncService(session).update_existing_from_payload(paciente, payload)

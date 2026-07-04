@@ -385,9 +385,18 @@ def _admin_patient_links(html: str, base_url: str) -> list[str]:
     links: list[str] = []
     for link in _extract_links(html):
         text_key = _normalize_key(str(link.get("text") or ""))
-        if "ver_ficha_administrativa" not in text_key:
+        href = str(link.get("href") or "").strip()
+        href_key = _normalize_key(href)
+        looks_like_admin_href = (
+            "administrativa" in href_key
+            or "administrative" in href_key
+            or "admin" in href_key
+            or "ficha" in href_key
+        )
+        if "ver_ficha_administrativa" not in text_key and not looks_like_admin_href:
             continue
-        links.append(requests.compat.urljoin(base_url, str(link["href"])))
+        if href and href != "#":
+            links.append(requests.compat.urljoin(base_url, href))
     return links
 
 
@@ -532,7 +541,9 @@ def fetch_all_patients(session: requests.Session) -> list[dict[str, Any]]:
         response.raise_for_status()
         links = _admin_patient_links(response.text or "", str(response.url))
         logger.info(
-            "consultorio_movil_patients_admin_links_found",
+            "consultorio_movil_patients_admin_links_found url=%s links_count=%s",
+            str(response.url),
+            len(links),
             extra={"url": str(response.url), "links_count": len(links)},
         )
         for detail_url in links:
@@ -549,7 +560,9 @@ def fetch_all_patients(session: requests.Session) -> list[dict[str, Any]]:
                 fields = _extract_admin_detail_fields(detail_response.text or "")
                 patients.append(_admin_fields_to_patient_payload(fields, str(detail_response.url)))
                 logger.info(
-                    "consultorio_movil_patient_detail_parsed",
+                    "consultorio_movil_patient_detail_parsed url=%s field_count=%s",
+                    str(detail_response.url),
+                    len(fields),
                     extra={"url": str(detail_response.url), "field_count": len(fields)},
                 )
             except requests.RequestException:
@@ -557,7 +570,9 @@ def fetch_all_patients(session: requests.Session) -> list[dict[str, Any]]:
         page_url = _next_patient_page(response.text or "", str(response.url))
 
     logger.info(
-        "consultorio_movil_patients_scrape_done",
+        "consultorio_movil_patients_scrape_done pages_count=%s patients_count=%s",
+        len(seen_pages),
+        len(patients),
         extra={"pages_count": len(seen_pages), "patients_count": len(patients)},
     )
     return patients
