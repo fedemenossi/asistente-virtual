@@ -47,6 +47,7 @@ from app.repositories.conversacion_repository import ConversacionRepository
 from app.integrations.consultorio_movil import (
     CabildoConfigError,
     fetch_attended_consultations,
+    fetch_all_patients,
     list_next_presential_slots,
     login as consultorio_movil_login,
 )
@@ -62,7 +63,6 @@ from app.services.ai_conversation_summary_service import (
 )
 from app.services.messaging_service import MessagingService
 from app.services.patient_sync_service import (
-    DEFAULT_CONSULTORIO_MOVIL_PATIENTS_CSV,
     PatientSyncService,
     normalize_document,
     normalize_document_type,
@@ -1398,16 +1398,57 @@ async def pacientes_sync_consultorio_movil(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    async with session.begin_nested():
-        result = await PatientSyncService(session).sync_from_csv(
-            int(user.tenant_id),
-            DEFAULT_CONSULTORIO_MOVIL_PATIENTS_CSV,
+    consultorio = await session.scalar(
+        select(Consultorio)
+        .where(
+            Consultorio.tenant_id == user.tenant_id,
+            Consultorio.deleted_at.is_(None),
+            Consultorio.proveedor_turnos == "consultorio_movil",
         )
+        .order_by(Consultorio.id.asc())
+    )
+    if consultorio is None:
+        add_flash(request, "error", "No hay consultorios configurados con Consultorio Movil.")
+        return RedirectResponse("/t/pacientes", status_code=303)
+    cfg = _consultorio_movil_config(consultorio)
+    if not (cfg.get("user") and cfg.get("password")):
+        add_flash(request, "error", "Configuracion de Consultorio Movil incompleta.")
+        return RedirectResponse("/t/pacientes", status_code=303)
+
+    try:
+        external_session = consultorio_movil_login(str(cfg["user"]), str(cfg["password"]))
+        payloads = fetch_all_patients(external_session)
+    except requests.RequestException as exc:
+        response = getattr(exc, "response", None)
+        logger.warning(
+            "consultorio_movil_patient_sync_failed",
+            extra={
+                "tenant_id": user.tenant_id,
+                "consultorio_id": consultorio.id,
+                "error_type": type(exc).__name__,
+                "status_code": getattr(response, "status_code", None),
+                "url": str(getattr(response, "url", "")),
+            },
+            exc_info=True,
+        )
+        add_flash(request, "error", "No se pudo leer pacientes desde Consultorio Movil.")
+        return RedirectResponse("/t/pacientes", status_code=303)
+    except RuntimeError as exc:
+        logger.warning(
+            "consultorio_movil_patient_sync_login_failed",
+            extra={"tenant_id": user.tenant_id, "consultorio_id": consultorio.id, "error_type": type(exc).__name__},
+            exc_info=True,
+        )
+        add_flash(request, "error", str(exc) or "No se pudo iniciar sesion en Consultorio Movil.")
+        return RedirectResponse("/t/pacientes", status_code=303)
+
+    async with session.begin_nested():
+        result = await PatientSyncService(session).sync_from_payloads(int(user.tenant_id), payloads)
         await audit_log(
             session,
             request,
             user,
-            action="sync_consultorio_movil_csv",
+            action="sync_consultorio_movil_scrape",
             entity="paciente",
             entity_id=int(user.tenant_id),
             tenant_id=int(user.tenant_id),

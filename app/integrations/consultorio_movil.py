@@ -26,6 +26,7 @@ APPOINTMENT_SAVE_URL = "https://office.consultoriomovil.net/office/appointment/a
 APPOINTMENT_PRACTICES_URL = "https://office.consultoriomovil.net/office/appointment/appointment/loadPractices"
 APPOINTMENT_STATUS_URL = "https://office.consultoriomovil.net/office/appointment/list/status"
 APPOINTMENT_LIST_URL = "https://office.consultoriomovil.net/office/appointment/list/ajax"
+PATIENT_LIST_URL = "https://office.consultoriomovil.net/office/patient/"
 SEEN_PATIENT_REPORT_URL = "https://office.consultoriomovil.net/office/report/seenPatientReport/index/"
 SEEN_PATIENT_REPORT_AJAX_URLS = [
     SEEN_PATIENT_REPORT_URL,
@@ -301,9 +302,265 @@ def _search_patients(session: requests.Session, query: str) -> list[dict[str, An
     return data.get("content") or []
 
 
+class _LinkTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.links: list[dict[str, Any]] = []
+        self._current: dict[str, Any] | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        attrs_dict = {key: value or "" for key, value in attrs}
+        self._current = {
+            "href": attrs_dict.get("href", ""),
+            "rel": attrs_dict.get("rel", ""),
+            "class": attrs_dict.get("class", ""),
+            "text_parts": [],
+        }
+
+    def handle_data(self, data: str) -> None:
+        if self._current is not None:
+            cleaned = " ".join(data.split())
+            if cleaned:
+                self._current["text_parts"].append(cleaned)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or self._current is None:
+            return
+        text = " ".join(self._current.pop("text_parts", [])).strip()
+        if self._current.get("href"):
+            self._current["text"] = text
+            self.links.append(self._current)
+        self._current = None
+
+
+class _FormFieldParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.label_for: dict[str, str] = {}
+        self.inputs: list[dict[str, str]] = []
+        self.text_chunks: list[str] = []
+        self._current_label_for: str | None = None
+        self._current_label_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attrs_dict = {key: value or "" for key, value in attrs}
+        if tag == "label":
+            self._current_label_for = attrs_dict.get("for", "")
+            self._current_label_parts = []
+        elif tag in {"input", "textarea", "select"}:
+            self.inputs.append(
+                {
+                    "id": attrs_dict.get("id", ""),
+                    "name": attrs_dict.get("name", ""),
+                    "placeholder": attrs_dict.get("placeholder", ""),
+                    "value": attrs_dict.get("value", ""),
+                }
+            )
+
+    def handle_data(self, data: str) -> None:
+        cleaned = " ".join(data.split())
+        if cleaned:
+            self.text_chunks.append(cleaned)
+        if self._current_label_for is not None and cleaned:
+            self._current_label_parts.append(cleaned)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "label" and self._current_label_for is not None:
+            label = " ".join(self._current_label_parts).strip()
+            if label and self._current_label_for:
+                self.label_for[self._current_label_for] = label
+            self._current_label_for = None
+            self._current_label_parts = []
+
+
+def _extract_links(html: str) -> list[dict[str, Any]]:
+    parser = _LinkTextParser()
+    parser.feed(html)
+    return parser.links
+
+
+def _admin_patient_links(html: str, base_url: str) -> list[str]:
+    links: list[str] = []
+    for link in _extract_links(html):
+        text_key = _normalize_key(str(link.get("text") or ""))
+        if "ver_ficha_administrativa" not in text_key:
+            continue
+        links.append(requests.compat.urljoin(base_url, str(link["href"])))
+    return links
+
+
+def _next_patient_page(html: str, base_url: str) -> str | None:
+    for link in _extract_links(html):
+        text_key = _normalize_key(str(link.get("text") or ""))
+        rel_key = _normalize_key(str(link.get("rel") or ""))
+        class_key = _normalize_key(str(link.get("class") or ""))
+        if rel_key == "next" or text_key in {"siguiente", "next"} or "pagination_next" in class_key:
+            href = str(link.get("href") or "").strip()
+            if href and href != "#":
+                return requests.compat.urljoin(base_url, href)
+    return None
+
+
+def _extract_admin_detail_fields(html: str) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    table_parser = _HtmlTableParser()
+    table_parser.feed(html)
+    for row in table_parser.rows:
+        if len(row) >= 2:
+            key = row[0].rstrip(":")
+            value = " ".join(row[1:]).strip()
+            if key and value:
+                fields[key] = value
+
+    form_parser = _FormFieldParser()
+    form_parser.feed(html)
+    for item in form_parser.inputs:
+        value = str(item.get("value") or "").strip()
+        if not value:
+            continue
+        label = form_parser.label_for.get(item.get("id") or "") or item.get("placeholder") or item.get("name")
+        if label:
+            fields[str(label).rstrip(":")] = value
+
+    text = "\n".join(form_parser.text_chunks)
+    known_labels = [
+        "Apellido",
+        "Nombres",
+        "Fecha de nacimiento",
+        "Tipo de documento",
+        "Número de documento",
+        "Numero de documento",
+        "Financiador / Seguro",
+        "Nro. Afiliado",
+        "Email",
+        "Celular / Otro",
+        "Teléfono de casa",
+        "Telefono de casa",
+        "Género",
+        "Genero",
+        "Dirección",
+        "Direccion",
+        "Número",
+        "Numero",
+        "Departamento",
+        "Piso",
+        "Localidad",
+        "Código Postal",
+        "Codigo Postal",
+        "País",
+        "Pais",
+        "Provincia",
+    ]
+    for label in known_labels:
+        if label in fields:
+            continue
+        match = re.search(rf"{re.escape(label)}\s*:?\s*([^\n]+)", text, flags=re.IGNORECASE)
+        if match:
+            fields[label] = match.group(1).strip()
+    return fields
+
+
+def _first_field(fields: dict[str, Any], *names: str) -> str:
+    value = _first_by_normalized_key(fields, *names)
+    return str(value or "").strip()
+
+
+def _split_full_name(full_name: str) -> tuple[str, str]:
+    text = " ".join((full_name or "").split())
+    if not text:
+        return "", ""
+    if "," in text:
+        last, first = text.split(",", 1)
+        return last.strip(), first.strip()
+    parts = text.split()
+    if len(parts) <= 1:
+        return "", text
+    return parts[0], " ".join(parts[1:])
+
+
+def _admin_fields_to_patient_payload(fields: dict[str, Any], source_url: str) -> dict[str, Any]:
+    apellido = _first_field(fields, "Apellido")
+    nombres = _first_field(fields, "Nombres", "Nombre")
+    if not apellido or not nombres:
+        full_name = _first_field(fields, "Paciente", "Nombre completo", "Apellido y nombre")
+        split_apellido, split_nombres = _split_full_name(full_name)
+        apellido = apellido or split_apellido
+        nombres = nombres or split_nombres
+    payload = {
+        "Apellido": apellido,
+        "Nombres": nombres,
+        "Fecha de nacimiento": _first_field(fields, "Fecha de nacimiento", "Nacimiento"),
+        "Tipo de documento": _first_field(fields, "Tipo de documento", "Tipo documento", "Documento tipo"),
+        "Número de documento": _first_field(fields, "Número de documento", "Numero de documento", "Documento", "Nro documento"),
+        "Financiador / Seguro": _first_field(fields, "Financiador / Seguro", "Financiador", "Seguro", "Obra social"),
+        "Nro. Afiliado": _first_field(fields, "Nro. Afiliado", "Numero de afiliado", "Nro afiliado", "Afiliado"),
+        "Email": _first_field(fields, "Email", "Correo"),
+        "Celular / Otro": _first_field(fields, "Celular / Otro", "Celular", "Telefono celular", "Teléfono celular"),
+        "Teléfono de casa": _first_field(fields, "Teléfono de casa", "Telefono de casa", "Telefono fijo"),
+        "Género": _first_field(fields, "Género", "Genero", "Sexo"),
+        "Dirección": _first_field(fields, "Dirección", "Direccion", "Domicilio"),
+        "Número": _first_field(fields, "Número", "Numero", "Altura"),
+        "Departamento": _first_field(fields, "Departamento", "Depto"),
+        "Piso": _first_field(fields, "Piso"),
+        "Localidad": _first_field(fields, "Localidad"),
+        "Código Postal": _first_field(fields, "Código Postal", "Codigo Postal", "CP"),
+        "País": _first_field(fields, "País", "Pais"),
+        "Provincia": _first_field(fields, "Provincia"),
+        "external_patient_id": _first_field(fields, "ID", "Id paciente", "Paciente ID"),
+        "_source_url": source_url,
+        "_raw_fields": fields,
+    }
+    return payload
+
+
 def fetch_all_patients(session: requests.Session) -> list[dict[str, Any]]:
-    _ = session
-    raise NotImplementedError("La sincronizacion inicial usa CSV; implementar API/scraping de Consultorio Movil en una etapa posterior.")
+    logger.info("consultorio_movil_patients_scrape_start", extra={"url": PATIENT_LIST_URL})
+    patients: list[dict[str, Any]] = []
+    seen_pages: set[str] = set()
+    seen_detail_urls: set[str] = set()
+    page_url: str | None = PATIENT_LIST_URL
+
+    while page_url and page_url not in seen_pages:
+        seen_pages.add(page_url)
+        response = session.get(page_url, headers={"Accept": "text/html,application/xhtml+xml"}, timeout=30)
+        logger.info(
+            "consultorio_movil_patients_list_response",
+            extra={"status_code": response.status_code, "url": str(response.url)},
+        )
+        response.raise_for_status()
+        links = _admin_patient_links(response.text or "", str(response.url))
+        logger.info(
+            "consultorio_movil_patients_admin_links_found",
+            extra={"url": str(response.url), "links_count": len(links)},
+        )
+        for detail_url in links:
+            if detail_url in seen_detail_urls:
+                continue
+            seen_detail_urls.add(detail_url)
+            try:
+                detail_response = session.get(detail_url, headers={"Accept": "text/html,application/xhtml+xml"}, timeout=30)
+                logger.info(
+                    "consultorio_movil_patient_detail_response",
+                    extra={"status_code": detail_response.status_code, "url": str(detail_response.url)},
+                )
+                detail_response.raise_for_status()
+                fields = _extract_admin_detail_fields(detail_response.text or "")
+                patients.append(_admin_fields_to_patient_payload(fields, str(detail_response.url)))
+                logger.info(
+                    "consultorio_movil_patient_detail_parsed",
+                    extra={"url": str(detail_response.url), "field_count": len(fields)},
+                )
+            except requests.RequestException:
+                logger.exception("consultorio_movil_patient_detail_failed", extra={"url": detail_url})
+        page_url = _next_patient_page(response.text or "", str(response.url))
+
+    logger.info(
+        "consultorio_movil_patients_scrape_done",
+        extra={"pages_count": len(seen_pages), "patients_count": len(patients)},
+    )
+    return patients
 
 
 class _HtmlTableParser(HTMLParser):

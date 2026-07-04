@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -69,7 +70,22 @@ def _clean(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _parse_date(value: str | None) -> date | None:
+def _normalize_key(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+
+def _raw_value(raw: dict[str, Any], *names: str) -> Any:
+    normalized = {_normalize_key(key): value for key, value in raw.items()}
+    for name in names:
+        key = _normalize_key(name)
+        if key in normalized:
+            return normalized[key]
+    return None
+
+
+def _parse_date(value: Any) -> date | None:
     text = _clean(value)
     if not text:
         return None
@@ -81,40 +97,39 @@ def _parse_date(value: str | None) -> date | None:
     return None
 
 
+def patient_sync_row_from_payload(raw: dict[str, Any]) -> PatientSyncRow:
+    tipo_documento = normalize_document_type(_raw_value(raw, "tipo de documento"))
+    numero_documento = _clean(_raw_value(raw, "numero de documento", "documento", "nro documento"))
+    return PatientSyncRow(
+        apellido=_clean(_raw_value(raw, "apellido")),
+        nombres=_clean(_raw_value(raw, "nombres", "nombre")),
+        fecha_nacimiento=_parse_date(_raw_value(raw, "fecha de nacimiento", "nacimiento")),
+        tipo_documento=tipo_documento,
+        numero_documento=numero_documento,
+        document_number_normalized=normalize_document(numero_documento),
+        financiador_seguro=_clean(_raw_value(raw, "financiador seguro", "financiador", "seguro", "obra social")),
+        nro_afiliado=_clean(_raw_value(raw, "nro afiliado", "numero de afiliado", "afiliado")),
+        email=_clean(_raw_value(raw, "email", "correo")).lower(),
+        celular=normalize_phone(_raw_value(raw, "celular otro", "celular", "telefono celular")),
+        telefono_casa=normalize_phone(_raw_value(raw, "telefono de casa", "telefono fijo")),
+        genero=_clean(_raw_value(raw, "genero", "sexo")),
+        direccion=_clean(_raw_value(raw, "direccion", "domicilio")),
+        direccion_numero=_clean(_raw_value(raw, "numero", "altura")),
+        departamento=_clean(_raw_value(raw, "departamento", "depto")),
+        piso=_clean(_raw_value(raw, "piso")),
+        localidad=_clean(_raw_value(raw, "localidad")),
+        codigo_postal=_clean(_raw_value(raw, "codigo postal", "cp")),
+        pais=_clean(_raw_value(raw, "pais")),
+        provincia=_clean(_raw_value(raw, "provincia")),
+        raw_payload={str(key): value for key, value in raw.items() if key is not None},
+    )
+
+
 def parse_consultorio_movil_patients_csv(path: str | Path) -> list[PatientSyncRow]:
     csv_path = Path(path)
     text = csv_path.read_text(encoding="utf-8-sig")
     reader = csv.DictReader(text.splitlines(), delimiter=",")
-    rows: list[PatientSyncRow] = []
-    for raw in reader:
-        tipo_documento = normalize_document_type(raw.get("Tipo de documento"))
-        numero_documento = _clean(raw.get("Número de documento"))
-        rows.append(
-            PatientSyncRow(
-                apellido=_clean(raw.get("Apellido")),
-                nombres=_clean(raw.get("Nombres")),
-                fecha_nacimiento=_parse_date(raw.get("Fecha de nacimiento")),
-                tipo_documento=tipo_documento,
-                numero_documento=numero_documento,
-                document_number_normalized=normalize_document(numero_documento),
-                financiador_seguro=_clean(raw.get("Financiador / Seguro")),
-                nro_afiliado=_clean(raw.get("Nro. Afiliado")),
-                email=_clean(raw.get("Email")).lower(),
-                celular=normalize_phone(raw.get("Celular / Otro")),
-                telefono_casa=normalize_phone(raw.get("Teléfono de casa")),
-                genero=_clean(raw.get("Género")),
-                direccion=_clean(raw.get("Dirección")),
-                direccion_numero=_clean(raw.get("Número")),
-                departamento=_clean(raw.get("Departamento")),
-                piso=_clean(raw.get("Piso")),
-                localidad=_clean(raw.get("Localidad")),
-                codigo_postal=_clean(raw.get("Código Postal")),
-                pais=_clean(raw.get("País")),
-                provincia=_clean(raw.get("Provincia")),
-                raw_payload={str(key): value for key, value in raw.items() if key is not None},
-            )
-        )
-    return rows
+    return [patient_sync_row_from_payload(raw) for raw in reader]
 
 
 class PatientSyncService:
@@ -127,12 +142,35 @@ class PatientSyncService:
         path: str | Path = DEFAULT_CONSULTORIO_MOVIL_PATIENTS_CSV,
     ) -> PatientSyncResult:
         rows = parse_consultorio_movil_patients_csv(path)
+        return await self.sync_rows(tenant_id, rows, sync_source="csv", log_source=str(path))
+
+    async def sync_from_payloads(
+        self,
+        tenant_id: int,
+        payloads: list[dict[str, Any]],
+        *,
+        sync_source: str = "consultorio_movil",
+    ) -> PatientSyncResult:
+        rows = [patient_sync_row_from_payload(payload) for payload in payloads]
+        return await self.sync_rows(tenant_id, rows, sync_source=sync_source, log_source=sync_source)
+
+    async def sync_rows(
+        self,
+        tenant_id: int,
+        rows: list[PatientSyncRow],
+        *,
+        sync_source: str,
+        log_source: str,
+    ) -> PatientSyncResult:
         created = 0
         existing = 0
         missing_document = 0
         errors = 0
         synced_at = now_ba().replace(tzinfo=None)
-        logger.info("patient_sync_csv_start", extra={"tenant_id": tenant_id, "path": str(path), "rows": len(rows)})
+        logger.info(
+            "patient_sync_start",
+            extra={"tenant_id": tenant_id, "sync_source": sync_source, "source": log_source, "rows_count": len(rows)},
+        )
 
         for row in rows:
             try:
@@ -168,8 +206,8 @@ class PatientSyncService:
                     pais=row.pais or None,
                     provincia=row.provincia or None,
                     external_provider="consultorio_movil",
-                    external_patient_id=None,
-                    sync_source="csv",
+                    external_patient_id=_clean(row.raw_payload.get("external_patient_id")) or None,
+                    sync_source=sync_source,
                     synced_at=synced_at,
                     external_updated_at=None,
                     raw_payload_json=row.raw_payload,
@@ -179,7 +217,7 @@ class PatientSyncService:
             except Exception:
                 errors += 1
                 logger.exception(
-                    "patient_sync_csv_row_failed",
+                    "patient_sync_row_failed",
                     extra={
                         "tenant_id": tenant_id,
                         "tipo_documento": row.tipo_documento,
@@ -196,9 +234,10 @@ class PatientSyncService:
             errors=errors,
         )
         logger.info(
-            "patient_sync_csv_done",
+            "patient_sync_done",
             extra={
                 "tenant_id": tenant_id,
+                "sync_source": sync_source,
                 "sync_total_rows": result.total_rows,
                 "sync_created": result.created,
                 "sync_existing": result.existing,

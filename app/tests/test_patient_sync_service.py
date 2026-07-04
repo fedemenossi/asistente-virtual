@@ -6,6 +6,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.core.security import hash_password
+from app.integrations.consultorio_movil import fetch_all_patients
 from app.models.paciente import Paciente
 from app.models.user import UserRole
 from app.services.patient_sync_service import (
@@ -13,7 +14,7 @@ from app.services.patient_sync_service import (
     normalize_document,
     parse_consultorio_movil_patients_csv,
 )
-from app.tests.conftest import create_paciente, create_tenant, create_user, login
+from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_user, login
 
 
 CSV_HEADER = (
@@ -58,6 +59,87 @@ def test_consultorio_movil_patients_csv_parser_maps_real_columns(tmp_path):
 def test_normalize_document_keeps_letters_for_passport():
     assert normalize_document("13028843-K") == "13028843K"
     assert normalize_document(" D 0042215 ") == "D0042215"
+
+
+class FakeResponse:
+    def __init__(self, text: str, *, status_code: int = 200, url: str = "https://office.consultoriomovil.net/test") -> None:
+        self.text = text
+        self.status_code = status_code
+        self.url = url
+        self.headers = {"content-type": "text/html"}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise AssertionError(f"unexpected status {self.status_code}")
+
+
+class FakeSession:
+    def __init__(self, responses: dict[str, FakeResponse]) -> None:
+        self.responses = responses
+        self.calls: list[str] = []
+
+    def get(self, url: str, headers=None, timeout=None):
+        self.calls.append(url)
+        if url not in self.responses:
+            raise AssertionError(f"unexpected url {url}")
+        return self.responses[url]
+
+
+def test_fetch_all_patients_scrapes_admin_links_detail_and_next_page():
+    list_url = "https://office.consultoriomovil.net/office/patient/"
+    page_2 = "https://office.consultoriomovil.net/office/patient/?page=2"
+    detail_1 = "https://office.consultoriomovil.net/office/patient/1/admin"
+    detail_2 = "https://office.consultoriomovil.net/office/patient/2/admin"
+    session = FakeSession(
+        {
+            list_url: FakeResponse(
+                f"""
+                <html><body>
+                  <a href="/office/patient/1/admin">Ver ficha administrativa</a>
+                  <a rel="next" href="{page_2}">Siguiente</a>
+                </body></html>
+                """,
+                url=list_url,
+            ),
+            page_2: FakeResponse(
+                '<html><body><a href="/office/patient/2/admin">Ver ficha administrativa</a></body></html>',
+                url=page_2,
+            ),
+            detail_1: FakeResponse(
+                """
+                <table>
+                  <tr><td>Apellido</td><td>Misitti</td></tr>
+                  <tr><td>Nombres</td><td>Candela</td></tr>
+                  <tr><td>Fecha de nacimiento</td><td>09-11-1999</td></tr>
+                  <tr><td>Tipo de documento</td><td>DNI</td></tr>
+                  <tr><td>Número de documento</td><td>42249215</td></tr>
+                  <tr><td>Financiador / Seguro</td><td>SWISS MEDICAL S.A.</td></tr>
+                  <tr><td>Nro. Afiliado</td><td>800006</td></tr>
+                  <tr><td>Email</td><td>candela@example.com</td></tr>
+                  <tr><td>Celular / Otro</td><td>011 1159658188</td></tr>
+                </table>
+                """,
+                url=detail_1,
+            ),
+            detail_2: FakeResponse(
+                """
+                <table>
+                  <tr><td>Apellido</td><td>SinDoc</td></tr>
+                  <tr><td>Nombres</td><td>Ana</td></tr>
+                </table>
+                """,
+                url=detail_2,
+            ),
+        }
+    )
+
+    payloads = fetch_all_patients(session)
+
+    assert len(payloads) == 2
+    assert payloads[0]["Apellido"] == "Misitti"
+    assert payloads[0]["Número de documento"] == "42249215"
+    assert payloads[0]["_source_url"] == detail_1
+    assert page_2 in session.calls
 
 
 def test_patient_sync_creates_new_patients_and_skips_missing_document(db_session, tmp_path):
@@ -177,8 +259,17 @@ def test_patient_sync_route_requires_login(client):
     assert response.status_code in (302, 303)
 
 
-def test_patient_sync_route_imports_csv_and_reports_summary(client, db_session, tmp_path, monkeypatch):
+def test_patient_sync_route_scrapes_consultorio_movil_and_reports_summary(client, db_session, monkeypatch):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Route", "whatsapp:+714"))
+    asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Consultorio Movil",
+            proveedor_turnos="consultorio_movil",
+            configuracion_externa={"cabildo": {"user": "cm-user", "password": "cm-pass", "staff_id": "77"}},
+        )
+    )
     asyncio.run(
         create_user(
             db_session,
@@ -188,13 +279,28 @@ def test_patient_sync_route_imports_csv_and_reports_summary(client, db_session, 
             tenant_id,
         )
     )
-    csv_path = _write_csv(
-        tmp_path / "pacientes.csv",
-        [
-            "Misitti,Candela,09-11-1999,DNI,42249215,SWISS MEDICAL S.A.,800006,misitti@example.com,011 1159658188, ,Mujer,,,,,,,Argentina,"
-        ],
-    )
-    monkeypatch.setattr("app.web.tenant.views.DEFAULT_CONSULTORIO_MOVIL_PATIENTS_CSV", csv_path)
+
+    def fake_login(username, password):
+        assert (username, password) == ("cm-user", "cm-pass")
+        return object()
+
+    def fake_fetch_all_patients(session):
+        return [
+            {
+                "Apellido": "Misitti",
+                "Nombres": "Candela",
+                "Fecha de nacimiento": "09-11-1999",
+                "Tipo de documento": "DNI",
+                "Número de documento": "42249215",
+                "Financiador / Seguro": "SWISS MEDICAL S.A.",
+                "Nro. Afiliado": "800006",
+                "Email": "misitti@example.com",
+                "Celular / Otro": "011 1159658188",
+            }
+        ]
+
+    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", fake_login)
+    monkeypatch.setattr("app.web.tenant.views.fetch_all_patients", fake_fetch_all_patients)
 
     login(client, "tenant-sync-route@test.com", "secret-123")
     page = client.get("/t/pacientes")
