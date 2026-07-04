@@ -549,6 +549,21 @@ def _candidate_to_patient_payload(candidate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _merge_patient_payloads(primary: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(primary)
+    for key, value in fallback.items():
+        if key not in merged or merged.get(key) in (None, ""):
+            merged[key] = value
+    raw_fields = {}
+    if isinstance(fallback.get("_raw_fields"), dict):
+        raw_fields.update(fallback["_raw_fields"])
+    if isinstance(primary.get("_raw_fields"), dict):
+        raw_fields.update(primary["_raw_fields"])
+    if raw_fields:
+        merged["_raw_fields"] = raw_fields
+    return merged
+
+
 def _admin_fields_to_patient_payload(fields: dict[str, Any], source_url: str) -> dict[str, Any]:
     apellido = _first_field(fields, "Apellido")
     nombres = _first_field(fields, "Nombres", "Nombre")
@@ -584,6 +599,102 @@ def _admin_fields_to_patient_payload(fields: dict[str, Any], source_url: str) ->
     return payload
 
 
+def _candidate_detail_urls(candidate: dict[str, Any]) -> list[str]:
+    urls: list[str] = []
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip()
+        if not text or text == "#":
+            return
+        url = requests.compat.urljoin(LOGIN_URL, text)
+        if url not in urls:
+            urls.append(url)
+
+    for key in (
+        "url",
+        "href",
+        "link",
+        "adminUrl",
+        "admin_url",
+        "administrativeUrl",
+        "administrative_url",
+        "fichaAdministrativaUrl",
+        "ficha_administrativa_url",
+    ):
+        add(candidate.get(key))
+
+    links = candidate.get("links") or candidate.get("_links")
+    if isinstance(links, dict):
+        for value in links.values():
+            if isinstance(value, dict):
+                add(value.get("href") or value.get("url"))
+            else:
+                add(value)
+    elif isinstance(links, list):
+        for value in links:
+            if isinstance(value, dict):
+                add(value.get("href") or value.get("url"))
+            else:
+                add(value)
+
+    patient_id = str(candidate.get("id") or candidate.get("patientId") or candidate.get("patient_id") or "").strip()
+    if patient_id:
+        for path in (
+            f"patient/{patient_id}/admin",
+            f"patient/{patient_id}/administrative",
+            f"patient/{patient_id}/administrativeFile",
+            f"patient/administrative/{patient_id}",
+            f"patient/administrativeFile/{patient_id}",
+            f"patient/show/{patient_id}",
+            f"patient/edit/{patient_id}",
+            f"patient/{patient_id}",
+        ):
+            add(path)
+    return urls
+
+
+def _fetch_candidate_admin_payload(
+    session: requests.Session,
+    candidate: dict[str, Any],
+    document_number: str,
+) -> dict[str, Any] | None:
+    doc = _sanitize_digits(document_number)
+    fallback = _candidate_to_patient_payload(candidate)
+    for url in _candidate_detail_urls(candidate):
+        try:
+            response = session.get(url, headers={"Accept": "text/html,application/xhtml+xml"}, timeout=30)
+            logger.info(
+                "consultorio_movil_patient_admin_candidate_response url=%s status_code=%s",
+                str(response.url),
+                response.status_code,
+                extra={"url": str(response.url), "status_code": response.status_code},
+            )
+            if response.status_code >= 400:
+                continue
+            fields = _extract_admin_detail_fields(response.text or "")
+            payload = _merge_patient_payloads(_admin_fields_to_patient_payload(fields, str(response.url)), fallback)
+            parsed_doc = _sanitize_digits(
+                str(
+                    payload.get("Numero de documento")
+                    or payload.get("NÃºmero de documento")
+                    or payload.get("Número de documento")
+                    or ""
+                )
+            )
+            logger.info(
+                "consultorio_movil_patient_admin_candidate_parsed url=%s field_count=%s document_match=%s",
+                str(response.url),
+                len(fields),
+                bool(parsed_doc and parsed_doc == doc),
+                extra={"url": str(response.url), "field_count": len(fields), "document_match": bool(parsed_doc and parsed_doc == doc)},
+            )
+            if fields and (not parsed_doc or parsed_doc == doc):
+                return payload
+        except requests.RequestException:
+            logger.warning("consultorio_movil_patient_admin_candidate_failed url=%s", url, exc_info=True)
+    return None
+
+
 def fetch_patient_by_document(session: requests.Session, document_number: str | None) -> dict[str, Any] | None:
     doc = _sanitize_digits(document_number or "")
     if not doc:
@@ -593,11 +704,19 @@ def fetch_patient_by_document(session: requests.Session, document_number: str | 
         logger.info("consultorio_movil_patient_search_no_match document_last4=%s", doc[-4:])
         return None
     payload = _candidate_to_patient_payload(candidate)
+    detail_payload = _fetch_candidate_admin_payload(session, candidate, doc)
+    if detail_payload is not None:
+        payload = _merge_patient_payloads(detail_payload, payload)
     logger.info(
-        "consultorio_movil_patient_search_match document_last4=%s external_patient_id=%s",
+        "consultorio_movil_patient_search_match document_last4=%s external_patient_id=%s has_admin_detail=%s",
         doc[-4:],
         payload.get("external_patient_id") or "",
-        extra={"document_last4": doc[-4:], "external_patient_id": payload.get("external_patient_id") or ""},
+        bool(detail_payload),
+        extra={
+            "document_last4": doc[-4:],
+            "external_patient_id": payload.get("external_patient_id") or "",
+            "has_admin_detail": bool(detail_payload),
+        },
     )
     return payload
 

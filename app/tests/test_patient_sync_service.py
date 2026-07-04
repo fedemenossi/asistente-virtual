@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 from sqlalchemy import select
 
 from app.core.security import hash_password
-from app.integrations.consultorio_movil import fetch_all_patients
+from app.integrations.consultorio_movil import fetch_all_patients, fetch_patient_by_document
 from app.models.paciente import Paciente
 from app.models.user import UserRole
 from app.services.patient_sync_service import (
@@ -72,6 +73,9 @@ class FakeResponse:
         if self.status_code >= 400:
             raise AssertionError(f"unexpected status {self.status_code}")
 
+    def json(self):
+        return json.loads(self.text)
+
 
 class FakeSession:
     def __init__(self, responses: dict[str, FakeResponse]) -> None:
@@ -82,6 +86,13 @@ class FakeSession:
         self.calls.append(url)
         if url not in self.responses:
             raise AssertionError(f"unexpected url {url}")
+        return self.responses[url]
+
+    def post(self, url: str, data=None, headers=None, timeout=None):
+        self.calls.append(url)
+        if url not in self.responses:
+            raise AssertionError(f"unexpected url {url}")
+        return self.responses[url]
         return self.responses[url]
 
 
@@ -140,6 +151,63 @@ def test_fetch_all_patients_scrapes_admin_links_detail_and_next_page():
     assert payloads[0]["Número de documento"] == "42249215"
     assert payloads[0]["_source_url"] == detail_1
     assert page_2 in session.calls
+
+
+def test_fetch_patient_by_document_opens_admin_detail_from_search_candidate():
+    search_url = "https://office.consultoriomovil.net/office/patient/search"
+    detail_url = "https://office.consultoriomovil.net/office/patient/10011954/admin"
+    session = FakeSession(
+        {
+            search_url: FakeResponse(
+                """
+                {
+                  "content": [
+                    {
+                      "id": 10011954,
+                      "name": "Misitti, Candela",
+                      "document": {"type": "DNI", "number": "42249215"},
+                      "email": "basico@example.com"
+                    }
+                  ]
+                }
+                """,
+                url=search_url,
+            ),
+            detail_url: FakeResponse(
+                """
+                <table>
+                  <tr><td>Apellido</td><td>Misitti</td></tr>
+                  <tr><td>Nombres</td><td>Candela</td></tr>
+                  <tr><td>Fecha de nacimiento</td><td>09-11-1999</td></tr>
+                  <tr><td>Tipo de documento</td><td>DNI</td></tr>
+                  <tr><td>Numero de documento</td><td>42249215</td></tr>
+                  <tr><td>Financiador / Seguro</td><td>SWISS MEDICAL S.A.</td></tr>
+                  <tr><td>Nro. Afiliado</td><td>800006</td></tr>
+                  <tr><td>Email</td><td>detalle@example.com</td></tr>
+                  <tr><td>Celular / Otro</td><td>011 1159658188</td></tr>
+                  <tr><td>Telefono de casa</td><td>011 45556666</td></tr>
+                  <tr><td>Genero</td><td>Mujer</td></tr>
+                  <tr><td>Direccion</td><td>Calle Falsa</td></tr>
+                  <tr><td>Numero</td><td>123</td></tr>
+                  <tr><td>Localidad</td><td>CABA</td></tr>
+                  <tr><td>Codigo Postal</td><td>1000</td></tr>
+                  <tr><td>Pais</td><td>Argentina</td></tr>
+                  <tr><td>Provincia</td><td>Buenos Aires</td></tr>
+                </table>
+                """,
+                url=detail_url,
+            ),
+        }
+    )
+
+    payload = fetch_patient_by_document(session, "42.249.215")
+
+    assert payload is not None
+    assert payload["Email"] == "detalle@example.com"
+    assert payload["Financiador / Seguro"] == "SWISS MEDICAL S.A."
+    assert payload["_raw_fields"]["Direccion"] == "Calle Falsa"
+    assert payload["external_patient_id"] == "10011954"
+    assert detail_url in session.calls
 
 
 def test_patient_sync_creates_new_patients_and_skips_missing_document(db_session, tmp_path):
