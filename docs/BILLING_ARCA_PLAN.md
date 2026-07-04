@@ -797,6 +797,9 @@ Objetivo:
 Archivos:
 
 - `app/integrations/consultorio_movil.py`: `fetch_attended_consultations`;
+- `app/integrations/consultorio_movil.py`: `fetch_seen_patient_report` usa como fuente primaria el reporte
+  `https://office.consultoriomovil.net/office/report/seenPatientReport/index/`, con parsing de JSON/HTML y fallback
+  al endpoint historico de turnos atendidos;
 - `app/models/billing_external_consultation.py`;
 - `app/templates/tenant/billing_pending.html`;
 - `app/web/tenant/router.py`;
