@@ -1464,7 +1464,9 @@ def _patient_payload_matches(paciente: Paciente, payload: dict) -> bool:
         return False
     patient_type = normalize_document_type(paciente.tipo_documento or "DNI")
     patient_doc = normalize_document(paciente.numero_documento or paciente.dni)
-    return row.tipo_documento == patient_type and row.document_number_normalized == patient_doc
+    if row.document_number_normalized != patient_doc:
+        return False
+    return not row.tipo_documento or row.tipo_documento == patient_type
 
 
 async def pacientes_import_csv(

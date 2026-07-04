@@ -296,7 +296,7 @@ class PatientSyncService:
         sync_source: str = "consultorio_movil",
     ) -> bool:
         row = patient_sync_row_from_payload(payload)
-        if not row.tipo_documento or not row.document_number_normalized:
+        if not row.document_number_normalized:
             return False
         paciente.nombre = row.nombres or paciente.nombre
         paciente.apellido = row.apellido or paciente.apellido
@@ -306,7 +306,7 @@ class PatientSyncService:
         paciente.obra_social = row.financiador_seguro or None
         paciente.insurance_number = row.nro_afiliado or None
         paciente.fecha_nacimiento = row.fecha_nacimiento
-        paciente.tipo_documento = row.tipo_documento
+        paciente.tipo_documento = row.tipo_documento or paciente.tipo_documento
         paciente.numero_documento = row.numero_documento
         paciente.document_number_normalized = row.document_number_normalized
         paciente.financiador_seguro = row.financiador_seguro or None

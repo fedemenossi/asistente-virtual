@@ -461,6 +461,74 @@ def test_patient_detail_sync_from_consultorio_movil_updates_existing_patient(cli
     assert paciente.sync_source == "consultorio_movil"
 
 
+def test_patient_detail_sync_matches_by_document_when_external_type_is_missing(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient DNI Match", "whatsapp:+719"))
+    paciente_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491111111111",
+            nombre="Nombre Local",
+            apellido="Apellido Local",
+            dni="42.249.215",
+            tipo_documento="DNI",
+            numero_documento="42.249.215",
+            document_number_normalized="42249215",
+            email="local@example.com",
+        )
+    )
+    asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Consultorio Movil",
+            proveedor_turnos="consultorio_movil",
+            configuracion_externa={"cabildo": {"user": "cm-user", "password": "cm-pass"}},
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-dni-match@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", lambda username, password: object())
+    monkeypatch.setattr(
+        "app.web.tenant.views.fetch_all_patients",
+        lambda session: [
+            {
+                "Apellido": "Misitti",
+                "Nombres": "Candela",
+                "Numero de documento": "42249215",
+                "Email": "candela@example.com",
+                "Celular / Otro": "011 1159658188",
+            }
+        ],
+    )
+
+    login(client, "tenant-dni-match@test.com", "secret-123")
+    edit = client.get(f"/t/pacientes/{paciente_id}/edit")
+    response = client.post(
+        f"/t/pacientes/{paciente_id}/sync-consultorio-movil",
+        data={"csrf_token": _csrf(edit.text)},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+
+    async def _fetch():
+        async with db_session() as session:
+            return await session.get(Paciente, paciente_id)
+
+    paciente = asyncio.run(_fetch())
+    assert paciente.nombre == "Candela"
+    assert paciente.document_number_normalized == "42249215"
+
+
 def test_patient_form_saves_extended_fields(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient Form", "whatsapp:+715"))
     asyncio.run(
