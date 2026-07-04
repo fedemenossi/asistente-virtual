@@ -15,6 +15,10 @@
 
   <div class="mb-5 grid gap-4 lg:grid-cols-2">
     <form method="get" class="card p-4">
+      <div class="mb-3">
+        <p class="text-sm font-semibold text-slate-900">Filtrar consultas importadas</p>
+        <p class="text-xs text-slate-500">Busca sobre las consultas ya guardadas en el sistema.</p>
+      </div>
       <div class="grid gap-3 md:grid-cols-3">
         <div>
           <label class="text-xs text-slate-500">Desde</label>
@@ -62,12 +66,16 @@
         </div>
       </div>
       <div class="mt-3">
-        <button class="btn btn-secondary" type="submit">Filtrar</button>
+        <button class="btn btn-secondary" type="submit">Filtrar importadas</button>
       </div>
     </form>
 
     <form method="post" action="/t/billing/pending/import" class="card p-4">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <div class="mb-3">
+        <p class="text-sm font-semibold text-slate-900">Consultar Consultorio Movil</p>
+        <p class="text-xs text-slate-500">Trae pacientes atendidos del rango seleccionado y los deja disponibles para facturar.</p>
+      </div>
       <div class="grid gap-3 md:grid-cols-3">
         <div>
           <label class="text-xs text-slate-500">Desde</label>
@@ -88,7 +96,7 @@
         </div>
       </div>
       <div class="mt-3">
-        <button class="btn btn-primary" type="submit">Importar atendidas</button>
+        <button class="btn btn-primary" type="submit">Buscar e importar atendidas</button>
       </div>
     </form>
   </div>
@@ -164,6 +172,7 @@
   {% else %}
     <div class="card p-10 text-center">
       <p class="text-sm text-slate-600">No hay consultas pendientes para los filtros seleccionados.</p>
+      <p class="mt-2 text-xs text-slate-500">Si esperabas datos de Consultorio Movil, usá “Buscar e importar atendidas”.</p>
     </div>
   {% endif %}
 {% endblock %}

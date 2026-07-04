@@ -27,6 +27,25 @@
       </div>
       <div class="grid gap-4 md:grid-cols-2">
         <div>
+          <p class="text-xs text-slate-500">Consulta facturada</p>
+          {% if consultation %}
+            <p class="text-sm font-medium text-slate-900">#{{ consultation.id }} - {{ consultation.patient_name or "-" }}</p>
+            <p class="text-xs text-slate-500">{{ consultation.external_provider }}: {{ consultation.external_id }}</p>
+          {% else %}
+            <p class="text-sm font-medium text-slate-900">-</p>
+          {% endif %}
+        </div>
+        <div>
+          <p class="text-xs text-slate-500">Envio por mail</p>
+          {% if invoice.email_sent_at %}
+            <p class="text-sm font-medium text-slate-900">Enviado {{ invoice.email_sent_at }}</p>
+            <p class="text-xs text-slate-500">{{ invoice.email_to or "-" }}</p>
+          {% else %}
+            <p class="text-sm font-medium text-slate-900">No enviado</p>
+            <p class="text-xs text-slate-500">{{ invoice.email_to or patient_email or "-" }}</p>
+          {% endif %}
+        </div>
+        <div>
           <p class="text-xs text-slate-500">CUIT representado</p>
           <p class="text-sm font-medium text-slate-900">{{ invoice.represented_cuit }}</p>
         </div>

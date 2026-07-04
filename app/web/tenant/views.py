@@ -2718,15 +2718,22 @@ async def billing_arca_list(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     status_filter = request.query_params.get("status", "").strip()
-    stmt = select(ArcaInvoice).where(ArcaInvoice.tenant_id == user.tenant_id)
+    stmt = (
+        select(ArcaInvoice, BillingExternalConsultation)
+        .outerjoin(
+            BillingExternalConsultation,
+            BillingExternalConsultation.id == ArcaInvoice.external_consultation_id,
+        )
+        .where(ArcaInvoice.tenant_id == user.tenant_id)
+    )
     if status_filter:
         stmt = stmt.where(ArcaInvoice.status == status_filter)
     result = await session.execute(stmt.order_by(desc(ArcaInvoice.created_at)))
-    invoices = list(result.scalars().all())
+    rows = list(result.all())
     return _template(
         request,
         "tenant/billing_arca_list.html",
-        {"invoices": invoices, "status_filter": status_filter},
+        {"rows": rows, "status_filter": status_filter},
     )
 
 
@@ -3202,6 +3209,22 @@ async def billing_pending_consultations(
     result = await session.execute(stmt.order_by(BillingExternalConsultation.attended_at.desc()))
     rows = list(result.all())
     consultorios = await _billing_consultorios(session, int(user.tenant_id))
+    logger.info(
+        "billing_pending_filter",
+        extra={
+            "tenant_id": user.tenant_id,
+            "date_from": date_from,
+            "date_to": date_to,
+            "consultorio_id": consultorio_id,
+            "has_q": bool(q),
+            "has_dni": bool(dni),
+            "has_obra_social": bool(obra_social),
+            "has_staff_id": bool(staff_id),
+            "status": status,
+            "rows_count": len(rows),
+            "consultorios_count": len(consultorios),
+        },
+    )
     return _template(
         request,
         "tenant/billing_pending.html",
@@ -3243,7 +3266,30 @@ async def billing_pending_import(
     if (consultorio.proveedor_turnos or "").strip().lower() != "consultorio_movil":
         raise HTTPException(status_code=400, detail="El consultorio no usa Consultorio Movil")
     cfg = _consultorio_movil_config(consultorio)
+    logger.info(
+        "consultorio_movil_billing_import_start",
+        extra={
+            "tenant_id": user.tenant_id,
+            "consultorio_id": consultorio.id,
+            "date_from": date_from,
+            "date_to": date_to,
+            "has_user": bool(cfg.get("user")),
+            "has_password": bool(cfg.get("password")),
+            "has_staff_id": bool(cfg.get("staff_id")),
+            "staff_id": str(cfg.get("staff_id") or ""),
+        },
+    )
     if not (cfg.get("user") and cfg.get("password") and cfg.get("staff_id")):
+        logger.warning(
+            "consultorio_movil_billing_import_config_incomplete",
+            extra={
+                "tenant_id": user.tenant_id,
+                "consultorio_id": consultorio.id,
+                "has_user": bool(cfg.get("user")),
+                "has_password": bool(cfg.get("password")),
+                "has_staff_id": bool(cfg.get("staff_id")),
+            },
+        )
         add_flash(request, "error", "Configuracion de Consultorio Movil incompleta")
         return RedirectResponse(f"/t/billing/pending?date_from={date_from}&date_to={date_to}", status_code=303)
 
@@ -3258,9 +3304,18 @@ async def billing_pending_import(
             end_date,
         )
     except requests.RequestException as exc:
+        response = getattr(exc, "response", None)
         logger.warning(
             "consultorio_movil_billing_import_failed",
-            extra={"tenant_id": user.tenant_id, "consultorio_id": consultorio.id},
+            extra={
+                "tenant_id": user.tenant_id,
+                "consultorio_id": consultorio.id,
+                "staff_id": str(cfg.get("staff_id") or ""),
+                "error_type": type(exc).__name__,
+                "status_code": getattr(response, "status_code", None),
+                "url": str(getattr(response, "url", "")),
+            },
+            exc_info=True,
         )
         add_flash(
             request,
@@ -3274,7 +3329,13 @@ async def billing_pending_import(
     except RuntimeError as exc:
         logger.warning(
             "consultorio_movil_billing_login_failed",
-            extra={"tenant_id": user.tenant_id, "consultorio_id": consultorio.id},
+            extra={
+                "tenant_id": user.tenant_id,
+                "consultorio_id": consultorio.id,
+                "staff_id": str(cfg.get("staff_id") or ""),
+                "error_type": type(exc).__name__,
+            },
+            exc_info=True,
         )
         add_flash(request, "error", str(exc) or "No se pudo iniciar sesion en Consultorio Movil.")
         return RedirectResponse(
@@ -3318,6 +3379,15 @@ async def billing_pending_import(
             if existing is None:
                 session.add(row)
                 imported += 1
+            else:
+                logger.info(
+                    "consultorio_movil_billing_import_update_existing",
+                    extra={
+                        "tenant_id": user.tenant_id,
+                        "consultorio_id": consultorio.id,
+                        "external_id": consultation.external_id,
+                    },
+                )
         await audit_log(
             session,
             request,
@@ -3335,6 +3405,17 @@ async def billing_pending_import(
                 "skipped_invoiced": skipped_invoiced,
             },
         )
+    logger.info(
+        "consultorio_movil_billing_import_done",
+        extra={
+            "tenant_id": user.tenant_id,
+            "consultorio_id": consultorio.id,
+            "staff_id": str(cfg.get("staff_id") or ""),
+            "fetched": len(consultations),
+            "inserted": imported,
+            "skipped_invoiced": skipped_invoiced,
+        },
+    )
     add_flash(
         request,
         "success",

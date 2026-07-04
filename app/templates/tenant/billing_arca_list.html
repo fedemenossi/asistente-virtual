@@ -29,28 +29,49 @@
     <button class="btn btn-secondary" type="submit">Filtrar</button>
   </form>
 
-  {% if invoices %}
+  {% if rows %}
     <div class="card overflow-x-auto overflow-y-visible">
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600">
           <tr>
             <th class="px-4 py-3 text-left font-medium">Comprobante</th>
+            <th class="px-4 py-3 text-left font-medium">Consulta</th>
+            <th class="px-4 py-3 text-left font-medium">Paciente</th>
             <th class="px-4 py-3 text-left font-medium">Ambiente</th>
-            <th class="px-4 py-3 text-left font-medium">CUIT</th>
             <th class="px-4 py-3 text-left font-medium">Importe</th>
             <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-left font-medium">Mail</th>
             <th class="px-4 py-3 text-right font-medium">Detalle</th>
           </tr>
         </thead>
         <tbody>
-          {% for invoice in invoices %}
+          {% for row in rows %}
+            {% set invoice = row[0] %}
+            {% set consultation = row[1] %}
             {% set status = invoice.status.value if invoice.status.value is defined else invoice.status %}
             <tr class="border-t border-slate-200 hover:bg-slate-50">
               <td class="px-4 py-3 text-slate-900">
                 {{ invoice.pto_vta }}-{{ invoice.cbte_tipo }}-{{ invoice.cbte_nro or "sin numero" }}
+                <p class="text-xs text-slate-500">CAE {{ invoice.cae or "-" }}</p>
+              </td>
+              <td class="px-4 py-3 text-slate-600">
+                {% if consultation %}
+                  <p class="font-medium text-slate-900">#{{ consultation.id }}</p>
+                  <p class="max-w-48 truncate text-xs text-slate-500" title="{{ consultation.external_id }}">{{ consultation.external_provider }}: {{ consultation.external_id }}</p>
+                  <p class="text-xs text-slate-500">Facturada: {{ consultation.billed_at or "-" }}</p>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td class="px-4 py-3 text-slate-600">
+                {% if consultation %}
+                  <p class="font-medium text-slate-900">{{ consultation.patient_name or "-" }}</p>
+                  <p class="text-xs text-slate-500">DNI {{ consultation.patient_document or "-" }}</p>
+                {% else %}
+                  -
+                {% endif %}
               </td>
               <td class="px-4 py-3 text-slate-600">{{ invoice.environment }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ invoice.represented_cuit }}</td>
               <td class="px-4 py-3 text-slate-600">{{ invoice.imp_total or "-" }} {{ invoice.mon_id }}</td>
               <td class="px-4 py-3">
                 {% if status == 'authorized' %}
@@ -61,6 +82,15 @@
                   {{ badge("A reconciliar", "warning") }}
                 {% else %}
                   {{ badge("Borrador", "neutral") }}
+                {% endif %}
+              </td>
+              <td class="px-4 py-3">
+                {% if invoice.email_sent_at %}
+                  {{ badge("Enviado", "success") }}
+                  <p class="mt-1 text-xs text-slate-500">{{ invoice.email_to or "-" }}</p>
+                {% else %}
+                  {{ badge("No enviado", "neutral") }}
+                  <p class="mt-1 text-xs text-slate-500">{{ invoice.email_to or "-" }}</p>
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">

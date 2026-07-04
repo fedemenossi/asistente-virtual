@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import unicodedata
 from collections import OrderedDict
@@ -37,6 +38,7 @@ DAY_NAMES_ES = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "
 SIMPLE_TIMEZONES: dict[str, tzinfo] = {
     "America/Argentina/Buenos_Aires": timezone(timedelta(hours=-3)),
 }
+logger = logging.getLogger(__name__)
 
 
 class CabildoConfigError(RuntimeError):
@@ -104,7 +106,16 @@ def login(username: str, password: str) -> requests.Session:
         }
     )
 
+    logger.info("consultorio_movil_login_start", extra={"login_url": LOGIN_URL, "username_present": bool(username)})
     login_page = session.get(LOGIN_URL, timeout=30)
+    logger.info(
+        "consultorio_movil_login_page_response",
+        extra={
+            "status_code": login_page.status_code,
+            "final_url": str(login_page.url),
+            "content_type": login_page.headers.get("content-type", ""),
+        },
+    )
     login_page.raise_for_status()
 
     payload = {
@@ -120,16 +131,33 @@ def login(username: str, password: str) -> requests.Session:
         "Accept": "application/json, text/javascript, */*; q=0.01",
     }
     resp = session.post(AUTH_URL, data=payload, headers=headers, timeout=30)
+    logger.info(
+        "consultorio_movil_auth_response",
+        extra={
+            "status_code": resp.status_code,
+            "final_url": str(resp.url),
+            "content_type": resp.headers.get("content-type", ""),
+        },
+    )
     resp.raise_for_status()
 
     data = resp.json()
     success = str(data.get("success")).lower() == "true"
     if not success:
+        logger.warning(
+            "consultorio_movil_auth_rejected",
+            extra={"messages_count": len(data.get("messages") or []), "has_redirect": bool(data.get("redirectTo"))},
+        )
         raise RuntimeError("No se pudo iniciar sesion. Verifica credenciales.")
 
     redirect_url = data.get("redirectTo")
     if redirect_url:
-        session.get(requests.compat.urljoin(LOGIN_URL, redirect_url), timeout=30)
+        redirect_response = session.get(requests.compat.urljoin(LOGIN_URL, redirect_url), timeout=30)
+        logger.info(
+            "consultorio_movil_login_redirect_response",
+            extra={"status_code": redirect_response.status_code, "final_url": str(redirect_response.url)},
+        )
+    logger.info("consultorio_movil_login_success")
     return session
 
 
@@ -479,16 +507,35 @@ def fetch_seen_patient_report(
     payload = _build_seen_patient_payload(staff_id, date_from, date_to)
     headers = {**XHR_HEADERS, "Accept": "application/json, text/html, */*; q=0.01"}
     seen_items: list[Any] = []
+    logger.info(
+        "consultorio_movil_seen_report_fetch_start",
+        extra={"staff_id": staff_id, "date_from": date_from.isoformat(), "date_to": date_to.isoformat()},
+    )
     for url in SEEN_PATIENT_REPORT_AJAX_URLS:
         for method in ("post", "get"):
             if method == "post":
                 response = session.post(url, data=payload, headers=headers, timeout=30)
             else:
                 response = session.get(url, params=payload, headers=headers, timeout=30)
+            logger.info(
+                "consultorio_movil_seen_report_response",
+                extra={
+                    "method": method.upper(),
+                    "url": url,
+                    "status_code": response.status_code,
+                    "final_url": str(response.url),
+                    "content_type": response.headers.get("content-type", ""),
+                    "bytes": len(response.content or b"") if hasattr(response, "content") else len(response.text or ""),
+                },
+            )
             if response.status_code in {404, 405}:
                 continue
             response.raise_for_status()
             items = _response_report_items(response)
+            logger.info(
+                "consultorio_movil_seen_report_parsed",
+                extra={"method": method.upper(), "url": url, "items_count": len(items)},
+            )
             if items:
                 seen_items = items
                 break
@@ -499,6 +546,7 @@ def fetch_seen_patient_report(
         consultation = _attended_from_item(item, tz, index)
         if consultation is not None:
             consultations.append(consultation)
+    logger.info("consultorio_movil_seen_report_fetch_done", extra={"consultations_count": len(consultations)})
     return consultations
 
 
@@ -512,7 +560,12 @@ def fetch_attended_consultations(
     tz = tz or SIMPLE_TIMEZONES["America/Argentina/Buenos_Aires"]
     seen_report = fetch_seen_patient_report(session, staff_id, date_from, date_to, tz)
     if seen_report:
+        logger.info("consultorio_movil_attended_source_seen_report", extra={"consultations_count": len(seen_report)})
         return seen_report
+    logger.info(
+        "consultorio_movil_attended_fallback_start",
+        extra={"url": APPOINTMENT_LIST_URL, "staff_id": staff_id, "date_from": date_from.isoformat(), "date_to": date_to.isoformat()},
+    )
     payload = {
         "staff_id": staff_id,
         "staff": staff_id,
@@ -528,6 +581,15 @@ def fetch_attended_consultations(
         headers={**XHR_HEADERS, "Accept": "application/json, text/javascript, */*; q=0.01"},
         timeout=30,
     )
+    logger.info(
+        "consultorio_movil_attended_fallback_response",
+        extra={
+            "status_code": resp.status_code,
+            "final_url": str(resp.url),
+            "content_type": resp.headers.get("content-type", ""),
+            "bytes": len(resp.content or b"") if hasattr(resp, "content") else len(resp.text or ""),
+        },
+    )
     resp.raise_for_status()
     data = resp.json()
     raw_items = data.get("content") or data.get("data") or data.get("items") or []
@@ -539,6 +601,7 @@ def fetch_attended_consultations(
         consultation = _attended_from_item(item, tz, len(consultations))
         if consultation is not None:
             consultations.append(consultation)
+    logger.info("consultorio_movil_attended_fallback_done", extra={"consultations_count": len(consultations)})
     return consultations
 
 

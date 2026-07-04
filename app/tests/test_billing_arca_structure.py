@@ -1129,6 +1129,114 @@ def test_arca_service_blocks_double_billing(db_session):
     assert "ya esta facturada" in message
 
 
+def test_billing_import_crosses_consultorio_movil_with_local_billed_consultations(
+    client,
+    db_session,
+    monkeypatch,
+):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cross Billed", "whatsapp:+635"))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Sede Cross",
+            proveedor_turnos="consultorio_movil",
+            configuracion_externa={
+                "cabildo": {
+                    "user": "cm-user",
+                    "password": "cm-pass",
+                    "staff_id": "77",
+                }
+            },
+        )
+    )
+    item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
+    invoice_id = asyncio.run(_emit_authorized_test_invoice(db_session, tenant_id, item_id, consultation_id))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-cross-billed@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    async def _billed_external_id():
+        async with db_session() as session:
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            consultation.consultorio_id = consultorio_id
+            await session.commit()
+            return consultation.external_id
+
+    external_id = asyncio.run(_billed_external_id())
+
+    class FakeSession:
+        pass
+
+    def fake_login(username, password):
+        return FakeSession()
+
+    def fake_fetch(session, staff_id, date_from, date_to):
+        return [
+            AttendedConsultation(
+                external_id=external_id,
+                attended_at=datetime(2026, 7, 4, 10, 0),
+                patient_external_id="p1",
+                patient_name="Juan Perez",
+                patient_document="30111222",
+                patient_email="juan@example.com",
+                patient_phone="",
+                insurance_name="OSDE",
+                professional_name="Dra Gomez",
+                practice_name="Consulta",
+                diagnosis="Bronquitis aguda",
+                raw_payload={"id": external_id},
+            )
+        ]
+
+    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", fake_login)
+    monkeypatch.setattr("app.web.tenant.views.fetch_attended_consultations", fake_fetch)
+    login(client, "tenant-cross-billed@test.com", "secret-123")
+
+    pending_before = client.get("/t/billing/pending")
+    assert "Juan Perez" not in pending_before.text
+
+    response = client.post(
+        "/t/billing/pending/import",
+        data={
+            "csrf_token": _csrf(pending_before.text),
+            "consultorio_id": str(consultorio_id),
+            "date_from": "2026-07-04",
+            "date_to": "2026-07-04",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    pending_after = client.get("/t/billing/pending?date_from=2026-07-04&date_to=2026-07-04")
+    assert "Juan Perez" not in pending_after.text
+
+    invoice_list = client.get("/t/billing/invoices")
+    assert invoice_list.status_code == 200
+    assert external_id in invoice_list.text
+    assert "No enviado" in invoice_list.text
+
+    async def _verify_single_billed_link():
+        async with db_session() as session:
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            invoices = await session.execute(
+                select(ArcaInvoice).where(ArcaInvoice.tenant_id == tenant_id)
+            )
+            return consultation.arca_invoice_id, consultation.status, consultation.billed_at, len(list(invoices.scalars().all()))
+
+    linked_invoice_id, status, billed_at, invoice_count = asyncio.run(_verify_single_billed_link())
+    assert linked_invoice_id == invoice_id
+    assert status == "billed"
+    assert billed_at is not None
+    assert invoice_count == 1
+
+
 def test_arca_service_recovers_invoice_with_fe_comp_consultar(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Emit Recover", "whatsapp:+629"))
     item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
