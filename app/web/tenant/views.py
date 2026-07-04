@@ -10,6 +10,7 @@ import json
 import re
 from urllib.parse import urlencode
 
+import requests
 from fastapi import Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, or_, select
@@ -3248,13 +3249,38 @@ async def billing_pending_import(
 
     imported = 0
     skipped_invoiced = 0
-    external_session = consultorio_movil_login(str(cfg["user"]), str(cfg["password"]))
-    consultations = fetch_attended_consultations(
-        external_session,
-        str(cfg["staff_id"]),
-        start_date,
-        end_date,
-    )
+    try:
+        external_session = consultorio_movil_login(str(cfg["user"]), str(cfg["password"]))
+        consultations = fetch_attended_consultations(
+            external_session,
+            str(cfg["staff_id"]),
+            start_date,
+            end_date,
+        )
+    except requests.RequestException as exc:
+        logger.warning(
+            "consultorio_movil_billing_import_failed",
+            extra={"tenant_id": user.tenant_id, "consultorio_id": consultorio.id},
+        )
+        add_flash(
+            request,
+            "error",
+            "No se pudo conectar con Consultorio Movil. Verifica credenciales, staff id o permisos.",
+        )
+        return RedirectResponse(
+            f"/t/billing/pending?date_from={date_from}&date_to={date_to}&consultorio_id={consultorio.id}",
+            status_code=303,
+        )
+    except RuntimeError as exc:
+        logger.warning(
+            "consultorio_movil_billing_login_failed",
+            extra={"tenant_id": user.tenant_id, "consultorio_id": consultorio.id},
+        )
+        add_flash(request, "error", str(exc) or "No se pudo iniciar sesion en Consultorio Movil.")
+        return RedirectResponse(
+            f"/t/billing/pending?date_from={date_from}&date_to={date_to}&consultorio_id={consultorio.id}",
+            status_code=303,
+        )
     async with session.begin_nested():
         for consultation in consultations:
             existing = await session.scalar(

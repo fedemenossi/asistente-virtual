@@ -292,7 +292,19 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
+    "/settings/billing/items/{item_id}/edit",
+    views.billing_arca_item_edit_post,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing-arca/items/{item_id}/delete",
+    views.billing_arca_item_delete,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing/items/{item_id}/delete",
     views.billing_arca_item_delete,
     methods=["POST"],
     dependencies=[Depends(require_feature("billing_arca"))],

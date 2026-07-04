@@ -5,6 +5,7 @@ import re
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 
+import requests
 from sqlalchemy import select
 
 from app.core.security import hash_password
@@ -626,6 +627,23 @@ def test_billing_arca_billable_items_crud_and_tenant_scope(client, db_session):
     )
     assert edit_response.status_code in (302, 303)
 
+    settings_edit_page = client.get(f"/t/settings/billing/items/{item_id}/edit")
+    settings_edit_response = client.post(
+        f"/t/settings/billing/items/{item_id}/edit",
+        data={
+            "csrf_token": _csrf(settings_edit_page.text),
+            "code": "CONSULTA-3",
+            "name": "Consulta settings",
+            "description": "",
+            "unit_price": "1900",
+            "currency": "PES",
+            "concepto": "2",
+            "active": "on",
+        },
+        follow_redirects=False,
+    )
+    assert settings_edit_response.status_code in (302, 303)
+
     delete_page = client.get(f"/t/billing-arca/items/{item_id}/edit")
     delete_response = client.post(
         f"/t/billing-arca/items/{item_id}/delete",
@@ -640,8 +658,8 @@ def test_billing_arca_billable_items_crud_and_tenant_scope(client, db_session):
             return item.code, item.name, item.active
 
     code, name, active = asyncio.run(_active())
-    assert code == "CONSULTA-2"
-    assert name == "Consulta actualizada"
+    assert code == "CONSULTA-3"
+    assert name == "Consulta settings"
     assert active is False
 
 
@@ -809,6 +827,58 @@ def test_billing_pending_imports_attended_consultations_and_skips_invoiced(
     assert "Juan Perez" in by_dni.text
     by_insurance = client.get("/t/billing/pending?obra_social=OSDE")
     assert "Juan Perez" in by_insurance.text
+
+
+def test_billing_pending_import_handles_consultorio_movil_http_error(
+    client,
+    db_session,
+    monkeypatch,
+):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Pending HTTP Error", "whatsapp:+634"))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Sede Error",
+            proveedor_turnos="consultorio_movil",
+            configuracion_externa={
+                "cabildo": {
+                    "user": "cm-user",
+                    "password": "cm-pass",
+                    "staff_id": "77",
+                }
+            },
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-pending-http-error@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-pending-http-error@test.com", "secret-123")
+
+    def failing_login(username, password):
+        raise requests.HTTPError("403 Client Error: Forbidden")
+
+    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", failing_login)
+
+    page = client.get("/t/billing/pending?date_from=2026-07-01&date_to=2026-07-02")
+    response = client.post(
+        "/t/billing/pending/import",
+        data={
+            "csrf_token": _csrf(page.text),
+            "consultorio_id": str(consultorio_id),
+            "date_from": "2026-07-01",
+            "date_to": "2026-07-02",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    assert "consultorio_id" in response.headers["location"]
 
 
 def test_billing_pending_diagnosis_update_and_tenant_scope(client, db_session):
