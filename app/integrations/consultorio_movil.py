@@ -107,17 +107,28 @@ def login(username: str, password: str) -> requests.Session:
         }
     )
 
-    logger.info("consultorio_movil_login_start", extra={"login_url": LOGIN_URL, "username_present": bool(username)})
+    logger.info(
+        "consultorio_movil_login_start login_url=%s username_present=%s",
+        LOGIN_URL,
+        bool(username),
+        extra={"login_url": LOGIN_URL, "username_present": bool(username)},
+    )
     login_page = session.get(LOGIN_URL, timeout=30)
     logger.info(
-        "consultorio_movil_login_page_response",
+        "consultorio_movil_login_page_response status_code=%s final_url=%s content_type=%s",
+        login_page.status_code,
+        str(login_page.url),
+        login_page.headers.get("content-type", ""),
         extra={
             "status_code": login_page.status_code,
             "final_url": str(login_page.url),
             "content_type": login_page.headers.get("content-type", ""),
         },
     )
-    login_page.raise_for_status()
+    if login_page.status_code >= 400:
+        raise RuntimeError(
+            f"Consultorio Movil devolvio HTTP {login_page.status_code} al abrir login: {login_page.url}"
+        )
 
     payload = {
         "email": username,
@@ -133,14 +144,18 @@ def login(username: str, password: str) -> requests.Session:
     }
     resp = session.post(AUTH_URL, data=payload, headers=headers, timeout=30)
     logger.info(
-        "consultorio_movil_auth_response",
+        "consultorio_movil_auth_response status_code=%s final_url=%s content_type=%s",
+        resp.status_code,
+        str(resp.url),
+        resp.headers.get("content-type", ""),
         extra={
             "status_code": resp.status_code,
             "final_url": str(resp.url),
             "content_type": resp.headers.get("content-type", ""),
         },
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        raise RuntimeError(f"Consultorio Movil devolvio HTTP {resp.status_code} al autenticar: {resp.url}")
 
     data = resp.json()
     success = str(data.get("success")).lower() == "true"
@@ -155,9 +170,15 @@ def login(username: str, password: str) -> requests.Session:
     if redirect_url:
         redirect_response = session.get(requests.compat.urljoin(LOGIN_URL, redirect_url), timeout=30)
         logger.info(
-            "consultorio_movil_login_redirect_response",
+            "consultorio_movil_login_redirect_response status_code=%s final_url=%s",
+            redirect_response.status_code,
+            str(redirect_response.url),
             extra={"status_code": redirect_response.status_code, "final_url": str(redirect_response.url)},
         )
+        if redirect_response.status_code >= 400:
+            raise RuntimeError(
+                f"Consultorio Movil devolvio HTTP {redirect_response.status_code} al finalizar login: {redirect_response.url}"
+            )
     logger.info("consultorio_movil_login_success")
     return session
 

@@ -1420,22 +1420,34 @@ async def _fetch_consultorio_movil_patient_payloads(
         payloads = fetch_all_patients(external_session)
     except requests.RequestException as exc:
         response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        url = str(getattr(response, "url", ""))
         logger.warning(
-            "consultorio_movil_patient_sync_failed",
+            "consultorio_movil_patient_sync_failed tenant_id=%s consultorio_id=%s error_type=%s status_code=%s url=%s",
+            user.tenant_id,
+            consultorio.id,
+            type(exc).__name__,
+            status_code,
+            url,
             extra={
                 "tenant_id": user.tenant_id,
                 "consultorio_id": consultorio.id,
                 "error_type": type(exc).__name__,
-                "status_code": getattr(response, "status_code", None),
-                "url": str(getattr(response, "url", "")),
+                "status_code": status_code,
+                "url": url,
             },
             exc_info=True,
         )
-        add_flash(request, "error", "No se pudo leer pacientes desde Consultorio Movil.")
+        detail = f" HTTP {status_code}" if status_code else ""
+        add_flash(request, "error", f"No se pudo leer pacientes desde Consultorio Movil.{detail}")
         return [], RedirectResponse("/t/pacientes", status_code=303)
     except RuntimeError as exc:
         logger.warning(
-            "consultorio_movil_patient_sync_login_failed",
+            "consultorio_movil_patient_sync_login_failed tenant_id=%s consultorio_id=%s error_type=%s message=%s",
+            user.tenant_id,
+            consultorio.id,
+            type(exc).__name__,
+            str(exc),
             extra={"tenant_id": user.tenant_id, "consultorio_id": consultorio.id, "error_type": type(exc).__name__},
             exc_info=True,
         )
