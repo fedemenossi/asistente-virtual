@@ -249,7 +249,7 @@ class ArcaService:
         self._session.add(_build_invoice_line(invoice.id, item, diagnosis, amount_override=amount_override))
 
         try:
-            response = await anyio.to_thread.run_sync(lambda: wsfe.solicitar_cae(request).data)
+            response = await anyio.to_thread.run_sync(lambda: wsfe.solicitar_cae(_soap_fe_cae_request(request)).data)
         except WsfeError as exc:
             recovered = await self._recover_invoice(wsfe, invoice, pto_vta, cbte_tipo, cbte_nro)
             if recovered:
@@ -447,6 +447,13 @@ def _extract_int(data: Any, key: str, default: int = 0) -> int:
         return int(value or default)
     except (TypeError, ValueError):
         return default
+
+
+def _soap_fe_cae_request(request: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "FeCabReq": request["FeCabReq"],
+        "FeDetReq": request["FeDetReq"],
+    }
 
 
 def _document_for_arca(document: str | None) -> tuple[int, int]:

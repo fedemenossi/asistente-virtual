@@ -1168,10 +1168,9 @@ def test_arca_service_emits_invoice_with_diagnosis(db_session):
     assert captured["auth"]["Token"] == "token"
     assert captured["scope"] == (3, 11)
     detail = captured["request"]["FeDetReq"]["FECAEDetRequest"][0]
+    assert "metadata" not in captured["request"]
     assert "Diagnostico" not in detail
     assert "Descripcion" not in detail
-    assert captured["request"]["metadata"]["diagnosis"] == "Bronquitis aguda"
-    assert "Bronquitis aguda" in captured["request"]["metadata"]["description"]
 
     async def _fetch():
         async with db_session() as session:
@@ -1189,6 +1188,8 @@ def test_arca_service_emits_invoice_with_diagnosis(db_session):
     assert invoice.cae_fch_vto.isoformat() == "2026-07-14"
     assert invoice.external_consultation_id == consultation_id
     assert invoice.billing_item_id == item_id
+    assert invoice.request_json["metadata"]["diagnosis"] == "Bronquitis aguda"
+    assert "Bronquitis aguda" in invoice.request_json["metadata"]["description"]
     assert invoice.diagnosis_original_snapshot == "Bronquitis aguda"
     assert invoice.diagnosis_final_snapshot == "Bronquitis aguda"
     assert consultation.arca_invoice_id == invoice_id
@@ -1243,10 +1244,9 @@ def test_arca_service_emits_invoice_without_diagnosis(db_session):
 
     invoice_id = asyncio.run(_run())
     detail = captured["request"]["FeDetReq"]["FECAEDetRequest"][0]
+    assert "metadata" not in captured["request"]
     assert "Diagnostico" not in detail
     assert "Descripcion" not in detail
-    assert captured["request"]["metadata"]["diagnosis"] == ""
-    assert captured["request"]["metadata"]["description"] == "Consulta medica"
 
     async def _fetch():
         async with db_session() as session:
@@ -1258,6 +1258,8 @@ def test_arca_service_emits_invoice_without_diagnosis(db_session):
 
     invoice, line = asyncio.run(_fetch())
     assert invoice.status == ArcaInvoiceStatus.AUTHORIZED
+    assert invoice.request_json["metadata"]["diagnosis"] == ""
+    assert invoice.request_json["metadata"]["description"] == "Consulta medica"
     assert invoice.diagnosis_original_snapshot == ""
     assert invoice.diagnosis_final_snapshot == ""
     assert line.diagnosis_text == ""

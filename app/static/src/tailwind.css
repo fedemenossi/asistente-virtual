@@ -700,6 +700,42 @@
     border: 1px solid #e2e8f0;
     border-radius: 8px;
   }
+  .billing-pending-wrap {
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .billing-pending-table {
+    table-layout: fixed;
+    width: 100%;
+  }
+  .billing-pending-table th,
+  .billing-pending-table td {
+    padding: 9px 10px;
+    font-size: 13px;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  .billing-pending-table th {
+    font-size: 11px;
+    line-height: 1.25;
+  }
+  .billing-grid-select,
+  .billing-grid-amount,
+  .billing-grid-diagnosis {
+    width: 100%;
+    min-width: 0;
+  }
+  .billing-grid-select,
+  .billing-grid-amount {
+    min-height: 34px;
+    padding: 6px 9px;
+    font-size: 13px;
+  }
+  .billing-grid-diagnosis {
+    min-height: 58px;
+    padding: 7px 9px;
+    font-size: 13px;
+  }
   .table th,
   .card table th {
     text-align: left;
