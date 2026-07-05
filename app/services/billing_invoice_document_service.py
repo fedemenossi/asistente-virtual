@@ -9,6 +9,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -343,24 +344,195 @@ def build_invoice_pdf(
     consultation: BillingExternalConsultation | None,
     diagnosis: str,
 ) -> bytes:
+    try:
+        return _fiscal_pdf(tenant, invoice, consultation, diagnosis)
+    except ImportError as exc:
+        raise BillingInvoiceDocumentError("Faltan dependencias para generar PDF fiscal: reportlab y qrcode.") from exc
+
+
+def _fiscal_pdf(
+    tenant: Tenant,
+    invoice: ArcaInvoice,
+    consultation: BillingExternalConsultation | None,
+    diagnosis: str,
+) -> bytes:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+    import qrcode
+
     fiscal = tenant.arca_settings or {}
-    patient = consultation.patient_name if consultation else "-"
-    lines = [
-        f"Factura ARCA {invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}",
-        "ORIGINAL",
-        "HOMOLOGACION - SIN VALIDEZ FISCAL" if str(invoice.environment or "").lower() == "homo" else "",
-        f"Emisor: {fiscal.get('fiscal_name') or tenant.nombre}",
-        f"CUIT: {invoice.represented_cuit}",
-        f"Paciente: {patient or '-'}",
-        f"Documento: {(consultation.patient_document if consultation else invoice.doc_nro) or '-'}",
-        f"Importe: {_money(invoice.imp_total)} {invoice.mon_id}",
-        f"CAE: {invoice.cae or '-'}",
-        f"Vencimiento CAE: {invoice.cae_fch_vto or '-'}",
-        f"QR ARCA: {invoice.qr_url or build_arca_qr_url(invoice)}",
-        "Diagnostico:",
-        diagnosis or "No informado",
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=A4, pageCompression=0)
+    width, height = A4
+    qr_url = invoice.qr_url or build_arca_qr_url(invoice)
+    qr_image = qrcode.make(qr_url).get_image().convert("RGB")
+    qr_reader = ImageReader(qr_image)
+    copies = ("ORIGINAL", "DUPLICADO", "TRIPLICADO")
+
+    for copy_label in copies:
+        _draw_invoice_page(
+            pdf,
+            width,
+            height,
+            tenant,
+            invoice,
+            consultation,
+            diagnosis,
+            fiscal,
+            qr_reader,
+            qr_url,
+            copy_label,
+        )
+        pdf.showPage()
+    pdf.save()
+    return buffer.getvalue()
+
+
+def _draw_invoice_page(
+    pdf: Any,
+    width: float,
+    height: float,
+    tenant: Tenant,
+    invoice: ArcaInvoice,
+    consultation: BillingExternalConsultation | None,
+    diagnosis: str,
+    fiscal: dict[str, Any],
+    qr_reader: Any,
+    qr_url: str,
+    copy_label: str,
+) -> None:
+    from reportlab.lib import colors
+
+    margin = 32
+    top = height - margin
+    left = margin
+    right = width - margin
+    center = width / 2
+    letter = _invoice_letter(invoice.cbte_tipo)
+    title = f"FACTURA {letter}"
+    cbte_nro = int(invoice.cbte_nro or 0)
+    pto_vta = int(invoice.pto_vta or 0)
+    patient_name = consultation.patient_name if consultation else "-"
+    patient_document = consultation.patient_document if consultation else invoice.doc_nro
+    description = _invoice_description(invoice)
+    emisor_name = str(fiscal.get("fiscal_name") or tenant.nombre or "-")
+    emisor_address = str(fiscal.get("fiscal_address") or fiscal.get("address") or "")
+    emisor_iva = str(fiscal.get("fiscal_iva_condition") or fiscal.get("iva_condition") or "Responsable Monotributo")
+    ingresos_brutos = str(fiscal.get("gross_income") or fiscal.get("ingresos_brutos") or "EXENTO")
+    inicio_actividades = str(fiscal.get("activity_start_date") or fiscal.get("inicio_actividades") or "")
+    receptor_iva = _receiver_tax_condition_label(invoice)
+
+    pdf.setTitle(invoice_pdf_filename(invoice))
+    pdf.setStrokeColor(colors.HexColor("#111827"))
+    pdf.setLineWidth(0.8)
+
+    pdf.setFont("Helvetica-Bold", 15)
+    pdf.drawCentredString(center, top, copy_label)
+    if str(invoice.environment or "").lower() == "homo":
+        pdf.setFillColor(colors.HexColor("#b91c1c"))
+        pdf.setFont("Helvetica-Bold", 10)
+        pdf.drawCentredString(center, top - 16, "HOMOLOGACION - SIN VALIDEZ FISCAL")
+        pdf.setFillColor(colors.black)
+
+    y = top - 34
+    pdf.rect(left, y - 94, right - left, 94, stroke=1, fill=0)
+    pdf.line(center, y, center, y - 94)
+    pdf.setFont("Helvetica-Bold", 16)
+    pdf.drawString(left + 12, y - 22, _clip(emisor_name, 32))
+    pdf.setFont("Helvetica", 9)
+    pdf.drawString(left + 12, y - 40, _clip(emisor_address, 58))
+    pdf.drawString(left + 12, y - 56, f"Condicion frente al IVA: {_clip(emisor_iva, 36)}")
+    pdf.drawString(left + 12, y - 72, f"CUIT: {invoice.represented_cuit}")
+    pdf.drawString(left + 12, y - 88, f"Ingresos Brutos: {_clip(ingresos_brutos, 24)}")
+    if inicio_actividades:
+        pdf.drawString(left + 200, y - 88, f"Inicio actividades: {_format_date_display(inicio_actividades)}")
+
+    pdf.setFont("Helvetica-Bold", 22)
+    pdf.drawCentredString(center, y - 36, letter)
+    pdf.setFont("Helvetica-Bold", 13)
+    pdf.drawString(center + 24, y - 22, title)
+    pdf.setFont("Helvetica", 9)
+    pdf.drawString(center + 24, y - 40, f"COD. {int(invoice.cbte_tipo or 0):03d}")
+    pdf.drawString(center + 24, y - 56, f"Punto de Venta: {pto_vta:05d}")
+    pdf.drawString(center + 170, y - 56, f"Comp. Nro: {cbte_nro:08d}")
+    pdf.drawString(center + 24, y - 72, f"Fecha de Emision: {_format_date_display(invoice.cbte_fch)}")
+
+    y -= 112
+    pdf.rect(left, y - 82, right - left, 82, stroke=1, fill=0)
+    pdf.setFont("Helvetica", 8)
+    pdf.drawString(left + 10, y - 16, f"Periodo Facturado Desde: {_format_date_display(invoice.cbte_fch)}")
+    pdf.drawString(left + 190, y - 16, f"Hasta: {_format_date_display(invoice.cbte_fch)}")
+    pdf.drawString(left + 310, y - 16, f"Fecha de Vto. para el pago: {_format_date_display(invoice.cbte_fch)}")
+    pdf.drawString(left + 10, y - 34, "Condicion de venta: Contado")
+    pdf.drawString(left + 10, y - 52, f"Apellido y Nombre / Razon Social: {_clip(patient_name or '-', 60)}")
+    pdf.drawString(left + 10, y - 70, f"{_doc_label(invoice.doc_tipo)}: {patient_document or '-'}")
+    pdf.drawString(left + 310, y - 70, f"Condicion frente al IVA: {_clip(receptor_iva, 30)}")
+
+    y -= 104
+    diagnosis_text = diagnosis or "No informado"
+    table_h = 128
+    pdf.rect(left, y - table_h, right - left, table_h, stroke=1, fill=0)
+    pdf.setFillColor(colors.HexColor("#f3f4f6"))
+    pdf.rect(left, y - 22, right - left, 22, stroke=0, fill=1)
+    pdf.setFillColor(colors.black)
+    pdf.setFont("Helvetica-Bold", 8)
+    headers = [
+        ("Codigo Producto / Servicio", left + 8),
+        ("Cantidad", left + 230),
+        ("U. Medida", left + 282),
+        ("Precio Unit.", left + 350),
+        ("% Bonif", left + 420),
+        ("Imp. Bonif.", left + 470),
+        ("Subtotal", left + 535),
     ]
-    return _simple_pdf(lines)
+    for text, x in headers:
+        pdf.drawString(x, y - 15, text)
+    pdf.setFont("Helvetica", 9)
+    row_y = y - 42
+    pdf.drawString(left + 8, row_y, _clip(description, 38))
+    pdf.drawRightString(left + 270, row_y, "1,00")
+    pdf.drawString(left + 282, row_y, "unidades")
+    pdf.drawRightString(left + 402, row_y, _money_ar(invoice.imp_total))
+    pdf.drawRightString(left + 455, row_y, "0,00")
+    pdf.drawRightString(left + 522, row_y, "0,00")
+    pdf.drawRightString(right - 10, row_y, _money_ar(invoice.imp_total))
+    pdf.setFont("Helvetica-Bold", 8)
+    pdf.drawString(left + 8, row_y - 28, "Diagnostico:")
+    pdf.setFont("Helvetica", 8)
+    _draw_wrapped(pdf, diagnosis_text, left + 70, row_y - 28, 360, 10, max_lines=3)
+
+    y -= table_h + 20
+    pdf.rect(center + 40, y - 78, right - center - 40, 78, stroke=1, fill=0)
+    pdf.setFont("Helvetica", 9)
+    pdf.drawString(center + 52, y - 18, "Subtotal: $")
+    pdf.drawRightString(right - 12, y - 18, _money_ar(invoice.imp_total))
+    pdf.drawString(center + 52, y - 38, "Importe Otros Tributos: $")
+    pdf.drawRightString(right - 12, y - 38, _money_ar(invoice.imp_trib))
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(center + 52, y - 62, "Importe Total: $")
+    pdf.drawRightString(right - 12, y - 62, _money_ar(invoice.imp_total))
+
+    y -= 110
+    qr_size = 92
+    pdf.drawImage(qr_reader, left, y - qr_size + 12, width=qr_size, height=qr_size, mask="auto")
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawString(left + 112, y - 8, "CAE Nro:")
+    pdf.drawString(left + 112, y - 28, "Fecha de Vto. de CAE:")
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(left + 250, y - 8, str(invoice.cae or "-"))
+    pdf.drawString(left + 250, y - 28, _format_date_display(invoice.cae_fch_vto))
+    pdf.setFont("Helvetica-Bold", 10)
+    pdf.drawString(left + 112, y - 54, "Comprobante Autorizado")
+    pdf.setFont("Helvetica", 8)
+    pdf.drawString(left + 112, y - 72, "Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operacion")
+    pdf.setFont("Helvetica", 6)
+    _draw_wrapped(pdf, qr_url, left, y - 108, right - left, 7, max_lines=2)
+    pdf.setFont("Helvetica", 8)
+    footer = str(fiscal.get("invoice_footer") or fiscal.get("footer") or '"Medica especialista en Ginecologia y Obstetricia  M.N. 122.674"')
+    pdf.drawCentredString(center, 36, _clip(footer, 90))
+    pdf.drawRightString(right, 22, "Pag. 1/1")
 
 
 def invoice_pdf_filename(invoice: ArcaInvoice) -> str:
@@ -390,10 +562,119 @@ def build_arca_qr_url(invoice: ArcaInvoice) -> str:
         "tipoCodAut": "E",
         "codAut": int(cae_digits or 0),
     }
-    encoded = base64.urlsafe_b64encode(
+    encoded = base64.b64encode(
         json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     ).decode("ascii")
-    return f"https://www.afip.gob.ar/fe/qr/?p={encoded}"
+    return f"https://www.afip.gob.ar/fe/qr/?p={quote(encoded, safe='')}"
+
+
+def _invoice_letter(cbte_tipo: Any) -> str:
+    mapping = {
+        1: "A",
+        2: "A",
+        3: "A",
+        6: "B",
+        7: "B",
+        8: "B",
+        11: "C",
+        12: "C",
+        13: "C",
+    }
+    try:
+        return mapping.get(int(cbte_tipo or 0), "")
+    except (TypeError, ValueError):
+        return ""
+
+
+def _doc_label(doc_tipo: Any) -> str:
+    try:
+        value = int(doc_tipo or 0)
+    except (TypeError, ValueError):
+        value = 0
+    return {
+        80: "CUIT",
+        86: "CUIL",
+        96: "DNI",
+        99: "Documento",
+    }.get(value, "Documento")
+
+
+def _receiver_tax_condition_label(invoice: ArcaInvoice) -> str:
+    request = invoice.request_json or {}
+    value = None
+    if isinstance(request, dict):
+        metadata = request.get("metadata") or {}
+        if isinstance(metadata, dict):
+            value = metadata.get("receiver_tax_condition_id")
+        detail = _invoice_detail(invoice)
+        value = value or detail.get("CondicionIVAReceptorId")
+    try:
+        value_int = int(value or 5)
+    except (TypeError, ValueError):
+        value_int = 5
+    return {
+        1: "IVA Responsable Inscripto",
+        4: "IVA Sujeto Exento",
+        5: "Consumidor Final",
+        6: "Responsable Monotributo",
+        7: "Sujeto No Categorizado",
+        15: "IVA No Alcanzado",
+    }.get(value_int, "Consumidor Final")
+
+
+def _invoice_description(invoice: ArcaInvoice) -> str:
+    detail = _invoice_detail(invoice)
+    metadata = invoice.request_json.get("metadata", {}) if isinstance(invoice.request_json, dict) else {}
+    return str(
+        detail.get("Descripcion")
+        or detail.get("descripcion")
+        or metadata.get("description")
+        or metadata.get("descripcion")
+        or "Consulta"
+    )
+
+
+def _money_ar(value: Any) -> str:
+    amount = Decimal(str(value or "0")).quantize(Decimal("0.01"))
+    return f"{amount:.2f}".replace(".", ",")
+
+
+def _format_date_display(value: Any) -> str:
+    if not value:
+        return "-"
+    if hasattr(value, "strftime"):
+        return value.strftime("%d/%m/%Y")
+    text = str(value)
+    if re.fullmatch(r"\d{8}", text):
+        return f"{text[6:8]}/{text[4:6]}/{text[0:4]}"
+    return text
+
+
+def _clip(value: Any, max_len: int) -> str:
+    text = str(value or "")
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+
+def _draw_wrapped(pdf: Any, text: str, x: float, y: float, max_width: float, line_height: float, *, max_lines: int) -> None:
+    words = str(text or "").split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if pdf.stringWidth(candidate, pdf._fontname, pdf._fontsize) <= max_width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = word
+        if len(lines) >= max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    for index, line in enumerate(lines[:max_lines]):
+        pdf.drawString(x, y - index * line_height, line)
 
 
 def _invoice_detail(invoice: ArcaInvoice) -> dict[str, Any]:
