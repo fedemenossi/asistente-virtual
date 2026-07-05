@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from decimal import Decimal, InvalidOperation
 import secrets
@@ -3346,6 +3347,7 @@ async def billing_pending_consultations(
     staff_id = request.query_params.get("staff_id", "").strip()
     status = request.query_params.get("status", "").strip()
     job_id = request.query_params.get("job_id", "").strip()
+    batch_id = request.query_params.get("batch_id", "").strip()
     date_from, date_to, start, end, _, _ = _selected_date_range(date_from, date_to)
 
     stmt = (
@@ -3356,6 +3358,8 @@ async def billing_pending_consultations(
             BillingExternalConsultation.arca_invoice_id.is_(None),
         )
     )
+    if batch_id:
+        stmt = stmt.where(BillingExternalConsultation.import_batch_id == batch_id)
     if consultorio_id:
         try:
             stmt = stmt.where(BillingExternalConsultation.consultorio_id == int(consultorio_id))
@@ -3381,7 +3385,7 @@ async def billing_pending_consultations(
         stmt = stmt.where(BillingExternalConsultation.external_staff_id.ilike(f"%{staff_id}%"))
     if status:
         stmt = stmt.where(BillingExternalConsultation.status == status)
-    if raw_date_from or raw_date_to or not (q or dni or obra_social or staff_id or status):
+    if not batch_id and (raw_date_from or raw_date_to or not (q or dni or obra_social or staff_id or status)):
         stmt = stmt.where(
             or_(
                 BillingExternalConsultation.attended_at.is_(None),
@@ -3427,6 +3431,7 @@ async def billing_pending_consultations(
             "obra_social": obra_social,
             "staff_id": staff_id,
             "status": status,
+            "batch_id": batch_id,
             "items": items,
             "job": job.public_dict() if job else None,
         },
@@ -3451,11 +3456,13 @@ async def billing_pending_import(
         logger.warning("billing_csv_import_parse_failed", extra={"tenant_id": user.tenant_id, "filename": csv_file.filename}, exc_info=True)
         add_flash(request, "error", f"No se pudo leer el CSV: {exc}")
         return RedirectResponse("/t/billing/pending", status_code=303)
+    batch_id = uuid.uuid4().hex
     async with session.begin_nested():
         result = await BillingConsultationCsvImportService(session).import_rows(
             int(user.tenant_id),
             rows,
             filename=csv_file.filename or "atendidas.csv",
+            batch_id=batch_id,
         )
         await audit_log(
             session,
@@ -3465,13 +3472,14 @@ async def billing_pending_import(
             entity="billing_external_consultations",
             entity_id=None,
             tenant_id=int(user.tenant_id),
-            metadata={**result.__dict__, "filename": csv_file.filename or "atendidas.csv"},
+            metadata={**result.__dict__, "filename": csv_file.filename or "atendidas.csv", "batch_id": batch_id},
         )
     logger.info(
         "billing_csv_import_done",
         extra={
             "tenant_id": user.tenant_id,
             "csv_filename": csv_file.filename,
+            "billing_csv_batch_id": batch_id,
             "billing_csv_total_rows": result.total_rows,
             "billing_csv_created": result.created,
             "billing_csv_updated": result.updated,
@@ -3489,7 +3497,7 @@ async def billing_pending_import(
             f"Pacientes encontrados: {result.matched_patients}. Sin match: {result.missing_patient_match}."
         ),
     )
-    return RedirectResponse("/t/billing/pending", status_code=303)
+    return RedirectResponse(f"/t/billing/pending?batch_id={batch_id}", status_code=303)
 
 
 async def _load_pending_consultations(
@@ -3545,6 +3553,7 @@ def _pending_back_url(form) -> str:
             "obra_social": str(form.get("obra_social") or ""),
             "staff_id": str(form.get("staff_id") or ""),
             "status": str(form.get("status") or ""),
+            "batch_id": str(form.get("batch_id") or ""),
         }
     )
     return f"/t/billing/pending?{params}"

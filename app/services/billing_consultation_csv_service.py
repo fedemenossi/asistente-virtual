@@ -48,6 +48,7 @@ class BillingConsultationCsvImportService:
         rows: list[dict[str, Any]],
         *,
         filename: str,
+        batch_id: str,
     ) -> BillingCsvImportResult:
         default_item = await self._default_item(tenant_id)
         patients = await self._patients_by_name(tenant_id)
@@ -90,6 +91,7 @@ class BillingConsultationCsvImportService:
                     external_provider="csv_attended",
                     external_id=external_id,
                 )
+                row.import_batch_id = batch_id
                 row.attended_at = attended_at
                 row.patient_name = name or None
                 row.patient_external_id = external_patient_id or None
@@ -106,7 +108,7 @@ class BillingConsultationCsvImportService:
                 row.amount = row.amount or (Decimal(str(default_item.unit_price)) if default_item else None)
                 row.send_email = bool(row.patient_email) if row.send_email is False else row.send_email
                 row.status = "pending" if patient else "missing_patient_match"
-                row.raw_payload_json = {"source_filename": filename, "row_number": index, "row": raw}
+                row.raw_payload_json = {"source_filename": filename, "import_batch_id": batch_id, "row_number": index, "row": raw}
                 if patient:
                     matched += 1
                 else:

@@ -13,62 +13,7 @@
     <a class="btn btn-secondary" href="/t/billing/invoices">Facturas emitidas</a>
   </div>
 
-  <div class="mb-5 grid gap-4 lg:grid-cols-2">
-    <form method="get" class="card p-4">
-      <div class="mb-3">
-        <p class="text-sm font-semibold text-slate-900">Filtrar consultas importadas</p>
-        <p class="text-xs text-slate-500">Busca sobre las consultas guardadas en el sistema.</p>
-      </div>
-      <div class="grid gap-3 md:grid-cols-3">
-        <div>
-          <label class="text-xs text-slate-500">Desde</label>
-          <input class="input" type="date" name="date_from" value="{{ date_from }}" />
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">Hasta</label>
-          <input class="input" type="date" name="date_to" value="{{ date_to }}" />
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">Consultorio</label>
-          <select class="select" name="consultorio_id">
-            <option value="">Todos</option>
-            {% for consultorio in consultorios %}
-              <option value="{{ consultorio.id }}" {% if consultorio_id|string == consultorio.id|string %}selected{% endif %}>{{ consultorio.nombre }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">Buscar</label>
-          <input class="input" name="q" value="{{ q or '' }}" />
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">DNI</label>
-          <input class="input" name="dni" value="{{ dni or '' }}" />
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">Obra social</label>
-          <input class="input" name="obra_social" value="{{ obra_social or '' }}" />
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">Staff / profesional</label>
-          <input class="input" name="staff_id" value="{{ staff_id or '' }}" />
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">Estado</label>
-          <select class="select" name="status">
-            <option value="">Todos</option>
-            <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pendiente</option>
-            <option value="missing_patient_match" {% if status == 'missing_patient_match' %}selected{% endif %}>Sin DNI</option>
-            <option value="billed" {% if status == 'billed' %}selected{% endif %}>Facturada</option>
-            <option value="error" {% if status == 'error' %}selected{% endif %}>Error</option>
-          </select>
-        </div>
-      </div>
-      <div class="mt-3">
-        <button class="btn btn-secondary" type="submit">Filtrar importadas</button>
-      </div>
-    </form>
-
+  <div class="mb-5">
     <form method="post" action="/t/billing/pending/import" enctype="multipart/form-data" class="card p-4" data-billing-csv-form>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <div class="mb-3">
@@ -126,6 +71,7 @@
       <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
       <input type="hidden" name="staff_id" value="{{ staff_id or '' }}" />
       <input type="hidden" name="status" value="{{ status or '' }}" />
+      <input type="hidden" name="batch_id" value="{{ batch_id or '' }}" />
     </form>
     <div class="mb-3 flex justify-end">
       <button class="btn btn-primary" type="submit" form="billing-grid-form">Facturar seleccionadas</button>

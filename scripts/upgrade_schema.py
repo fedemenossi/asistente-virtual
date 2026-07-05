@@ -136,6 +136,7 @@ EXTRA_COLUMNS = {
     "billing_external_consultations": {
         "patient_id": "INT NULL",
         "billing_item_id": "INT NULL",
+        "import_batch_id": "VARCHAR(64) NULL",
         "patient_email": "VARCHAR(200) NULL",
         "insurance_name": "VARCHAR(200) NULL",
         "professional_name": "VARCHAR(200) NULL",

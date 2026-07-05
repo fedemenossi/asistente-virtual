@@ -27,6 +27,7 @@ class BillingExternalConsultation(Base, TimestampMixin):
     billing_item_id: Mapped[int | None] = mapped_column(ForeignKey("billing_items.id"), nullable=True)
     external_provider: Mapped[str] = mapped_column(String(50), nullable=False, default="consultorio_movil")
     external_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    import_batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     external_staff_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
     attended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     patient_external_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
