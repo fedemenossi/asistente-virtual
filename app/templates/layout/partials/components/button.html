@@ -1,10 +1,9 @@
 {% macro button(label, href=None, variant="primary", type="button", attrs="") %}
-  {% set base = "btn" %}
-  {% if variant == "primary" %}{% set classes = "btn-primary" %}{% elif variant == "secondary" %}{% set classes = "btn-secondary" %}{% elif variant == "ghost" %}{% set classes = "btn-ghost" %}{% elif variant == "danger" %}{% set classes = "btn-danger" %}{% else %}{% set classes = "btn-secondary" %}{% endif %}
+  {% if variant == "primary" %}{% set classes = "primary-button" %}{% elif variant == "secondary" %}{% set classes = "secondary-button" %}{% elif variant == "ghost" %}{% set classes = "ghost-button" %}{% elif variant == "danger" %}{% set classes = "danger-button" %}{% else %}{% set classes = "secondary-button" %}{% endif %}
   {% if href %}
-    <a href="{{ href }}" class="{{ base }} {{ classes }}" {{ attrs|safe }}>{{ label }}</a>
+    <a href="{{ href }}" class="{{ classes }}" {{ attrs|safe }}>{{ label }}</a>
   {% else %}
-    <button type="{{ type }}" class="{{ base }} {{ classes }}" {{ attrs|safe }}>{{ label }}</button>
+    <button type="{{ type }}" class="{{ classes }}" {{ attrs|safe }}>{{ label }}</button>
   {% endif %}
 {% endmacro %}
 

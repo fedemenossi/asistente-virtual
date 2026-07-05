@@ -52,8 +52,16 @@
     const menu = dropdown.querySelector("[data-dropdown-menu]");
     if (!toggle || !menu) return;
 
-    const close = () => menu.classList.add("hidden");
-    const open = () => menu.classList.remove("hidden");
+    toggle.setAttribute("aria-expanded", "false");
+
+    const close = () => {
+      menu.classList.add("hidden");
+      toggle.setAttribute("aria-expanded", "false");
+    };
+    const open = () => {
+      menu.classList.remove("hidden");
+      toggle.setAttribute("aria-expanded", "true");
+    };
 
     toggle.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -66,6 +74,12 @@
 
     document.addEventListener("click", (event) => {
       if (!dropdown.contains(event.target)) {
+        close();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
         close();
       }
     });
