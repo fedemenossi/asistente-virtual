@@ -1,6 +1,6 @@
-{% macro modal_confirm(id, title, message, action_url, csrf_token, button_label="Confirmar", trigger_label="...", trigger_class="btn btn-ghost") %}
+{% macro modal_confirm(id, title, message, action_url, csrf_token, button_label="Confirmar", trigger_label="...", trigger_class="btn btn-ghost", trigger_aria_label="") %}
   <div x-data="{ open: false }" class="inline">
-    <button type="button" @click="open = true" class="{{ trigger_class }}">{{ trigger_label }}</button>
+    <button type="button" @click="open = true" class="{{ trigger_class }}" aria-label="{{ trigger_aria_label or trigger_label|striptags }}">{{ trigger_label|safe }}</button>
     <div x-show="open" x-cloak class="fixed inset-0 z-50 grid place-items-center bg-gray-900/40 px-4">
       <div class="w-full max-w-sm rounded-2xl bg-white p-6 shadow-card">
         <h3 class="text-lg font-semibold text-slate-900">{{ title }}</h3>

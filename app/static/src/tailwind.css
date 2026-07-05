@@ -770,6 +770,10 @@
     background: #f8fafc;
     border-color: #cbd5e1;
   }
+  .icon-button svg {
+    width: 18px;
+    height: 18px;
+  }
   .icon-button.danger,
   .icon-button-danger {
     color: #dc2626;

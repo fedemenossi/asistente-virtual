@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/action_icons.html" import action_link, icon %}
 
 {% set title = "Conversaciones" %}
 {% if scope_prefix == '/admin' %}
@@ -173,7 +174,7 @@
               </td>
               <td class="whitespace-nowrap text-slate-600">{{ row.updated_at|format_ba('%Y-%m-%d %H:%M') }}</td>
               <td>
-                <div class="flex flex-wrap items-center gap-2">
+                <div class="row-actions flex-wrap">
                   {% if row.has_media %}
                     {{ badge("Adjuntos", "warning") }}
                   {% endif %}
@@ -181,15 +182,15 @@
                     {{ badge("Humana", "warning") }}
                   {% endif %}
                   {% if row.detail_href %}
-                    <a class="btn btn-secondary !px-2.5 !py-1 text-xs" href="{{ row.detail_href }}">Detalle</a>
+                    {{ action_link(row.detail_href, "Ver detalle", "view") }}
                   {% endif %}
                   {% if row.whatsapp_link %}
-                    <a class="btn btn-secondary !px-2.5 !py-1 text-xs" href="{{ row.whatsapp_link }}" target="_blank" rel="noreferrer">Responder</a>
+                    {{ action_link(row.whatsapp_link, "Responder por WhatsApp", "edit", "", "_blank") }}
                   {% endif %}
                   {% if row.resolve_href %}
                     <form method="post" action="{{ row.resolve_href }}" class="inline-flex">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}"/>
-                      <button class="btn btn-secondary !px-2.5 !py-1 text-xs border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" type="submit">Finalizar</button>
+                      <button class="icon-button" type="submit" aria-label="Finalizar conversacion" title="Finalizar conversacion">{{ icon("check") }}</button>
                     </form>
                   {% endif %}
                 </div>

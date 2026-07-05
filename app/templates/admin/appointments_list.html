@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/action_icons.html" import action_link, icon %}
 
 {% set title = "Turnos" %}
 {% set breadcrumb = "Admin / Turnos" %}
@@ -74,12 +75,12 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">
-                <div class="flex justify-end gap-2">
-                  <a class="btn btn-secondary" href="/admin/appointments/{{ turno.id }}">Ver</a>
+                <div class="row-actions">
+                  {{ action_link("/admin/appointments/" ~ turno.id, "Ver turno", "view") }}
                   {% if status not in ['cancelled', 'cancelado', 'completed'] %}
                     <form method="post" action="/admin/appointments/{{ turno.id }}/cancel">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                      <button class="btn btn-danger" type="submit">Cancelar</button>
+                      <button class="icon-button danger" type="submit" aria-label="Cancelar turno" title="Cancelar turno">{{ icon("cancel") }}</button>
                     </form>
                   {% endif %}
                 </div>

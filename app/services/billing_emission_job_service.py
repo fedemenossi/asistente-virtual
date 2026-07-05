@@ -133,27 +133,50 @@ async def _run_billing_emission_job(job_id: str, consultation_ids: list[int]) ->
                                     await BillingService(session).send_invoice_email(tenant, invoice, email_to)
                                     job.emailed += 1
                         except Exception as exc:
+                            error_message = str(exc) or exc.__class__.__name__
                             logger.warning(
                                 "billing_emission_job_email_failed",
-                                extra={"job_id": job.id, "tenant_id": job.tenant_id, "invoice_id": invoice_id},
+                                extra={
+                                    "job_id": job.id,
+                                    "tenant_id": job.tenant_id,
+                                    "invoice_id": invoice_id,
+                                    "billing_error_type": exc.__class__.__name__,
+                                    "billing_error_message": error_message,
+                                },
                                 exc_info=True,
                             )
-                            job.error_message = str(exc)
+                            job.error_message = f"Email factura #{invoice_id}: {error_message}"
                     job.success += 1
                 except Exception as exc:
+                    error_message = str(exc) or exc.__class__.__name__
                     logger.warning(
                         "billing_emission_job_row_failed",
-                        extra={"job_id": job.id, "tenant_id": job.tenant_id, "consultation_id": consultation_id},
+                        extra={
+                            "job_id": job.id,
+                            "tenant_id": job.tenant_id,
+                            "consultation_id": consultation_id,
+                            "billing_error_type": exc.__class__.__name__,
+                            "billing_error_message": error_message,
+                        },
                         exc_info=True,
                     )
                     job.failed += 1
-                    job.error_message = str(exc)
+                    job.error_message = f"Consulta #{consultation_id}: {error_message}"
                 finally:
                     job.processed += 1
         job.status = "completed" if job.failed == 0 else "completed_with_errors"
     except Exception as exc:
-        logger.exception("billing_emission_job_failed", extra={"job_id": job.id, "tenant_id": job.tenant_id})
+        error_message = str(exc) or exc.__class__.__name__
+        logger.exception(
+            "billing_emission_job_failed",
+            extra={
+                "job_id": job.id,
+                "tenant_id": job.tenant_id,
+                "billing_error_type": exc.__class__.__name__,
+                "billing_error_message": error_message,
+            },
+        )
         job.status = "failed"
-        job.error_message = str(exc)
+        job.error_message = error_message
     finally:
         job.finished_at = now_ba().replace(tzinfo=None)

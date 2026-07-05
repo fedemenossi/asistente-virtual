@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/action_icons.html" import action_link %}
 
 {% set title = "Pagos" %}
 {% set breadcrumb = "Tenant / Pagos" %}
@@ -60,7 +61,9 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">
-                <a class="icon-button" href="/t/payments/{{ payment.id }}" aria-label="Ver pago">...</a>
+                <div class="row-actions">
+                  {{ action_link("/t/payments/" ~ payment.id, "Ver pago", "view") }}
+                </div>
               </td>
             </tr>
           {% endfor %}

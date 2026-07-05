@@ -112,17 +112,4 @@
     {% endif %}
   </nav>
 
-  <div class="border-t border-slate-200 p-4">
-    <div class="mb-3 flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
-      <span class="grid h-9 w-9 place-items-center rounded-lg bg-white font-bold text-slate-700 shadow-sm">{{ (request.session.get('user_email') or 'U')[0]|upper }}</span>
-      <div class="min-w-0">
-        <p class="truncate text-sm font-bold text-slate-900">{{ request.session.get('user_email') or 'Usuario' }}</p>
-        <p class="truncate text-xs font-medium text-slate-500">{{ role|replace('_', ' ')|title if role else 'Tenant' }}</p>
-      </div>
-    </div>
-    <form method="post" action="/logout">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <button class="btn btn-secondary w-full justify-center" type="submit">Salir</button>
-    </form>
-  </div>
 </aside>

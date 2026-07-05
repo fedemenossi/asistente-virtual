@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/modal_confirm.html" import modal_confirm %}
+{% from "layout/partials/components/action_icons.html" import action_link, icon %}
 
 {% set title = "Consultorios" %}
 {% set breadcrumb = "Tenant / Consultorios" %}
@@ -31,22 +32,19 @@
               <td class="px-4 py-3 text-slate-600">{{ consultorio.tipo }}</td>
               <td class="px-4 py-3 text-slate-600">{{ consultorio.proveedor_turnos or '-' }}</td>
               <td class="px-4 py-3 text-right">
-                <div data-dropdown class="relative inline-block text-left">
-                  <button data-dropdown-toggle type="button" class="btn btn-ghost">...</button>
-                  <div data-dropdown-menu class="absolute right-0 z-10 mt-2 hidden w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
-                    <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/t/consultorios/{{ consultorio.id }}/edit">Editar</a>
-                    <div class="border-t border-slate-200"></div>
-                    {{ modal_confirm(
-                      id="delete-consultorio-" ~ consultorio.id,
-                      title="Eliminar consultorio",
-                      message="Esta accion eliminara el consultorio seleccionado.",
-                      action_url="/t/consultorios/" ~ consultorio.id ~ "/delete",
-                      csrf_token=csrf_token,
-                      button_label="Eliminar",
-                      trigger_label="Eliminar",
-                      trigger_class="block w-full text-left px-3 py-2 text-sm text-rose-600 hover:bg-slate-50"
-                    ) }}
-                  </div>
+                <div class="row-actions">
+                  {{ action_link("/t/consultorios/" ~ consultorio.id ~ "/edit", "Editar consultorio", "edit") }}
+                  {{ modal_confirm(
+                    id="delete-consultorio-" ~ consultorio.id,
+                    title="Eliminar consultorio",
+                    message="Esta accion eliminara el consultorio seleccionado.",
+                    action_url="/t/consultorios/" ~ consultorio.id ~ "/delete",
+                    csrf_token=csrf_token,
+                    button_label="Eliminar",
+                    trigger_label=icon("delete"),
+                    trigger_class="icon-button danger",
+                    trigger_aria_label="Eliminar consultorio"
+                  ) }}
                 </div>
               </td>
             </tr>

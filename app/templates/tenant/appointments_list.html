@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/action_icons.html" import action_link, icon %}
 
 {% set title = "Turnos reales" %}
 {% set breadcrumb = "Tenant / Turnos" %}
@@ -348,11 +349,11 @@
               </td>
               <td class="px-4 py-3 text-right">
                 <div class="row-actions">
-                  <a class="icon-button" href="/t/appointments/{{ turno.id }}" aria-label="Ver turno">...</a>
+                  {{ action_link("/t/appointments/" ~ turno.id, "Ver turno", "view") }}
                   {% if status not in ['cancelled', 'cancelado', 'completed'] %}
                     <form method="post" action="/t/appointments/{{ turno.id }}/cancel">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                      <button class="btn btn-danger" type="submit">Cancelar</button>
+                      <button class="icon-button danger" type="submit" aria-label="Cancelar turno" title="Cancelar turno">{{ icon("cancel") }}</button>
                     </form>
                   {% endif %}
                 </div>

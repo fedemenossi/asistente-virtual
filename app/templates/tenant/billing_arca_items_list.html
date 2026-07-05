@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/action_icons.html" import action_link %}
 
 {% set title = "Items facturables" %}
 {% set breadcrumb = "Tenant / Facturacion ARCA / Items" %}
@@ -40,7 +41,9 @@
                 {% if item.default_item %}<span class="ml-2">{{ badge("Default", "neutral") }}</span>{% endif %}
               </td>
               <td class="px-4 py-3 text-right">
-                <a class="btn btn-secondary" href="/t/settings/billing/items/{{ item.id }}/edit">Editar</a>
+                <div class="row-actions">
+                  {{ action_link("/t/settings/billing/items/" ~ item.id ~ "/edit", "Editar item", "edit") }}
+                </div>
               </td>
             </tr>
           {% endfor %}

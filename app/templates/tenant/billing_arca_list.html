@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/action_icons.html" import action_link %}
 
 {% set title = "Facturacion ARCA" %}
 {% set breadcrumb = "Tenant / Facturacion ARCA" %}
@@ -105,8 +106,8 @@
               </td>
               <td class="px-4 py-3 text-right">
                 <div class="row-actions">
-                  <a class="icon-button" href="/t/billing/invoices/{{ invoice.id }}" aria-label="Ver factura">...</a>
-                  <a class="btn btn-secondary" href="/t/billing-arca/{{ invoice.id }}/comprobante.pdf" target="_blank">PDF</a>
+                  {{ action_link("/t/billing/invoices/" ~ invoice.id, "Ver factura", "view") }}
+                  {{ action_link("/t/billing-arca/" ~ invoice.id ~ "/comprobante.pdf", "Descargar PDF", "pdf", "", "_blank") }}
                 </div>
               </td>
             </tr>

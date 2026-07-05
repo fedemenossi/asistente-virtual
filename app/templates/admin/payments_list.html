@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/action_icons.html" import action_link %}
 
 {% set title = "Pagos" %}
 {% set breadcrumb = "Admin / Pagos" %}
@@ -39,7 +40,7 @@
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
             <th class="px-4 py-3 text-left font-medium">Monto</th>
             <th class="px-4 py-3 text-left font-medium">Estado</th>
-            <th class="px-4 py-3 text-right font-medium">Detalle</th>
+            <th class="px-4 py-3 text-right font-medium">Acciones</th>
           </tr>
         </thead>
         <tbody>
@@ -63,7 +64,9 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">
-                <a class="btn btn-secondary" href="/admin/payments/{{ payment.id }}">Ver</a>
+                <div class="row-actions">
+                  {{ action_link("/admin/payments/" ~ payment.id, "Ver pago", "view") }}
+                </div>
               </td>
             </tr>
           {% endfor %}

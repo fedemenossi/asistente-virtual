@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/button.html" import button %}
+{% from "layout/partials/components/action_icons.html" import icon %}
 
 {% set title = "Notificaciones" %}
 {% set breadcrumb = "Tenant / Notificaciones" %}
@@ -37,10 +38,10 @@
               <td class="px-4 py-3 text-slate-600">{{ 'Leida' if item.read_at else 'No leida' }}</td>
               <td class="px-4 py-3 text-right">
                 {% if not item.read_at %}
-                  <form method="post" action="/notifications/mark-read">
+                  <form method="post" action="/notifications/mark-read" class="row-actions">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                     <input type="hidden" name="notification_id" value="{{ item.id }}" />
-                    {{ button("Marcar leida", variant="ghost", type="submit") }}
+                    <button class="icon-button" type="submit" aria-label="Marcar leida" title="Marcar leida">{{ icon("check") }}</button>
                   </form>
                 {% else %}
                   <span class="text-xs text-slate-500">-</span>

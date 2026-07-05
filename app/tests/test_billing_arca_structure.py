@@ -998,6 +998,44 @@ def test_billing_pending_import_requires_csv_file(
     assert response.headers["location"] == "/t/billing/pending"
 
 
+def test_billing_pending_shows_emission_job_error(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Job Error", "whatsapp:+681"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-job-error@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    class FakeJob:
+        def public_dict(self):
+            return {
+                "id": "job-visible-error",
+                "tenant_id": tenant_id,
+                "status": "completed_with_errors",
+                "total": 1,
+                "processed": 1,
+                "percent": 100,
+                "success": 0,
+                "failed": 1,
+                "emailed": 0,
+                "error_message": "Consulta #201: ARCA rechazo la autorizacion",
+                "started_at": "",
+                "finished_at": "",
+            }
+
+    monkeypatch.setattr("app.web.tenant.views.get_billing_emission_job", lambda job_id, current_tenant_id: FakeJob())
+    login(client, "tenant-job-error@test.com", "secret-123")
+
+    response = client.get("/t/billing/pending?job_id=job-visible-error")
+
+    assert response.status_code == 200
+    assert "Ultimo error: Consulta #201: ARCA rechazo la autorizacion" in response.text
+
+
 def test_billing_pending_diagnosis_update_and_tenant_scope(client, db_session):
     tenant_a = asyncio.run(create_tenant(db_session, "Tenant Pending A", "whatsapp:+621"))
     tenant_b = asyncio.run(create_tenant(db_session, "Tenant Pending B", "whatsapp:+622"))
