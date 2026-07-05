@@ -161,7 +161,14 @@ def build_invoice_html(
     diagnosis: str,
 ) -> str:
     detail = _invoice_detail(invoice)
-    description = detail.get("Descripcion") or detail.get("descripcion") or "Consulta medica"
+    metadata = invoice.request_json.get("metadata", {}) if isinstance(invoice.request_json, dict) else {}
+    description = (
+        detail.get("Descripcion")
+        or detail.get("descripcion")
+        or metadata.get("description")
+        or metadata.get("descripcion")
+        or "Consulta medica"
+    )
     patient_name = consultation.patient_name if consultation else "-"
     patient_document = consultation.patient_document if consultation else invoice.doc_nro
     fiscal = tenant.arca_settings or {}

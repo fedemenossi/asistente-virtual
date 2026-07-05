@@ -1168,9 +1168,10 @@ def test_arca_service_emits_invoice_with_diagnosis(db_session):
     assert captured["auth"]["Token"] == "token"
     assert captured["scope"] == (3, 11)
     detail = captured["request"]["FeDetReq"]["FECAEDetRequest"][0]
-    assert detail["Diagnostico"] == "Bronquitis aguda"
-    assert "Bronquitis aguda" in detail["Descripcion"]
+    assert "Diagnostico" not in detail
+    assert "Descripcion" not in detail
     assert captured["request"]["metadata"]["diagnosis"] == "Bronquitis aguda"
+    assert "Bronquitis aguda" in captured["request"]["metadata"]["description"]
 
     async def _fetch():
         async with db_session() as session:
@@ -1242,9 +1243,10 @@ def test_arca_service_emits_invoice_without_diagnosis(db_session):
 
     invoice_id = asyncio.run(_run())
     detail = captured["request"]["FeDetReq"]["FECAEDetRequest"][0]
-    assert detail["Diagnostico"] == ""
-    assert detail["Descripcion"] == "Consulta medica"
+    assert "Diagnostico" not in detail
+    assert "Descripcion" not in detail
     assert captured["request"]["metadata"]["diagnosis"] == ""
+    assert captured["request"]["metadata"]["description"] == "Consulta medica"
 
     async def _fetch():
         async with db_session() as session:

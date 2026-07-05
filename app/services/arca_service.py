@@ -323,8 +323,6 @@ class ArcaService:
             "ImpIVA": 0,
             "MonId": item.currency,
             "MonCotiz": 1,
-            "Diagnostico": diagnosis,
-            "Descripcion": description,
         }
         if concepto in {2, 3}:
             detail["FchServDesde"] = service_date.strftime("%Y%m%d")

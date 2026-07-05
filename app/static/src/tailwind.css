@@ -759,24 +759,35 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
+    width: 34px;
+    height: 34px;
     border-radius: 8px;
-    border: 1px solid #dbe3ee;
-    background: #ffffff;
-    color: #334155;
+    border: 1px solid #d8e0ec;
+    background: #fbfdff;
+    color: #64748b;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   }
   .icon-button:hover {
     background: #f8fafc;
     border-color: #cbd5e1;
+    color: #334155;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
   }
   .icon-button svg {
-    width: 18px;
-    height: 18px;
+    width: 17px;
+    height: 17px;
   }
   .icon-button.danger,
   .icon-button-danger {
+    color: #ef4444;
+    border-color: #fecaca;
+    background: #fffafa;
+  }
+  .icon-button.danger:hover,
+  .icon-button-danger:hover {
     color: #dc2626;
+    border-color: #fca5a5;
+    background: #fff5f5;
   }
   .pagination {
     display: flex;
