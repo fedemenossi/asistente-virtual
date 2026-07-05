@@ -3586,8 +3586,6 @@ def _validate_preview_consultations(consultations: list[BillingExternalConsultat
             errors.append(f"La consulta #{row.id} ya esta facturada.")
         if not (row.patient_document or "").strip():
             errors.append(f"La consulta #{row.id} no tiene DNI/documento. Revisá el match del paciente.")
-        if not (row.diagnosis or "").strip():
-            errors.append(f"La consulta #{row.id} no tiene diagnostico.")
         if not row.billing_item_id:
             errors.append(f"La consulta #{row.id} no tiene item facturable.")
         if row.amount is None:

@@ -119,7 +119,7 @@ def validate_arca_settings(data: dict[str, str], existing: dict[str, Any] | None
         "email_invoice_enabled_default": data.get("email_invoice_enabled_default") == "on",
         "email_subject_template": email_subject_template,
         "email_body_template": email_body_template,
-        "diagnosis_required": True,
+        "diagnosis_required": False,
         "diagnosis_visible_on_invoice": True,
         "certificate_encrypted": existing.get("certificate_encrypted", ""),
         "private_key_encrypted": existing.get("private_key_encrypted", ""),

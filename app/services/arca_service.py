@@ -186,8 +186,6 @@ class ArcaService:
         if existing_authorized is not None:
             raise ArcaInvoiceAlreadyExists("La consulta ya tiene una factura autorizada.")
         diagnosis = (consultation.diagnosis or "").strip()
-        if not diagnosis:
-            raise ArcaEmissionError("El diagnostico es obligatorio para emitir la factura.")
         if not item.active:
             raise ArcaEmissionError("El item facturable esta inactivo.")
 
@@ -309,7 +307,7 @@ class ArcaService:
         today = datetime.now().date()
         service_date = (consultation.attended_at or datetime.now()).date()
         diagnosis = (consultation.diagnosis or "").strip()
-        description = f"{item.name} - Diagnostico: {diagnosis}"
+        description = f"{item.name} - Diagnostico: {diagnosis}" if diagnosis else item.name
         detail = {
             "Concepto": concepto,
             "DocTipo": doc_tipo,

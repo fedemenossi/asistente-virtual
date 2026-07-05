@@ -53,8 +53,8 @@
                 <p class="text-xs text-slate-500">{{ consultation.insurance_name or "-" }}</p>
               </td>
               <td class="px-4 py-3 text-slate-700">
-                <p class="max-w-xl whitespace-pre-wrap">{{ consultation.diagnosis }}</p>
-                <div class="mt-2">{{ badge("Obligatorio", "neutral") }}</div>
+                <p class="max-w-xl whitespace-pre-wrap">{{ consultation.diagnosis or "No informado" }}</p>
+                <div class="mt-2">{{ badge("Opcional", "neutral") }}</div>
               </td>
               <td class="px-4 py-3">
                 <select class="select min-w-56" name="item_id_{{ consultation.id }}" required>

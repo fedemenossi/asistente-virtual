@@ -75,7 +75,7 @@
         {% if diagnosis %}
           <p class="mt-2 whitespace-pre-wrap text-sm font-semibold text-slate-900">{{ diagnosis }}</p>
         {% else %}
-          <p class="mt-2 text-sm font-semibold text-rose-700">{{ document_error or "Diagnostico no disponible." }}</p>
+          <p class="mt-2 text-sm font-semibold text-slate-600">No informado.</p>
         {% endif %}
       </div>
       <div class="flex flex-wrap gap-2">
@@ -87,9 +87,9 @@
         <label class="block text-sm font-medium text-slate-700">Email del paciente</label>
         <div class="mt-2 flex flex-col gap-2 md:flex-row">
           <input class="input" type="email" name="to_email" value="{{ patient_email }}" placeholder="paciente@correo.com" required />
-          <button class="btn btn-primary" type="submit" {% if not diagnosis or not invoice.cae %}disabled{% endif %}>Enviar / reenviar</button>
+          <button class="btn btn-primary" type="submit" {% if not invoice.cae %}disabled{% endif %}>Enviar / reenviar</button>
         </div>
-        <p class="mt-2 text-xs text-slate-500">El diagnostico se incluye siempre en el HTML, PDF y cuerpo del email.</p>
+        <p class="mt-2 text-xs text-slate-500">Si hay diagnostico cargado, se incluye en el HTML, PDF y cuerpo del email.</p>
       </form>
     </div>
     <div class="card p-6">

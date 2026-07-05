@@ -51,10 +51,6 @@ class BillingInvoiceDocumentService:
         if consultation is None:
             consultation = await self.get_consultation(invoice)
         diagnosis = extract_invoice_diagnosis(invoice, consultation)
-        if not diagnosis:
-            raise BillingInvoiceDocumentError(
-                "La factura no tiene diagnostico registrado y no puede enviarse al paciente."
-            )
         patient_email = extract_patient_email(consultation)
         body = build_invoice_html(tenant, invoice, consultation, diagnosis)
         pdf = build_invoice_pdf(tenant, invoice, consultation, diagnosis)
@@ -89,7 +85,7 @@ class BillingInvoiceEmailService:
         subject = f"Factura ARCA {invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}"
         text_body = (
             f"Adjuntamos la factura ARCA {invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}.\n\n"
-            f"Diagnostico: {document.diagnosis}\n"
+            f"Diagnostico: {document.diagnosis or 'No informado'}\n"
         )
         log = BillingEmailLog(
             tenant_id=tenant.id,
@@ -212,14 +208,14 @@ def build_invoice_html(
     <tbody>
       <tr>
         <td>{html.escape(str(description))}</td>
-        <td class="diagnosis">{html.escape(diagnosis)}</td>
+        <td class="diagnosis">{html.escape(diagnosis or "No informado")}</td>
         <td>{html.escape(_money(invoice.imp_total))} {html.escape(invoice.mon_id)}</td>
       </tr>
     </tbody>
   </table>
   <div class="box">
-    <p class="label">Diagnostico obligatorio informado en factura</p>
-    <p class="diagnosis">{html.escape(diagnosis)}</p>
+    <p class="label">Diagnostico informado en factura</p>
+    <p class="diagnosis">{html.escape(diagnosis or "No informado")}</p>
   </div>
 </body>
 </html>"""
@@ -243,7 +239,7 @@ def build_invoice_pdf(
         f"CAE: {invoice.cae or '-'}",
         f"Vencimiento CAE: {invoice.cae_fch_vto or '-'}",
         "Diagnostico:",
-        diagnosis,
+        diagnosis or "No informado",
     ]
     return _simple_pdf(lines)
 

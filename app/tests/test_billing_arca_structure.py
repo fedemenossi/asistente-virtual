@@ -1077,7 +1077,7 @@ def test_billing_pending_diagnosis_update_and_tenant_scope(client, db_session):
     assert other_diag == "Otro"
 
 
-def test_arca_service_emits_invoice_with_required_diagnosis(db_session):
+def test_arca_service_emits_invoice_with_diagnosis(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Emit OK", "whatsapp:+626"))
     item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
     captured = {}
@@ -1155,6 +1155,72 @@ def test_arca_service_emits_invoice_with_required_diagnosis(db_session):
     assert consultation.arca_invoice_id == invoice_id
     assert consultation.status == "billed"
     assert line.diagnosis_text == "Bronquitis aguda"
+
+
+def test_arca_service_emits_invoice_without_diagnosis(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Emit No Diagnosis", "whatsapp:+646"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(db_session, tenant_id, diagnosis=None)
+    )
+    captured = {}
+
+    class FakeWsfe:
+        def __init__(self, settings, auth_provider):
+            self.auth_provider = auth_provider
+
+        def get_ultimo_autorizado(self, pto_vta, cbte_tipo):
+            return WsfeResult(data={"CbteNro": 20})
+
+        def solicitar_cae(self, request):
+            captured["request"] = request
+            return WsfeResult(
+                data={
+                    "FeCabResp": {"Resultado": "A"},
+                    "FeDetResp": {
+                        "FEDetResponse": {
+                            "Resultado": "A",
+                            "CAE": "22345678901234",
+                            "CAEFchVto": "20260714",
+                        }
+                    },
+                }
+            )
+
+        def consultar_comprobante(self, pto_vta, cbte_tipo, cbte_nro):
+            raise AssertionError("No debe recuperar cuando FECAESolicitar autoriza")
+
+    async def _run():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            item = await session.get(ArcaBillableItem, item_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            result = await ArcaService(
+                session,
+                wsaa_factory=_FakeWsaaForEmission,
+                wsfe_factory=FakeWsfe,
+            ).emit_invoice_for_consultation(tenant, consultation, item)
+            await session.commit()
+            return result.invoice.id
+
+    invoice_id = asyncio.run(_run())
+    detail = captured["request"]["FeDetReq"]["FECAEDetRequest"][0]
+    assert detail["Diagnostico"] == ""
+    assert detail["Descripcion"] == "Consulta medica"
+    assert captured["request"]["metadata"]["diagnosis"] == ""
+
+    async def _fetch():
+        async with db_session() as session:
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            line = await session.scalar(
+                select(BillingInvoiceLine).where(BillingInvoiceLine.invoice_id == invoice_id)
+            )
+            return invoice, line
+
+    invoice, line = asyncio.run(_fetch())
+    assert invoice.status == ArcaInvoiceStatus.AUTHORIZED
+    assert invoice.diagnosis_original_snapshot == ""
+    assert invoice.diagnosis_final_snapshot == ""
+    assert line.diagnosis_text == ""
 
 
 def test_arca_service_persists_rejected_invoice_on_arca_error(db_session):
@@ -1383,12 +1449,20 @@ def test_arca_service_recovers_invoice_with_fe_comp_consultar(db_session):
     assert linked_invoice_id == invoice_id
 
 
-def test_billing_preview_requires_diagnosis(client, db_session):
+def test_billing_preview_allows_missing_diagnosis(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Preview Diagnosis", "whatsapp:+630"))
     item_id, consultation_id = asyncio.run(
         _create_arca_emission_seed(db_session, tenant_id, diagnosis=None)
     )
-    del item_id
+
+    async def _prepare_consultation():
+        async with db_session() as session:
+            async with session.begin():
+                consultation = await session.get(BillingExternalConsultation, consultation_id)
+                consultation.billing_item_id = item_id
+                consultation.amount = Decimal("1500.00")
+
+    asyncio.run(_prepare_consultation())
     asyncio.run(
         create_user(
             db_session,
@@ -1413,15 +1487,9 @@ def test_billing_preview_requires_diagnosis(client, db_session):
         },
         follow_redirects=False,
     )
-    assert response.status_code in (302, 303)
-
-    async def _count_invoices():
-        async with db_session() as session:
-            return await session.scalar(
-                select(ArcaInvoice).where(ArcaInvoice.tenant_id == tenant_id)
-            )
-
-    assert asyncio.run(_count_invoices()) is None
+    assert response.status_code == 200
+    assert "No informado" in response.text
+    assert "Opcional" in response.text
 
 
 def test_billing_invoice_document_html_and_pdf_include_diagnosis(db_session):
@@ -1448,6 +1516,33 @@ def test_billing_invoice_document_html_and_pdf_include_diagnosis(db_session):
     assert "Diagnostico visible obligatorio" in document.html
     assert document.pdf.startswith(b"%PDF")
     assert b"Diagnostico" in document.pdf
+    assert document.patient_email == "paciente@example.com"
+
+
+def test_billing_invoice_document_allows_missing_diagnosis(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Document No Diagnosis", "whatsapp:+647"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(
+            db_session,
+            tenant_id,
+            diagnosis=None,
+            patient_email="paciente@example.com",
+        )
+    )
+    invoice_id = asyncio.run(
+        _emit_authorized_test_invoice(db_session, tenant_id, item_id, consultation_id)
+    )
+
+    async def _build():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            return await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
+
+    document = asyncio.run(_build())
+    assert "No informado" in document.html
+    assert document.pdf.startswith(b"%PDF")
+    assert b"No informado" in document.pdf
     assert document.patient_email == "paciente@example.com"
 
 
