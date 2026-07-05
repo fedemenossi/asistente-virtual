@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone, tzinfo
+from decimal import Decimal, InvalidOperation
 import secrets
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -10,7 +11,6 @@ import json
 import re
 from urllib.parse import urlencode
 
-import requests
 from fastapi import Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, or_, select
@@ -46,9 +46,7 @@ from app.models.payment_event import PaymentEvent
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.integrations.consultorio_movil import (
     CabildoConfigError,
-    fetch_attended_consultations,
     list_next_presential_slots,
-    login as consultorio_movil_login,
 )
 from app.services.appointment_service import AppointmentService
 from app.services.conversation_intents import (
@@ -96,6 +94,15 @@ from app.services.billing_invoice_document_service import (
     BillingInvoiceEmailService,
 )
 from app.services.billing_service import BillingService
+from app.services.billing_consultation_csv_service import (
+    BillingConsultationCsvImportService,
+    parse_billing_attended_csv_text,
+)
+from app.services.billing_emission_job_service import (
+    get_billing_emission_job,
+    get_latest_billing_emission_job,
+    start_billing_emission_job,
+)
 from app.services.arca_service import (
     ArcaConfigurationError,
     ArcaConnectivityError,
@@ -2881,6 +2888,8 @@ async def billing_arca_list(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     status_filter = request.query_params.get("status", "").strip()
+    q = request.query_params.get("q", "").strip()
+    email_status = request.query_params.get("email_status", "").strip()
     stmt = (
         select(ArcaInvoice, BillingExternalConsultation)
         .outerjoin(
@@ -2891,12 +2900,26 @@ async def billing_arca_list(
     )
     if status_filter:
         stmt = stmt.where(ArcaInvoice.status == status_filter)
+    if q:
+        like_q = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                BillingExternalConsultation.patient_name.ilike(like_q),
+                BillingExternalConsultation.patient_document.ilike(like_q),
+                BillingExternalConsultation.patient_email.ilike(like_q),
+                ArcaInvoice.email_to.ilike(like_q),
+            )
+        )
+    if email_status == "sent":
+        stmt = stmt.where(ArcaInvoice.email_sent_at.is_not(None))
+    elif email_status == "not_sent":
+        stmt = stmt.where(ArcaInvoice.email_sent_at.is_(None))
     result = await session.execute(stmt.order_by(desc(ArcaInvoice.created_at)))
     rows = list(result.all())
     return _template(
         request,
         "tenant/billing_arca_list.html",
-        {"rows": rows, "status_filter": status_filter},
+        {"rows": rows, "status_filter": status_filter, "q": q, "email_status": email_status},
     )
 
 
@@ -3301,7 +3324,6 @@ async def _billing_consultorios(session: AsyncSession, tenant_id: int) -> list[C
         .where(
             Consultorio.tenant_id == tenant_id,
             Consultorio.deleted_at.is_(None),
-            Consultorio.proveedor_turnos == "consultorio_movil",
         )
         .order_by(Consultorio.nombre.asc())
     )
@@ -3323,6 +3345,7 @@ async def billing_pending_consultations(
     obra_social = request.query_params.get("obra_social", "").strip()
     staff_id = request.query_params.get("staff_id", "").strip()
     status = request.query_params.get("status", "").strip()
+    job_id = request.query_params.get("job_id", "").strip()
     date_from, date_to, start, end, _, _ = _selected_date_range(date_from, date_to)
 
     stmt = (
@@ -3372,6 +3395,8 @@ async def billing_pending_consultations(
     result = await session.execute(stmt.order_by(BillingExternalConsultation.attended_at.desc()))
     rows = list(result.all())
     consultorios = await _billing_consultorios(session, int(user.tenant_id))
+    items = await _active_billing_items(session, int(user.tenant_id))
+    job = get_billing_emission_job(job_id, int(user.tenant_id)) if job_id else get_latest_billing_emission_job(int(user.tenant_id))
     logger.info(
         "billing_pending_filter",
         extra={
@@ -3402,192 +3427,69 @@ async def billing_pending_consultations(
             "obra_social": obra_social,
             "staff_id": staff_id,
             "status": status,
+            "items": items,
+            "job": job.public_dict() if job else None,
         },
     )
 
 
 async def billing_pending_import(
     request: Request,
-    consultorio_id: int = Form(...),
-    date_from: str = Form(""),
-    date_to: str = Form(""),
+    csv_file: UploadFile | None = File(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("billing_arca:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
-    date_from, date_to, _, _, start_date, end_date = _selected_date_range(date_from, date_to)
-    consultorio = await session.scalar(
-        select(Consultorio).where(
-            Consultorio.id == consultorio_id,
-            Consultorio.tenant_id == user.tenant_id,
-            Consultorio.deleted_at.is_(None),
-        )
-    )
-    if consultorio is None:
-        raise HTTPException(status_code=404, detail="Consultorio no encontrado")
-    if (consultorio.proveedor_turnos or "").strip().lower() != "consultorio_movil":
-        raise HTTPException(status_code=400, detail="El consultorio no usa Consultorio Movil")
-    cfg = _consultorio_movil_config(consultorio)
-    logger.info(
-        "consultorio_movil_billing_import_start",
-        extra={
-            "tenant_id": user.tenant_id,
-            "consultorio_id": consultorio.id,
-            "date_from": date_from,
-            "date_to": date_to,
-            "has_user": bool(cfg.get("user")),
-            "has_password": bool(cfg.get("password")),
-            "has_staff_id": bool(cfg.get("staff_id")),
-            "staff_id": str(cfg.get("staff_id") or ""),
-        },
-    )
-    if not (cfg.get("user") and cfg.get("password") and cfg.get("staff_id")):
-        logger.warning(
-            "consultorio_movil_billing_import_config_incomplete",
-            extra={
-                "tenant_id": user.tenant_id,
-                "consultorio_id": consultorio.id,
-                "has_user": bool(cfg.get("user")),
-                "has_password": bool(cfg.get("password")),
-                "has_staff_id": bool(cfg.get("staff_id")),
-            },
-        )
-        add_flash(request, "error", "Configuracion de Consultorio Movil incompleta")
-        return RedirectResponse(f"/t/billing/pending?date_from={date_from}&date_to={date_to}", status_code=303)
-
-    imported = 0
-    skipped_invoiced = 0
+    if csv_file is None:
+        add_flash(request, "error", "Selecciona un archivo CSV de consultas atendidas.")
+        return RedirectResponse("/t/billing/pending", status_code=303)
+    content = await csv_file.read()
     try:
-        external_session = consultorio_movil_login(str(cfg["user"]), str(cfg["password"]))
-        consultations = fetch_attended_consultations(
-            external_session,
-            str(cfg["staff_id"]),
-            start_date,
-            end_date,
-        )
-    except requests.RequestException as exc:
-        response = getattr(exc, "response", None)
-        logger.warning(
-            "consultorio_movil_billing_import_failed",
-            extra={
-                "tenant_id": user.tenant_id,
-                "consultorio_id": consultorio.id,
-                "staff_id": str(cfg.get("staff_id") or ""),
-                "error_type": type(exc).__name__,
-                "status_code": getattr(response, "status_code", None),
-                "url": str(getattr(response, "url", "")),
-            },
-            exc_info=True,
-        )
-        add_flash(
-            request,
-            "error",
-            "No se pudo conectar con Consultorio Movil. Verifica credenciales, staff id o permisos.",
-        )
-        return RedirectResponse(
-            f"/t/billing/pending?date_from={date_from}&date_to={date_to}&consultorio_id={consultorio.id}",
-            status_code=303,
-        )
-    except RuntimeError as exc:
-        logger.warning(
-            "consultorio_movil_billing_login_failed",
-            extra={
-                "tenant_id": user.tenant_id,
-                "consultorio_id": consultorio.id,
-                "staff_id": str(cfg.get("staff_id") or ""),
-                "error_type": type(exc).__name__,
-            },
-            exc_info=True,
-        )
-        add_flash(request, "error", str(exc) or "No se pudo iniciar sesion en Consultorio Movil.")
-        return RedirectResponse(
-            f"/t/billing/pending?date_from={date_from}&date_to={date_to}&consultorio_id={consultorio.id}",
-            status_code=303,
-        )
+        rows = parse_billing_attended_csv_text(content.decode("utf-8-sig"))
+    except Exception as exc:
+        logger.warning("billing_csv_import_parse_failed", extra={"tenant_id": user.tenant_id, "filename": csv_file.filename}, exc_info=True)
+        add_flash(request, "error", f"No se pudo leer el CSV: {exc}")
+        return RedirectResponse("/t/billing/pending", status_code=303)
     async with session.begin_nested():
-        for consultation in consultations:
-            existing = await session.scalar(
-                select(BillingExternalConsultation).where(
-                    BillingExternalConsultation.tenant_id == user.tenant_id,
-                    BillingExternalConsultation.external_provider == "consultorio_movil",
-                    BillingExternalConsultation.external_id == consultation.external_id,
-                )
-            )
-            if existing and existing.arca_invoice_id is not None:
-                skipped_invoiced += 1
-                continue
-            row = existing or BillingExternalConsultation(
-                tenant_id=int(user.tenant_id),
-                external_provider="consultorio_movil",
-                external_id=consultation.external_id,
-            )
-            row.consultorio_id = consultorio.id
-            row.external_staff_id = str(cfg["staff_id"])
-            row.attended_at = consultation.attended_at
-            row.patient_external_id = consultation.patient_external_id or None
-            row.patient_name = consultation.patient_name or None
-            row.patient_document = consultation.patient_document or None
-            row.patient_email = consultation.patient_email or None
-            row.patient_phone = consultation.patient_phone or None
-            row.insurance_name = consultation.insurance_name or None
-            row.professional_name = consultation.professional_name or None
-            row.practice_name = consultation.practice_name or None
-            if not row.diagnosis_original:
-                row.diagnosis_original = consultation.diagnosis or None
-            if not row.diagnosis:
-                row.diagnosis = consultation.diagnosis or None
-            row.status = row.status or "pending"
-            row.raw_payload_json = consultation.raw_payload
-            if existing is None:
-                session.add(row)
-                imported += 1
-            else:
-                logger.info(
-                    "consultorio_movil_billing_import_update_existing",
-                    extra={
-                        "tenant_id": user.tenant_id,
-                        "consultorio_id": consultorio.id,
-                        "external_id": consultation.external_id,
-                    },
-                )
+        result = await BillingConsultationCsvImportService(session).import_rows(
+            int(user.tenant_id),
+            rows,
+            filename=csv_file.filename or "atendidas.csv",
+        )
         await audit_log(
             session,
             request,
             user,
             action="import",
             entity="billing_external_consultations",
-            entity_id=consultorio.id,
+            entity_id=None,
             tenant_id=int(user.tenant_id),
-            metadata={
-                "consultorio_id": consultorio.id,
-                "date_from": date_from,
-                "date_to": date_to,
-                "fetched": len(consultations),
-                "inserted": imported,
-                "skipped_invoiced": skipped_invoiced,
-            },
+            metadata={**result.__dict__, "filename": csv_file.filename or "atendidas.csv"},
         )
     logger.info(
-        "consultorio_movil_billing_import_done",
+        "billing_csv_import_done",
         extra={
             "tenant_id": user.tenant_id,
-            "consultorio_id": consultorio.id,
-            "staff_id": str(cfg.get("staff_id") or ""),
-            "fetched": len(consultations),
-            "inserted": imported,
-            "skipped_invoiced": skipped_invoiced,
+            "csv_filename": csv_file.filename,
+            "billing_csv_total_rows": result.total_rows,
+            "billing_csv_created": result.created,
+            "billing_csv_updated": result.updated,
+            "billing_csv_matched_patients": result.matched_patients,
+            "billing_csv_missing_patient_match": result.missing_patient_match,
+            "billing_csv_skipped_billed": result.skipped_billed,
+            "billing_csv_errors": result.errors,
         },
     )
     add_flash(
         request,
-        "success",
-        f"Consultas importadas: {imported}. Ya facturadas omitidas: {skipped_invoiced}.",
+        "success" if result.errors == 0 else "warning",
+        (
+            f"CSV importado. Creadas: {result.created}. Actualizadas: {result.updated}. "
+            f"Pacientes encontrados: {result.matched_patients}. Sin match: {result.missing_patient_match}."
+        ),
     )
-    return RedirectResponse(
-        f"/t/billing/pending?date_from={date_from}&date_to={date_to}&consultorio_id={consultorio.id}",
-        status_code=303,
-    )
+    return RedirectResponse("/t/billing/pending", status_code=303)
 
 
 async def _load_pending_consultations(
@@ -3653,9 +3555,50 @@ def _validate_preview_consultations(consultations: list[BillingExternalConsultat
     for row in consultations:
         if row.arca_invoice_id is not None:
             errors.append(f"La consulta #{row.id} ya esta facturada.")
+        if not (row.patient_document or "").strip():
+            errors.append(f"La consulta #{row.id} no tiene DNI/documento. Revisá el match del paciente.")
         if not (row.diagnosis or "").strip():
             errors.append(f"La consulta #{row.id} no tiene diagnostico.")
+        if not row.billing_item_id:
+            errors.append(f"La consulta #{row.id} no tiene item facturable.")
+        if row.amount is None:
+            errors.append(f"La consulta #{row.id} no tiene importe.")
     return errors
+
+
+def _decimal_from_form(value: object) -> Decimal | None:
+    text = str(value or "").strip().replace(",", ".")
+    if not text:
+        return None
+    try:
+        amount = Decimal(text).quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        return None
+    return amount if amount > 0 else None
+
+
+async def _save_billing_grid_settings(
+    session: AsyncSession,
+    tenant_id: int,
+    consultation_ids: list[int],
+    form,
+) -> list[BillingExternalConsultation]:
+    consultations = await _load_pending_consultations(session, tenant_id, consultation_ids)
+    for consultation in consultations:
+        row_id = consultation.id
+        consultation.selected_for_billing = True
+        consultation.send_email = str(form.get(f"send_email_{row_id}") or "") == "on"
+        consultation.diagnosis = str(form.get(f"diagnosis_{row_id}") or consultation.diagnosis or "").strip() or None
+        try:
+            item_id = int(form.get(f"item_id_{row_id}") or consultation.billing_item_id or 0)
+        except (TypeError, ValueError):
+            item_id = 0
+        consultation.billing_item_id = item_id or None
+        amount = _decimal_from_form(form.get(f"amount_{row_id}"))
+        if amount is not None:
+            consultation.amount = amount
+    await session.flush()
+    return consultations
 
 
 async def billing_invoice_preview(
@@ -3755,19 +3698,27 @@ async def billing_invoice_emit_batch(
     if not ids:
         add_flash(request, "error", "Selecciona al menos una consulta.")
         return RedirectResponse("/t/billing/pending", status_code=303)
-    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
-    success, failed = await _emit_selected_consultations(request, session, tenant, ids, form)
-    await audit_log(
-        session,
-        request,
-        user,
-        action="emit_batch",
-        entity="billing_arca",
-        entity_id=tenant.id,
-        tenant_id=tenant.id,
-        metadata={"selected": len(ids), "success": success, "failed": failed},
-    )
-    return RedirectResponse("/t/billing/pending", status_code=303)
+    async with session.begin_nested():
+        consultations = await _save_billing_grid_settings(session, int(user.tenant_id), ids, form)
+        errors = _validate_preview_consultations(consultations)
+        if errors:
+            for error in errors:
+                add_flash(request, "error", error)
+            return RedirectResponse(_pending_back_url(form), status_code=303)
+        await audit_log(
+            session,
+            request,
+            user,
+            action="billing_emission_job_started",
+            entity="billing_arca",
+            entity_id=int(user.tenant_id),
+            tenant_id=int(user.tenant_id),
+            metadata={"selected": len(ids)},
+        )
+    await session.commit()
+    job = start_billing_emission_job(int(user.tenant_id), ids)
+    add_flash(request, "success", "Facturacion iniciada. Podes seguir el avance en esta pantalla.")
+    return RedirectResponse(f"/t/billing/pending?job_id={job.id}", status_code=303)
 
 
 async def billing_invoice_emit_one(
@@ -3781,6 +3732,17 @@ async def billing_invoice_emit_one(
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
     await _emit_selected_consultations(request, session, tenant, [consultation_id], form)
     return RedirectResponse("/t/billing/pending", status_code=303)
+
+
+async def billing_emission_job_status(
+    request: Request,
+    job_id: str,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+) -> JSONResponse:
+    job = get_billing_emission_job(job_id, int(user.tenant_id))
+    if job is None:
+        return JSONResponse({"error": "job_not_found"}, status_code=404)
+    return JSONResponse(job.public_dict())
 
 
 async def billing_pending_diagnosis_update(

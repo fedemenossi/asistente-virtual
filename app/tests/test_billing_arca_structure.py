@@ -5,13 +5,11 @@ import re
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 
-import requests
 from sqlalchemy import select
 
 from app.core.security import hash_password
 from app.integrations.arca.wsaa_client import AccessTicket
 from app.integrations.arca.wsfe_client import WsfeError, WsfeResult
-from app.integrations.consultorio_movil import AttendedConsultation
 from app.models.arca_billable_item import ArcaBillableItem
 from app.models.arca_invoice import ArcaInvoice, ArcaInvoiceStatus
 from app.models.billing_email_log import BillingEmailLog
@@ -33,7 +31,7 @@ from app.services.billing_invoice_document_service import (
     BillingInvoiceEmailService,
 )
 from app.services.tenant_feature_service import TenantFeatureService
-from app.tests.conftest import create_consultorio, create_tenant, create_user, login
+from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_user, login
 
 
 async def _create_invoice(db_session, tenant_id: int, *, cbte_nro: int, amount: Decimal) -> int:
@@ -713,6 +711,21 @@ def test_billing_pending_imports_attended_consultations_and_skips_invoiced(
             tenant_id,
         )
     )
+    asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "1144445555",
+            nombre="Juan",
+            apellido="Perez",
+            dni="30111222",
+            tipo_documento="DNI",
+            numero_documento="30111222",
+            document_number_normalized="30111222",
+            email="juan@example.com",
+            obra_social="OSDE",
+        )
+    )
     invoice_id = asyncio.run(
         _create_invoice(db_session, tenant_id, cbte_nro=301, amount=Decimal("100.00"))
     )
@@ -733,68 +746,20 @@ def test_billing_pending_imports_attended_consultations_and_skips_invoiced(
     asyncio.run(_seed_invoiced())
     login(client, "tenant-pending@test.com", "secret-123")
 
-    captured = {}
-
-    class FakeSession:
-        pass
-
-    def fake_login(username, password):
-        captured["credentials"] = (username, password)
-        return FakeSession()
-
-    def fake_fetch(session, staff_id, date_from, date_to):
-        captured["staff_id"] = staff_id
-        captured["date_from"] = date_from.isoformat()
-        captured["date_to"] = date_to.isoformat()
-        return [
-            AttendedConsultation(
-                external_id="att-1",
-                attended_at=datetime(2026, 7, 1, 10, 30),
-                patient_external_id="p1",
-                patient_name="Juan Perez",
-                patient_document="30111222",
-                patient_email="juan@example.com",
-                patient_phone="1144445555",
-                insurance_name="OSDE",
-                professional_name="Dra Gomez",
-                practice_name="Consulta",
-                diagnosis="Control",
-                raw_payload={"id": "att-1"},
-            ),
-            AttendedConsultation(
-                external_id="att-2",
-                attended_at=datetime(2026, 7, 1, 11, 30),
-                patient_external_id="p2",
-                patient_name="Paciente Facturado",
-                patient_document="30999888",
-                patient_email="facturado@example.com",
-                patient_phone="",
-                insurance_name="Swiss Medical",
-                professional_name="Dra Gomez",
-                practice_name="Consulta",
-                diagnosis="Ya facturado",
-                raw_payload={"id": "att-2"},
-            ),
-        ]
-
-    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", fake_login)
-    monkeypatch.setattr("app.web.tenant.views.fetch_attended_consultations", fake_fetch)
-
     page = client.get("/t/billing/pending?date_from=2026-07-01&date_to=2026-07-02")
     assert page.status_code == 200
+    csv_content = (
+        "id,fecha,paciente,email,obra social,profesional,practica,diagnostico\n"
+        "att-1,01/07/2026 10:30,Juan Perez,,OSDE,Dra Gomez,Consulta,Control\n"
+        "att-2,01/07/2026 11:30,Paciente Facturado,facturado@example.com,Swiss Medical,Dra Gomez,Consulta,Ya facturado\n"
+    ).encode("utf-8-sig")
     response = client.post(
         "/t/billing/pending/import",
-        data={
-            "csrf_token": _csrf(page.text),
-            "consultorio_id": str(consultorio_id),
-            "date_from": "2026-07-01",
-            "date_to": "2026-07-02",
-        },
+        data={"csrf_token": _csrf(page.text)},
+        files={"csv_file": ("atendidas.csv", csv_content, "text/csv")},
         follow_redirects=False,
     )
     assert response.status_code in (302, 303)
-    assert captured["credentials"] == ("cm-user", "cm-pass")
-    assert captured["staff_id"] == "77"
 
     async def _rows():
         async with db_session() as session:
@@ -810,6 +775,7 @@ def test_billing_pending_imports_attended_consultations_and_skips_invoiced(
     imported = next(row for row in rows if row.external_id == "att-1")
     invoiced = next(row for row in rows if row.external_id == "att-2")
     assert imported.patient_name == "Juan Perez"
+    assert imported.patient_document == "30111222"
     assert imported.patient_email == "juan@example.com"
     assert imported.insurance_name == "OSDE"
     assert imported.diagnosis == "Control"
@@ -829,27 +795,72 @@ def test_billing_pending_imports_attended_consultations_and_skips_invoiced(
     assert "Juan Perez" in by_insurance.text
 
 
-def test_billing_pending_import_handles_consultorio_movil_http_error(
+def test_billing_pending_import_supports_real_attended_csv_format(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Real CSV", "whatsapp:+636"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-real-csv@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491111111111",
+            nombre="Andrea",
+            apellido="Blumtritt",
+            dni="30123456",
+            tipo_documento="DNI",
+            numero_documento="30123456",
+            document_number_normalized="30123456",
+            email="andrea@example.com",
+            obra_social="OSDE",
+        )
+    )
+    login(client, "tenant-real-csv@test.com", "secret-123")
+    page = client.get("/t/billing/pending")
+    csv_content = (
+        '"Fecha","Paciente","Médico","Financiador"\n'
+        '"03/07/2026","Andrea Blumtritt (61868706701)","Marìa Laura Langdon","OSDE"\n'
+    ).encode("utf-8-sig")
+
+    response = client.post(
+        "/t/billing/pending/import",
+        data={"csrf_token": _csrf(page.text)},
+        files={"csv_file": ("pacientes_atendidos.csv", csv_content, "text/csv")},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    listing = client.get("/t/billing/pending?dni=30123456")
+    assert "Andrea Blumtritt" in listing.text
+    assert "DNI 30123456" in listing.text
+    assert "OSDE" in listing.text
+
+    async def _fetch():
+        async with db_session() as session:
+            return await session.scalar(
+                select(BillingExternalConsultation).where(
+                    BillingExternalConsultation.tenant_id == tenant_id,
+                    BillingExternalConsultation.patient_name == "Andrea Blumtritt",
+                )
+            )
+
+    row = asyncio.run(_fetch())
+    assert row.patient_external_id == "61868706701"
+    assert row.professional_name == "Marìa Laura Langdon"
+
+
+def test_billing_pending_import_requires_csv_file(
     client,
     db_session,
     monkeypatch,
 ):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Pending HTTP Error", "whatsapp:+634"))
-    consultorio_id = asyncio.run(
-        create_consultorio(
-            db_session,
-            tenant_id,
-            "Sede Error",
-            proveedor_turnos="consultorio_movil",
-            configuracion_externa={
-                "cabildo": {
-                    "user": "cm-user",
-                    "password": "cm-pass",
-                    "staff_id": "77",
-                }
-            },
-        )
-    )
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Pending CSV Required", "whatsapp:+634"))
     asyncio.run(
         create_user(
             db_session,
@@ -861,24 +872,14 @@ def test_billing_pending_import_handles_consultorio_movil_http_error(
     )
     login(client, "tenant-pending-http-error@test.com", "secret-123")
 
-    def failing_login(username, password):
-        raise requests.HTTPError("403 Client Error: Forbidden")
-
-    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", failing_login)
-
     page = client.get("/t/billing/pending?date_from=2026-07-01&date_to=2026-07-02")
     response = client.post(
         "/t/billing/pending/import",
-        data={
-            "csrf_token": _csrf(page.text),
-            "consultorio_id": str(consultorio_id),
-            "date_from": "2026-07-01",
-            "date_to": "2026-07-02",
-        },
+        data={"csrf_token": _csrf(page.text)},
         follow_redirects=False,
     )
     assert response.status_code in (302, 303)
-    assert "consultorio_id" in response.headers["location"]
+    assert response.headers["location"] == "/t/billing/pending"
 
 
 def test_billing_pending_diagnosis_update_and_tenant_scope(client, db_session):
@@ -1129,7 +1130,7 @@ def test_arca_service_blocks_double_billing(db_session):
     assert "ya esta facturada" in message
 
 
-def test_billing_import_crosses_consultorio_movil_with_local_billed_consultations(
+def test_billing_csv_import_crosses_with_local_billed_consultations(
     client,
     db_session,
     monkeypatch,
@@ -1170,46 +1171,19 @@ def test_billing_import_crosses_consultorio_movil_with_local_billed_consultation
             return consultation.external_id
 
     external_id = asyncio.run(_billed_external_id())
-
-    class FakeSession:
-        pass
-
-    def fake_login(username, password):
-        return FakeSession()
-
-    def fake_fetch(session, staff_id, date_from, date_to):
-        return [
-            AttendedConsultation(
-                external_id=external_id,
-                attended_at=datetime(2026, 7, 4, 10, 0),
-                patient_external_id="p1",
-                patient_name="Juan Perez",
-                patient_document="30111222",
-                patient_email="juan@example.com",
-                patient_phone="",
-                insurance_name="OSDE",
-                professional_name="Dra Gomez",
-                practice_name="Consulta",
-                diagnosis="Bronquitis aguda",
-                raw_payload={"id": external_id},
-            )
-        ]
-
-    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", fake_login)
-    monkeypatch.setattr("app.web.tenant.views.fetch_attended_consultations", fake_fetch)
     login(client, "tenant-cross-billed@test.com", "secret-123")
 
     pending_before = client.get("/t/billing/pending")
     assert "Juan Perez" not in pending_before.text
+    csv_content = (
+        "id,fecha,paciente,email,obra social,profesional,practica,diagnostico\n"
+        f"{external_id},04/07/2026 10:00,Juan Perez,juan@example.com,OSDE,Dra Gomez,Consulta,Bronquitis aguda\n"
+    ).encode("utf-8-sig")
 
     response = client.post(
         "/t/billing/pending/import",
-        data={
-            "csrf_token": _csrf(pending_before.text),
-            "consultorio_id": str(consultorio_id),
-            "date_from": "2026-07-04",
-            "date_to": "2026-07-04",
-        },
+        data={"csrf_token": _csrf(pending_before.text)},
+        files={"csv_file": ("atendidas.csv", csv_content, "text/csv")},
         follow_redirects=False,
     )
     assert response.status_code in (302, 303)

@@ -16,7 +16,8 @@
     </div>
   </div>
 
-  <form method="get" class="mb-4 grid gap-3 md:grid-cols-3">
+  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
+    <input class="input" name="q" value="{{ q or '' }}" placeholder="Paciente, DNI o email" />
     <select class="select" name="status">
       <option value="">Estado</option>
       <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Borrador</option>
@@ -25,6 +26,11 @@
       <option value="rejected" {% if status_filter == 'rejected' %}selected{% endif %}>Rechazado</option>
       <option value="needs_reconciliation" {% if status_filter == 'needs_reconciliation' %}selected{% endif %}>A reconciliar</option>
       <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelado</option>
+    </select>
+    <select class="select" name="email_status">
+      <option value="">Mail</option>
+      <option value="sent" {% if email_status == 'sent' %}selected{% endif %}>Enviado</option>
+      <option value="not_sent" {% if email_status == 'not_sent' %}selected{% endif %}>No enviado</option>
     </select>
     <button class="btn btn-secondary" type="submit">Filtrar</button>
   </form>
@@ -94,7 +100,10 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">
-                <a class="btn btn-secondary" href="/t/billing/invoices/{{ invoice.id }}">Ver</a>
+                <div class="flex justify-end gap-2">
+                  <a class="btn btn-secondary" href="/t/billing/invoices/{{ invoice.id }}">Ver</a>
+                  <a class="btn btn-secondary" href="/t/billing-arca/{{ invoice.id }}/comprobante.pdf" target="_blank">PDF</a>
+                </div>
               </td>
             </tr>
           {% endfor %}

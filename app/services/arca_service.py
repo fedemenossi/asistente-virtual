@@ -167,6 +167,9 @@ class ArcaService:
         tenant: Tenant,
         consultation: BillingExternalConsultation,
         item: ArcaBillableItem,
+        *,
+        amount_override: Any | None = None,
+        send_email: bool | None = None,
     ) -> ArcaEmissionResult:
         if consultation.tenant_id != tenant.id or item.tenant_id != tenant.id:
             raise ArcaEmissionError("La consulta o el item no pertenecen al tenant.")
@@ -218,6 +221,7 @@ class ArcaService:
             tenant=tenant,
             consultation=consultation,
             item=item,
+            amount_override=amount_override,
             pto_vta=pto_vta,
             cbte_tipo=cbte_tipo,
             cbte_nro=cbte_nro,
@@ -228,6 +232,7 @@ class ArcaService:
             consultation=consultation,
             item=item,
             request=request,
+            send_email=send_email,
             pto_vta=pto_vta,
             cbte_tipo=cbte_tipo,
             cbte_nro=cbte_nro,
@@ -243,7 +248,7 @@ class ArcaService:
                 payload_json={"consultation_id": consultation.id},
             )
         )
-        self._session.add(_build_invoice_line(invoice.id, item, diagnosis))
+        self._session.add(_build_invoice_line(invoice.id, item, diagnosis, amount_override=amount_override))
 
         try:
             response = await anyio.to_thread.run_sync(lambda: wsfe.solicitar_cae(request).data)
@@ -293,13 +298,14 @@ class ArcaService:
         tenant: Tenant,
         consultation: BillingExternalConsultation,
         item: ArcaBillableItem,
+        amount_override: Any | None,
         pto_vta: int,
         cbte_tipo: int,
         cbte_nro: int,
         concepto: int,
     ) -> dict[str, Any]:
         doc_tipo, doc_nro = _document_for_arca(consultation.patient_document)
-        amount = Decimal(str(item.unit_price)).quantize(Decimal("0.01"))
+        amount = Decimal(str(amount_override if amount_override not in (None, "") else item.unit_price)).quantize(Decimal("0.01"))
         today = datetime.now().date()
         service_date = (consultation.attended_at or datetime.now()).date()
         diagnosis = (consultation.diagnosis or "").strip()
@@ -352,6 +358,7 @@ class ArcaService:
         consultation: BillingExternalConsultation,
         item: ArcaBillableItem,
         request: dict[str, Any],
+        send_email: bool | None,
         pto_vta: int,
         cbte_tipo: int,
         cbte_nro: int,
@@ -383,6 +390,7 @@ class ArcaService:
             status=ArcaInvoiceStatus.PENDING_AUTHORIZATION,
             diagnosis_original_snapshot=(consultation.diagnosis_original or consultation.diagnosis or "").strip(),
             diagnosis_final_snapshot=(consultation.diagnosis or "").strip(),
+            send_email=bool(send_email),
             email_to=consultation.patient_email,
             request_json=request,
         )
@@ -488,8 +496,10 @@ def _build_invoice_line(
     invoice_id: int,
     item: ArcaBillableItem,
     diagnosis: str,
+    *,
+    amount_override: Any | None = None,
 ) -> BillingInvoiceLine:
-    amount = Decimal(str(item.unit_price)).quantize(Decimal("0.01"))
+    amount = Decimal(str(amount_override if amount_override not in (None, "") else item.unit_price)).quantize(Decimal("0.01"))
     description = item.description or item.name
     return BillingInvoiceLine(
         invoice_id=invoice_id,

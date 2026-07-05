@@ -7,7 +7,7 @@
 {% block content %}
   <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
     <div>
-      <p class="text-sm text-slate-600">Consultas atendidas importadas desde Consultorio Movil</p>
+      <p class="text-sm text-slate-600">Consultas atendidas importadas desde CSV</p>
       <h1 class="text-2xl font-semibold text-slate-900">Pendientes de facturacion</h1>
     </div>
     <a class="btn btn-secondary" href="/t/billing/invoices">Facturas emitidas</a>
@@ -17,7 +17,7 @@
     <form method="get" class="card p-4">
       <div class="mb-3">
         <p class="text-sm font-semibold text-slate-900">Filtrar consultas importadas</p>
-        <p class="text-xs text-slate-500">Busca sobre las consultas ya guardadas en el sistema.</p>
+        <p class="text-xs text-slate-500">Busca sobre las consultas guardadas en el sistema.</p>
       </div>
       <div class="grid gap-3 md:grid-cols-3">
         <div>
@@ -58,9 +58,8 @@
           <select class="select" name="status">
             <option value="">Todos</option>
             <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pendiente</option>
-            <option value="selected" {% if status == 'selected' %}selected{% endif %}>Seleccionada</option>
+            <option value="missing_patient_match" {% if status == 'missing_patient_match' %}selected{% endif %}>Sin DNI</option>
             <option value="billed" {% if status == 'billed' %}selected{% endif %}>Facturada</option>
-            <option value="ignored" {% if status == 'ignored' %}selected{% endif %}>Ignorada</option>
             <option value="error" {% if status == 'error' %}selected{% endif %}>Error</option>
           </select>
         </div>
@@ -70,39 +69,54 @@
       </div>
     </form>
 
-    <form method="post" action="/t/billing/pending/import" class="card p-4">
+    <form method="post" action="/t/billing/pending/import" enctype="multipart/form-data" class="card p-4" data-billing-csv-form>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <div class="mb-3">
-        <p class="text-sm font-semibold text-slate-900">Consultar Consultorio Movil</p>
-        <p class="text-xs text-slate-500">Trae pacientes atendidos del rango seleccionado y los deja disponibles para facturar.</p>
+        <p class="text-sm font-semibold text-slate-900">Importar atendidas desde CSV</p>
+        <p class="text-xs text-slate-500">Carga el CSV exportado y cruza pacientes por nombre para completar DNI, mail y obra social.</p>
       </div>
-      <div class="grid gap-3 md:grid-cols-3">
-        <div>
-          <label class="text-xs text-slate-500">Desde</label>
-          <input class="input" type="date" name="date_from" value="{{ date_from }}" />
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">Hasta</label>
-          <input class="input" type="date" name="date_to" value="{{ date_to }}" />
-        </div>
-        <div>
-          <label class="text-xs text-slate-500">Consultorio</label>
-          <select class="select" name="consultorio_id" required>
-            <option value="">Seleccionar</option>
-            {% for consultorio in consultorios %}
-              <option value="{{ consultorio.id }}" {% if consultorio_id|string == consultorio.id|string %}selected{% endif %}>{{ consultorio.nombre }}</option>
-            {% endfor %}
-          </select>
-        </div>
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <label class="btn btn-primary cursor-pointer" data-billing-csv-trigger>
+          <span data-billing-csv-trigger-text>Cargar CSV de atendidas</span>
+          <input class="hidden" type="file" name="csv_file" accept=".csv,text/csv" data-billing-csv-input />
+        </label>
+        <p class="text-xs text-slate-500">No usa scraping ni llamadas a Consultorio Movil.</p>
       </div>
-      <div class="mt-3">
-        <button class="btn btn-primary" type="submit">Buscar e importar atendidas</button>
+      <div class="mt-5 hidden rounded-lg border border-sky-200 bg-sky-50 p-4" data-billing-csv-progress>
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-semibold text-sky-950" data-billing-csv-progress-detail>Subiendo CSV...</p>
+          <span class="rounded-full bg-white px-3 py-1 text-xs font-medium text-sky-700">Procesando</span>
+        </div>
+        <div class="mt-3 h-2 overflow-hidden rounded-full bg-sky-100">
+          <div class="h-full w-2/3 rounded-full bg-sky-500 transition-all duration-500"></div>
+        </div>
       </div>
     </form>
   </div>
 
+  {% if job %}
+    <section class="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4" data-billing-job data-billing-job-id="{{ job.id }}">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p class="text-sm font-semibold text-emerald-950">Facturacion en proceso</p>
+          <p class="text-xs text-emerald-700">
+            Estado <span data-job-status>{{ job.status }}</span>.
+            Procesadas <span data-job-processed>{{ job.processed }}</span>/<span data-job-total>{{ job.total }}</span>.
+            Emitidas <span data-job-success>{{ job.success }}</span>.
+            Errores <span data-job-failed>{{ job.failed }}</span>.
+            Mails <span data-job-emailed>{{ job.emailed }}</span>.
+          </p>
+        </div>
+        <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-emerald-700" data-job-percent>{{ job.percent }}%</span>
+      </div>
+      <div class="mt-3 h-2 overflow-hidden rounded-full bg-emerald-100">
+        <div class="h-full rounded-full bg-emerald-500 transition-all duration-500" style="width: {{ job.percent }}%" data-job-bar></div>
+      </div>
+    </section>
+  {% endif %}
+
   {% if rows %}
-    <form id="preview-form" method="post" action="/t/billing/preview">
+    <form id="billing-grid-form" method="post" action="/t/billing/emit">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="date_from" value="{{ date_from }}" />
       <input type="hidden" name="date_to" value="{{ date_to }}" />
@@ -114,19 +128,20 @@
       <input type="hidden" name="status" value="{{ status or '' }}" />
     </form>
     <div class="mb-3 flex justify-end">
-      <button class="btn btn-primary" type="submit" form="preview-form">Previsualizar seleccion</button>
+      <button class="btn btn-primary" type="submit" form="billing-grid-form">Facturar seleccionadas</button>
     </div>
     <div class="card overflow-x-auto overflow-y-visible">
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50 text-slate-600">
           <tr>
-            <th class="px-4 py-3 text-left font-medium">Seleccionar</th>
+            <th class="px-4 py-3 text-left font-medium">Facturar</th>
             <th class="px-4 py-3 text-left font-medium">Fecha</th>
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
             <th class="px-4 py-3 text-left font-medium">Mail</th>
             <th class="px-4 py-3 text-left font-medium">Obra social</th>
-            <th class="px-4 py-3 text-left font-medium">Consultorio</th>
             <th class="px-4 py-3 text-left font-medium">Practica</th>
+            <th class="px-4 py-3 text-left font-medium">Item / importe</th>
+            <th class="px-4 py-3 text-left font-medium">Enviar mail</th>
             <th class="px-4 py-3 text-left font-medium">Diagnostico</th>
             <th class="px-4 py-3 text-left font-medium">Estado</th>
           </tr>
@@ -134,36 +149,45 @@
         <tbody>
           {% for row in rows %}
             {% set consultation = row[0] %}
-            {% set consultorio = row[1] %}
             <tr class="border-t border-slate-200 align-top hover:bg-slate-50">
               <td class="px-4 py-3">
-                <input class="h-4 w-4 rounded border-slate-300" form="preview-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" />
+                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" {% if consultation.selected_for_billing %}checked{% endif %} />
               </td>
               <td class="px-4 py-3 text-slate-600">{{ consultation.attended_at or "-" }}</td>
               <td class="px-4 py-3 text-slate-900">
                 <p class="font-medium">{{ consultation.patient_name or "-" }}</p>
-                <p class="text-xs text-slate-500">{{ consultation.patient_document or "-" }}</p>
+                <p class="text-xs text-slate-500">DNI {{ consultation.patient_document or "-" }}</p>
               </td>
               <td class="px-4 py-3 text-slate-600">{{ consultation.patient_email or "-" }}</td>
               <td class="px-4 py-3 text-slate-600">{{ consultation.insurance_name or "-" }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ consultorio.nombre if consultorio else "-" }}</td>
               <td class="px-4 py-3 text-slate-600">{{ consultation.practice_name or "-" }}</td>
               <td class="px-4 py-3">
-                <form method="post" action="/t/billing/pending/{{ consultation.id }}/diagnosis" class="space-y-2">
-                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-                  <input type="hidden" name="date_from" value="{{ date_from }}" />
-                  <input type="hidden" name="date_to" value="{{ date_to }}" />
-                  <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
-                  <input type="hidden" name="q" value="{{ q or '' }}" />
-                  <input type="hidden" name="dni" value="{{ dni or '' }}" />
-                  <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
-                  <input type="hidden" name="staff_id" value="{{ staff_id or '' }}" />
-                  <input type="hidden" name="status" value="{{ status or '' }}" />
-                  <textarea class="textarea min-w-72" name="diagnosis" rows="2">{{ consultation.diagnosis or '' }}</textarea>
-                  <button class="btn btn-secondary text-xs" type="submit">Guardar</button>
-                </form>
+                <select class="select min-w-56" form="billing-grid-form" name="item_id_{{ consultation.id }}">
+                  <option value="">Seleccionar</option>
+                  {% for item in items %}
+                    <option value="{{ item.id }}" {% if consultation.billing_item_id == item.id %}selected{% endif %}>{{ item.name }}</option>
+                  {% endfor %}
+                </select>
+                <input class="input mt-2 w-32" form="billing-grid-form" name="amount_{{ consultation.id }}" value="{{ consultation.amount or '' }}" placeholder="Importe" />
               </td>
-              <td class="px-4 py-3">{{ badge("Pendiente", "neutral") }}</td>
+              <td class="px-4 py-3">
+                <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="send_email_{{ consultation.id }}" {% if consultation.send_email %}checked{% endif %} />
+                  Enviar
+                </label>
+              </td>
+              <td class="px-4 py-3">
+                <textarea class="textarea min-w-72" form="billing-grid-form" name="diagnosis_{{ consultation.id }}" rows="2">{{ consultation.diagnosis or '' }}</textarea>
+              </td>
+              <td class="px-4 py-3">
+                {% if consultation.status == 'missing_patient_match' %}
+                  {{ badge("Sin DNI", "warning") }}
+                {% elif consultation.status == 'error' %}
+                  {{ badge("Error", "warning") }}
+                {% else %}
+                  {{ badge("Pendiente", "neutral") }}
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
         </tbody>
@@ -172,7 +196,56 @@
   {% else %}
     <div class="card p-10 text-center">
       <p class="text-sm text-slate-600">No hay consultas pendientes para los filtros seleccionados.</p>
-      <p class="mt-2 text-xs text-slate-500">Si esperabas datos de Consultorio Movil, usá “Buscar e importar atendidas”.</p>
+      <p class="mt-2 text-xs text-slate-500">Carga un CSV de atendidas para preparar la grilla de facturacion.</p>
     </div>
   {% endif %}
+
+  <script>
+    (() => {
+      const form = document.querySelector("[data-billing-csv-form]");
+      const input = document.querySelector("[data-billing-csv-input]");
+      const trigger = document.querySelector("[data-billing-csv-trigger]");
+      const triggerText = document.querySelector("[data-billing-csv-trigger-text]");
+      const progress = document.querySelector("[data-billing-csv-progress]");
+      const detail = document.querySelector("[data-billing-csv-progress-detail]");
+      if (form && input && progress) {
+        input.addEventListener("change", () => {
+          if (!input.files || input.files.length === 0) return;
+          progress.classList.remove("hidden");
+          trigger?.classList.add("pointer-events-none", "opacity-70");
+          if (triggerText) triggerText.textContent = "Cargando CSV...";
+          if (detail) detail.textContent = `Subiendo ${input.files[0].name}.`;
+          window.setTimeout(() => form.submit(), 150);
+        });
+      }
+
+      const jobBox = document.querySelector("[data-billing-job]");
+      const jobId = jobBox?.dataset.billingJobId;
+      if (!jobId) return;
+      const setText = (selector, value) => {
+        const node = document.querySelector(selector);
+        if (node) node.textContent = value;
+      };
+      const refresh = async () => {
+        const response = await fetch(`/t/billing/emit-jobs/${jobId}`);
+        if (!response.ok) return;
+        const job = await response.json();
+        setText("[data-job-status]", job.status);
+        setText("[data-job-processed]", job.processed);
+        setText("[data-job-total]", job.total);
+        setText("[data-job-success]", job.success);
+        setText("[data-job-failed]", job.failed);
+        setText("[data-job-emailed]", job.emailed);
+        setText("[data-job-percent]", `${job.percent}%`);
+        const bar = document.querySelector("[data-job-bar]");
+        if (bar) bar.style.width = `${job.percent}%`;
+        if (["queued", "running"].includes(job.status)) {
+          window.setTimeout(refresh, 1200);
+        }
+      };
+      if (["queued", "running"].includes(document.querySelector("[data-job-status]")?.textContent || "")) {
+        window.setTimeout(refresh, 800);
+      }
+    })();
+  </script>
 {% endblock %}

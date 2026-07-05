@@ -348,6 +348,12 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
+    "/billing/emit-jobs/{job_id}",
+    views.billing_emission_job_status,
+    methods=["GET"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing/pending/{consultation_id}/diagnosis",
     views.billing_pending_diagnosis_update,
     methods=["POST"],
