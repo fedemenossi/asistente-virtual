@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import time
 import unicodedata
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from app.core.timezone import now_ba
 
 LOGIN_URL = "https://office.consultoriomovil.net/office/"
 AUTH_URL = f"{LOGIN_URL}login/authenticate"
+LOGIN_MAX_ATTEMPTS = 3
 API_AVAILABILITY_URL = "https://office.consultoriomovil.net/api/appointment-availability"
 PATIENT_SAVE_URL = "https://office.consultoriomovil.net/office/patient/save"
 APPOINTMENT_SAVE_URL = "https://office.consultoriomovil.net/office/appointment/appointment/save"
@@ -104,6 +106,14 @@ def login(username: str, password: str) -> requests.Session:
                 "text/html,application/xhtml+xml,application/xml;"
                 "q=0.9,image/avif,image/webp,*/*;q=0.8"
             ),
+            "Accept-Language": "es-AR,es;q=0.9,en;q=0.8",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Referer": "https://office.consultoriomovil.net/",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Upgrade-Insecure-Requests": "1",
         }
     )
 
@@ -113,19 +123,34 @@ def login(username: str, password: str) -> requests.Session:
         bool(username),
         extra={"login_url": LOGIN_URL, "username_present": bool(username)},
     )
-    login_page = session.get(LOGIN_URL, timeout=30)
-    logger.info(
-        "consultorio_movil_login_page_response status_code=%s final_url=%s content_type=%s",
-        login_page.status_code,
-        str(login_page.url),
-        login_page.headers.get("content-type", ""),
-        extra={
-            "status_code": login_page.status_code,
-            "final_url": str(login_page.url),
-            "content_type": login_page.headers.get("content-type", ""),
-        },
-    )
-    if login_page.status_code >= 400:
+    login_page = None
+    for attempt in range(1, LOGIN_MAX_ATTEMPTS + 1):
+        login_page = session.get(LOGIN_URL, timeout=30)
+        logger.info(
+            "consultorio_movil_login_page_response status_code=%s final_url=%s content_type=%s attempt=%s",
+            login_page.status_code,
+            str(login_page.url),
+            login_page.headers.get("content-type", ""),
+            attempt,
+            extra={
+                "status_code": login_page.status_code,
+                "final_url": str(login_page.url),
+                "content_type": login_page.headers.get("content-type", ""),
+                "attempt": attempt,
+            },
+        )
+        if login_page.status_code < 400:
+            break
+        if login_page.status_code == 403 and attempt < LOGIN_MAX_ATTEMPTS:
+            delay = attempt * 2
+            logger.warning(
+                "consultorio_movil_login_403_retry attempt=%s delay_seconds=%s",
+                attempt,
+                delay,
+                extra={"attempt": attempt, "delay_seconds": delay, "final_url": str(login_page.url)},
+            )
+            time.sleep(delay)
+            continue
         raise RuntimeError(
             f"Consultorio Movil devolvio HTTP {login_page.status_code} al abrir login: {login_page.url}"
         )

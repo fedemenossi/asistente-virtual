@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.core.security import hash_password
-from app.integrations.consultorio_movil import fetch_all_patients, fetch_patient_by_document
+from app.integrations.consultorio_movil import fetch_all_patients, fetch_patient_by_document, login as cm_login
 from app.models.paciente import Paciente
 from app.models.user import UserRole
 from app.services.patient_sync_service import (
@@ -112,6 +112,35 @@ class FakeSession:
             raise AssertionError(f"unexpected url {url}")
         return self.responses[url]
         return self.responses[url]
+
+
+class SequentialLoginSession:
+    def __init__(self) -> None:
+        self.headers: dict[str, str] = {}
+        self.get_calls = 0
+        self.post_calls = 0
+
+    def get(self, url: str, timeout=None, headers=None):
+        self.get_calls += 1
+        if self.get_calls == 1:
+            return FakeResponse("", status_code=403, url=url)
+        return FakeResponse("", status_code=200, url=url)
+
+    def post(self, url: str, data=None, headers=None, timeout=None):
+        self.post_calls += 1
+        return FakeResponse('{"success": true}', status_code=200, url=url)
+
+
+def test_consultorio_movil_login_retries_initial_403(monkeypatch):
+    fake_session = SequentialLoginSession()
+    monkeypatch.setattr("app.integrations.consultorio_movil.requests.Session", lambda: fake_session)
+    monkeypatch.setattr("app.integrations.consultorio_movil.time.sleep", lambda seconds: None)
+
+    session = cm_login("user@example.com", "secret")
+
+    assert session is fake_session
+    assert fake_session.get_calls == 2
+    assert fake_session.post_calls == 1
 
 
 def test_fetch_all_patients_scrapes_admin_links_detail_and_next_page():
@@ -425,6 +454,8 @@ def test_patient_list_has_csv_and_consultorio_movil_actions(client, db_session):
     assert "Nuevo paciente" in response.text
     assert "Cargar con CSV" in response.text
     assert "/t/pacientes/import-csv" in response.text
+    assert "data-patient-csv-progress" in response.text
+    assert "data-patient-csv-input" in response.text
     assert "Sincronizar desde Consultorio Movil" in response.text
     assert "/t/pacientes/sync-consultorio-movil" in response.text
 
