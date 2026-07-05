@@ -369,73 +369,8 @@ def test_patient_sync_is_tenant_scoped(db_session, tmp_path):
     assert result.existing == 0
 
 
-def test_patient_sync_route_requires_login(client):
-    response = client.post("/t/pacientes/sync-consultorio-movil", data={"csrf_token": "x"}, follow_redirects=False)
-    assert response.status_code in (302, 303)
 
-
-def test_patient_sync_route_scrapes_consultorio_movil_and_reports_summary(client, db_session, monkeypatch):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Route", "whatsapp:+714"))
-    asyncio.run(
-        create_consultorio(
-            db_session,
-            tenant_id,
-            "Consultorio Movil",
-            proveedor_turnos="consultorio_movil",
-            configuracion_externa={"cabildo": {"user": "cm-user", "password": "cm-pass", "staff_id": "77"}},
-        )
-    )
-    asyncio.run(
-        create_user(
-            db_session,
-            "tenant-sync-route@test.com",
-            hash_password("secret-123"),
-            UserRole.TENANT_ADMIN.value,
-            tenant_id,
-        )
-    )
-
-    calls = {"login": 0, "fetch": 0}
-
-    def fake_login(username, password):
-        calls["login"] += 1
-        assert (username, password) == ("cm-user", "cm-pass")
-        return object()
-
-    def fake_fetch_all_patients(session):
-        calls["fetch"] += 1
-        return [
-            {
-                "Apellido": "Misitti",
-                "Nombres": "Candela",
-                "Fecha de nacimiento": "09-11-1999",
-                "Tipo de documento": "DNI",
-                "Número de documento": "42249215",
-                "Financiador / Seguro": "SWISS MEDICAL S.A.",
-                "Nro. Afiliado": "800006",
-                "Email": "misitti@example.com",
-                "Celular / Otro": "011 1159658188",
-            }
-        ]
-
-    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", fake_login)
-    monkeypatch.setattr("app.web.tenant.views.fetch_all_patients", fake_fetch_all_patients)
-
-    login(client, "tenant-sync-route@test.com", "secret-123")
-    page = client.get("/t/pacientes")
-    response = client.post(
-        "/t/pacientes/sync-consultorio-movil",
-        data={"csrf_token": _csrf(page.text)},
-        follow_redirects=True,
-    )
-
-    assert response.status_code == 200
-    assert calls == {"login": 1, "fetch": 1}
-    assert "Sincronizacion finalizada" in response.text
-    assert "Candela" in response.text
-
-
-def test_patient_list_has_csv_and_consultorio_movil_actions(client, db_session):
+def test_patient_list_has_new_and_csv_actions_only(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient Actions", "whatsapp:+716"))
     asyncio.run(
         create_user(
@@ -456,11 +391,11 @@ def test_patient_list_has_csv_and_consultorio_movil_actions(client, db_session):
     assert "/t/pacientes/import-csv" in response.text
     assert "data-patient-csv-progress" in response.text
     assert "data-patient-csv-input" in response.text
-    assert "Sincronizar desde Consultorio Movil" in response.text
-    assert "/t/pacientes/sync-consultorio-movil" in response.text
+    assert "Sincronizar desde Consultorio Movil" not in response.text
+    assert "/t/pacientes/sync-consultorio-movil" not in response.text
 
 
-def test_patient_csv_upload_route_imports_patients(client, db_session):
+def test_patient_csv_upload_route_starts_background_job(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant CSV Upload", "whatsapp:+717"))
     asyncio.run(
         create_user(
@@ -483,17 +418,37 @@ def test_patient_csv_upload_route_imports_patients(client, db_session):
         "/t/pacientes/import-csv",
         data={"csrf_token": _csrf(page.text)},
         files={"csv_file": ("pacientes.csv", csv_content, "text/csv")},
-        follow_redirects=True,
+        follow_redirects=False,
     )
 
+    assert response.status_code in (302, 303)
+    assert "/t/settings/patients?job_id=" in response.headers["location"]
+
+
+def test_patient_settings_page_shows_import_controls(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient Settings", "whatsapp:+720"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-patient-settings@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-patient-settings@test.com", "secret-123")
+
+    response = client.get("/t/settings/patients")
+
     assert response.status_code == 200
-    assert "CSV procesado" in response.text
-    assert "Candela" in response.text
+    assert "Datos de pacientes" in response.text
+    assert "Importacion CSV" in response.text
+    assert "data-patient-csv-progress" in response.text
 
 
-def test_patient_detail_sync_from_consultorio_movil_updates_existing_patient(client, db_session, monkeypatch):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient One Sync", "whatsapp:+718"))
-    paciente_id = asyncio.run(
+def test_patient_sync_upsert_updates_existing_by_document(db_session, tmp_path):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant CSV Upsert", "whatsapp:+721"))
+    existing_id = asyncio.run(
         create_paciente(
             db_session,
             tenant_id,
@@ -507,158 +462,38 @@ def test_patient_detail_sync_from_consultorio_movil_updates_existing_patient(cli
             email="local@example.com",
         )
     )
-    asyncio.run(
-        create_consultorio(
-            db_session,
-            tenant_id,
-            "Consultorio Movil",
-            proveedor_turnos="consultorio_movil",
-            configuracion_externa={"cabildo": {"user": "cm-user", "password": "cm-pass"}},
-        )
-    )
-    asyncio.run(
-        create_user(
-            db_session,
-            "tenant-one-sync@test.com",
-            hash_password("secret-123"),
-            UserRole.TENANT_ADMIN.value,
-            tenant_id,
-        )
+    csv_path = _write_csv(
+        tmp_path / "pacientes.csv",
+        [
+            "Misitti,Candela,09-11-1999,DNI,42249215,SWISS MEDICAL S.A.,800006,nuevo@example.com,011 1159658188, ,Mujer,Calle Falsa,123,A,4,CABA,1000,Argentina,Buenos Aires"
+        ],
     )
 
-    calls = {"login": 0, "search": 0, "fetch": 0}
+    async def _run():
+        async with db_session() as session:
+            async with session.begin():
+                rows = parse_consultorio_movil_patients_csv(csv_path)
+                return await PatientSyncService(session).sync_rows(
+                    tenant_id,
+                    rows,
+                    sync_source="csv",
+                    log_source=str(csv_path),
+                    update_existing=True,
+                )
 
-    def fake_login(username, password):
-        calls["login"] += 1
-        assert (username, password) == ("cm-user", "cm-pass")
-        return object()
-
-    def fake_fetch_patient_by_document(session, document_number):
-        calls["search"] += 1
-        assert document_number == "42249215"
-        return {
-            "Apellido": "Misitti",
-            "Nombres": "Candela",
-            "Fecha de nacimiento": "09-11-1999",
-            "Tipo de documento": "DNI",
-            "Numero de documento": "42249215",
-            "Financiador / Seguro": "SWISS MEDICAL S.A.",
-            "Nro. Afiliado": "800006",
-            "Email": "candela@example.com",
-            "Celular / Otro": "011 1159658188",
-            "external_patient_id": "cm-42249215",
-        }
-
-    def fake_fetch_all_patients(session):
-        calls["fetch"] += 1
-        return []
-
-    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", fake_login)
-    monkeypatch.setattr("app.web.tenant.views.fetch_patient_by_document", fake_fetch_patient_by_document)
-    monkeypatch.setattr("app.web.tenant.views.fetch_all_patients", fake_fetch_all_patients)
-
-    login(client, "tenant-one-sync@test.com", "secret-123")
-    edit = client.get(f"/t/pacientes/{paciente_id}/edit")
-    assert "Sincronizar de Consultorio Movil" in edit.text
-
-    response = client.post(
-        f"/t/pacientes/{paciente_id}/sync-consultorio-movil",
-        data={"csrf_token": _csrf(edit.text)},
-        follow_redirects=True,
-    )
-
-    assert response.status_code == 200
-    assert calls == {"login": 1, "search": 1, "fetch": 0}
+    result = asyncio.run(_run())
+    assert result.created == 0
+    assert result.updated == 1
 
     async def _fetch():
         async with db_session() as session:
-            return await session.get(Paciente, paciente_id)
+            return await session.get(Paciente, existing_id)
 
     paciente = asyncio.run(_fetch())
     assert paciente.nombre == "Candela"
     assert paciente.apellido == "Misitti"
-    assert paciente.email == "candela@example.com"
-    assert paciente.obra_social == "SWISS MEDICAL S.A."
-    assert paciente.sync_source == "consultorio_movil"
-
-
-def test_patient_detail_sync_matches_by_document_when_external_type_is_missing(client, db_session, monkeypatch):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient DNI Match", "whatsapp:+719"))
-    paciente_id = asyncio.run(
-        create_paciente(
-            db_session,
-            tenant_id,
-            "5491111111111",
-            nombre="Nombre Local",
-            apellido="Apellido Local",
-            dni="42.249.215",
-            tipo_documento="DNI",
-            numero_documento="42.249.215",
-            document_number_normalized="42249215",
-            email="local@example.com",
-        )
-    )
-    asyncio.run(
-        create_consultorio(
-            db_session,
-            tenant_id,
-            "Consultorio Movil",
-            proveedor_turnos="consultorio_movil",
-            configuracion_externa={"cabildo": {"user": "cm-user", "password": "cm-pass"}},
-        )
-    )
-    asyncio.run(
-        create_user(
-            db_session,
-            "tenant-dni-match@test.com",
-            hash_password("secret-123"),
-            UserRole.TENANT_ADMIN.value,
-            tenant_id,
-        )
-    )
-
-    monkeypatch.setattr("app.web.tenant.views.consultorio_movil_login", lambda username, password: object())
-    monkeypatch.setattr(
-        "app.web.tenant.views.fetch_patient_by_document",
-        lambda session, document_number: {
-            "Apellido": "Misitti",
-            "Nombres": "Candela",
-            "Numero de documento": "42249215",
-            "Email": "candela@example.com",
-            "Celular / Otro": "011 1159658188",
-        },
-    )
-    monkeypatch.setattr(
-        "app.web.tenant.views.fetch_all_patients",
-        lambda session: [
-            {
-                "Apellido": "Misitti",
-                "Nombres": "Candela",
-                "Numero de documento": "42249215",
-                "Email": "candela@example.com",
-                "Celular / Otro": "011 1159658188",
-            }
-        ],
-    )
-
-    login(client, "tenant-dni-match@test.com", "secret-123")
-    edit = client.get(f"/t/pacientes/{paciente_id}/edit")
-    response = client.post(
-        f"/t/pacientes/{paciente_id}/sync-consultorio-movil",
-        data={"csrf_token": _csrf(edit.text)},
-        follow_redirects=True,
-    )
-
-    assert response.status_code == 200
-
-    async def _fetch():
-        async with db_session() as session:
-            return await session.get(Paciente, paciente_id)
-
-    paciente = asyncio.run(_fetch())
-    assert paciente.nombre == "Candela"
-    assert paciente.document_number_normalized == "42249215"
-
+    assert paciente.email == "nuevo@example.com"
+    assert paciente.direccion == "Calle Falsa"
 
 def test_patient_form_saves_extended_fields(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient Form", "whatsapp:+715"))

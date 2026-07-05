@@ -107,20 +107,8 @@ router.add_api_route(
     dependencies=[Depends(require_feature("pacientes"))],
 )
 router.add_api_route(
-    "/pacientes/sync-consultorio-movil",
-    views.pacientes_sync_consultorio_movil,
-    methods=["POST"],
-    dependencies=[Depends(require_feature("pacientes"))],
-)
-router.add_api_route(
     "/pacientes/import-csv",
     views.pacientes_import_csv,
-    methods=["POST"],
-    dependencies=[Depends(require_feature("pacientes"))],
-)
-router.add_api_route(
-    "/pacientes/{paciente_id}/sync-consultorio-movil",
-    views.pacientes_sync_one_consultorio_movil,
     methods=["POST"],
     dependencies=[Depends(require_feature("pacientes"))],
 )
@@ -444,6 +432,19 @@ router.add_api_route(
     views.payment_settings_post,
     methods=["POST"],
     dependencies=[Depends(require_feature("settings_payments"))],
+)
+router.add_api_route(
+    "/settings/patients",
+    views.patient_settings_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("settings"))],
+)
+router.add_api_route(
+    "/settings/patients/import-jobs/{job_id}",
+    views.patient_import_job_status,
+    methods=["GET"],
+    dependencies=[Depends(require_feature("settings"))],
 )
 router.add_api_route(
     "/settings/calendar",

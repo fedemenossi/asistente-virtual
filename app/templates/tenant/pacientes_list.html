@@ -20,10 +20,6 @@
           <input class="hidden" type="file" name="csv_file" accept=".csv,text/csv" data-patient-csv-input />
         </label>
       </form>
-      <form method="post" action="/t/pacientes/sync-consultorio-movil">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <button class="btn btn-secondary" type="submit">Sincronizar desde Consultorio Movil</button>
-      </form>
     </div>
   </div>
 

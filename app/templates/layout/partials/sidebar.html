@@ -112,6 +112,7 @@
 
       {{ section_title("Configuracion") }}
       {% if features.get("settings", true) %}{{ nav_item("/t/settings", "Settings generales", "/t/settings", "settings", "bg-slate-200 text-slate-700") }}{% endif %}
+      {% if features.get("settings", true) %}{{ nav_item("/t/settings/patients", "Datos pacientes", "/t/settings/patients", "patients", "bg-emerald-100 text-emerald-700") }}{% endif %}
       {% if features.get("settings_payments", true) %}{{ nav_item("/t/settings/payments", "Settings pagos", "/t/settings/payments", "payments", "bg-green-100 text-green-700") }}{% endif %}
       {% if features.get("settings_calendar", true) %}{{ nav_item("/t/settings/calendar", "Settings calendario", "/t/settings/calendar", "calendar", "bg-amber-100 text-amber-700") }}{% endif %}
       {% if features.get("settings_notifications", true) %}{{ nav_item("/t/settings/notifications", "Settings notificaciones", "/t/settings/notifications", "bell", "bg-rose-100 text-rose-700") }}{% endif %}

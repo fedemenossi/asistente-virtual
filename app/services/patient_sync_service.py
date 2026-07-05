@@ -49,6 +49,7 @@ class PatientSyncRow:
 class PatientSyncResult:
     total_rows: int
     created: int
+    updated: int
     existing: int
     missing_document: int
     errors: int
@@ -191,8 +192,11 @@ class PatientSyncService:
         *,
         sync_source: str,
         log_source: str,
+        update_existing: bool = False,
+        progress_callback: Any | None = None,
     ) -> PatientSyncResult:
         created = 0
+        updated = 0
         existing = 0
         missing_document = 0
         errors = 0
@@ -202,48 +206,28 @@ class PatientSyncService:
             extra={"tenant_id": tenant_id, "sync_source": sync_source, "source": log_source, "rows_count": len(rows)},
         )
 
-        for row in rows:
+        for index, row in enumerate(rows, start=1):
             try:
                 if not row.tipo_documento or not row.document_number_normalized:
                     missing_document += 1
+                    if progress_callback:
+                        progress_callback(index, created, updated, existing, missing_document, errors)
                     continue
-                exists = await self._exists_by_document(tenant_id, row.tipo_documento, row.document_number_normalized)
-                if exists:
-                    existing += 1
+                paciente = await self._find_by_document(tenant_id, row.tipo_documento, row.document_number_normalized)
+                if paciente is not None:
+                    if update_existing:
+                        self._apply_row_to_paciente(paciente, row, sync_source=sync_source, synced_at=synced_at)
+                        updated += 1
+                    else:
+                        existing += 1
+                    if progress_callback:
+                        progress_callback(index, created, updated, existing, missing_document, errors)
                     continue
-                paciente = Paciente(
-                    tenant_id=tenant_id,
-                    nombre=row.nombres,
-                    apellido=row.apellido,
-                    telefono=row.celular,
-                    dni=row.numero_documento,
-                    email=row.email,
-                    obra_social=row.financiador_seguro or None,
-                    insurance_number=row.nro_afiliado or None,
-                    fecha_nacimiento=row.fecha_nacimiento,
-                    tipo_documento=row.tipo_documento,
-                    numero_documento=row.numero_documento,
-                    document_number_normalized=row.document_number_normalized,
-                    financiador_seguro=row.financiador_seguro or None,
-                    genero=row.genero or None,
-                    telefono_casa=row.telefono_casa or None,
-                    direccion=row.direccion or None,
-                    direccion_numero=row.direccion_numero or None,
-                    departamento=row.departamento or None,
-                    piso=row.piso or None,
-                    localidad=row.localidad or None,
-                    codigo_postal=row.codigo_postal or None,
-                    pais=row.pais or None,
-                    provincia=row.provincia or None,
-                    external_provider="consultorio_movil",
-                    external_patient_id=_clean(row.raw_payload.get("external_patient_id")) or None,
-                    sync_source=sync_source,
-                    synced_at=synced_at,
-                    external_updated_at=None,
-                    raw_payload_json=row.raw_payload,
-                )
+                paciente = self._build_paciente(tenant_id, row, sync_source=sync_source, synced_at=synced_at)
                 self._session.add(paciente)
                 created += 1
+                if progress_callback:
+                    progress_callback(index, created, updated, existing, missing_document, errors)
             except Exception:
                 errors += 1
                 logger.exception(
@@ -254,11 +238,14 @@ class PatientSyncService:
                         "document_number_normalized": row.document_number_normalized,
                     },
                 )
+                if progress_callback:
+                    progress_callback(index, created, updated, existing, missing_document, errors)
 
         await self._session.flush()
         result = PatientSyncResult(
             total_rows=len(rows),
             created=created,
+            updated=updated,
             existing=existing,
             missing_document=missing_document,
             errors=errors,
@@ -270,6 +257,7 @@ class PatientSyncService:
                 "sync_source": sync_source,
                 "sync_total_rows": result.total_rows,
                 "sync_created": result.created,
+                "sync_updated": result.updated,
                 "sync_existing": result.existing,
                 "sync_missing_document": result.missing_document,
                 "sync_errors": result.errors,
@@ -277,31 +265,116 @@ class PatientSyncService:
         )
         return result
 
-    async def _exists_by_document(
+    def _build_paciente(
+        self,
+        tenant_id: int,
+        row: PatientSyncRow,
+        *,
+        sync_source: str,
+        synced_at: datetime,
+    ) -> Paciente:
+        return Paciente(
+            tenant_id=tenant_id,
+            nombre=row.nombres,
+            apellido=row.apellido,
+            telefono=row.celular,
+            dni=row.numero_documento,
+            email=row.email,
+            obra_social=row.financiador_seguro or None,
+            insurance_number=row.nro_afiliado or None,
+            fecha_nacimiento=row.fecha_nacimiento,
+            tipo_documento=row.tipo_documento,
+            numero_documento=row.numero_documento,
+            document_number_normalized=row.document_number_normalized,
+            financiador_seguro=row.financiador_seguro or None,
+            genero=row.genero or None,
+            telefono_casa=row.telefono_casa or None,
+            direccion=row.direccion or None,
+            direccion_numero=row.direccion_numero or None,
+            departamento=row.departamento or None,
+            piso=row.piso or None,
+            localidad=row.localidad or None,
+            codigo_postal=row.codigo_postal or None,
+            pais=row.pais or None,
+            provincia=row.provincia or None,
+            external_provider=_clean(row.raw_payload.get("external_provider")) or None,
+            external_patient_id=_clean(row.raw_payload.get("external_patient_id")) or None,
+            sync_source=sync_source,
+            synced_at=synced_at,
+            external_updated_at=None,
+            raw_payload_json=row.raw_payload,
+        )
+
+    def _apply_row_to_paciente(
+        self,
+        paciente: Paciente,
+        row: PatientSyncRow,
+        *,
+        sync_source: str,
+        synced_at: datetime,
+    ) -> None:
+        paciente.nombre = row.nombres or paciente.nombre
+        paciente.apellido = row.apellido or paciente.apellido
+        paciente.telefono = row.celular or paciente.telefono
+        paciente.dni = row.numero_documento or paciente.dni
+        paciente.email = row.email or paciente.email
+        paciente.obra_social = row.financiador_seguro or paciente.obra_social
+        paciente.insurance_number = row.nro_afiliado or paciente.insurance_number
+        paciente.fecha_nacimiento = row.fecha_nacimiento or paciente.fecha_nacimiento
+        paciente.tipo_documento = row.tipo_documento or paciente.tipo_documento
+        paciente.numero_documento = row.numero_documento or paciente.numero_documento
+        paciente.document_number_normalized = row.document_number_normalized or paciente.document_number_normalized
+        paciente.financiador_seguro = row.financiador_seguro or paciente.financiador_seguro
+        paciente.genero = row.genero or paciente.genero
+        paciente.telefono_casa = row.telefono_casa or paciente.telefono_casa
+        paciente.direccion = row.direccion or paciente.direccion
+        paciente.direccion_numero = row.direccion_numero or paciente.direccion_numero
+        paciente.departamento = row.departamento or paciente.departamento
+        paciente.piso = row.piso or paciente.piso
+        paciente.localidad = row.localidad or paciente.localidad
+        paciente.codigo_postal = row.codigo_postal or paciente.codigo_postal
+        paciente.pais = row.pais or paciente.pais
+        paciente.provincia = row.provincia or paciente.provincia
+        paciente.external_provider = _clean(row.raw_payload.get("external_provider")) or paciente.external_provider
+        paciente.external_patient_id = _clean(row.raw_payload.get("external_patient_id")) or paciente.external_patient_id
+        paciente.sync_source = sync_source
+        paciente.synced_at = synced_at
+        paciente.raw_payload_json = row.raw_payload
+
+    async def _find_by_document(
         self,
         tenant_id: int,
         tipo_documento: str,
         document_number_normalized: str,
-    ) -> bool:
+    ) -> Paciente | None:
         result = await self._session.execute(
-            select(Paciente.id).where(
+            select(Paciente).where(
                 Paciente.tenant_id == tenant_id,
                 Paciente.deleted_at.is_(None),
                 Paciente.tipo_documento == tipo_documento,
                 Paciente.document_number_normalized == document_number_normalized,
             )
         )
-        if result.scalar_one_or_none() is not None:
-            return True
+        paciente = result.scalar_one_or_none()
+        if paciente is not None:
+            return paciente
 
         legacy = await self._session.execute(
-            select(Paciente.id).where(
+            select(Paciente).where(
                 Paciente.tenant_id == tenant_id,
                 Paciente.deleted_at.is_(None),
                 Paciente.dni == document_number_normalized,
             )
         )
-        return legacy.scalar_one_or_none() is not None
+        return legacy.scalar_one_or_none()
+
+    async def _exists_by_document(
+        self,
+        tenant_id: int,
+        tipo_documento: str,
+        document_number_normalized: str,
+    ) -> bool:
+        return await self._find_by_document(tenant_id, tipo_documento, document_number_normalized) is not None
 
     async def update_existing_from_payload(
         self,
