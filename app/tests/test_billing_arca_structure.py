@@ -855,6 +855,52 @@ def test_billing_pending_import_supports_real_attended_csv_format(client, db_ses
     assert row.patient_external_id == "61868706701"
     assert row.professional_name == "Marìa Laura Langdon"
 
+def test_billing_pending_import_accepts_cp1252_attended_csv(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant CSV CP1252", "whatsapp:+638"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-csv-cp1252@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491111111111",
+            nombre="Andrea",
+            apellido="Blumtritt",
+            dni="30123456",
+            tipo_documento="DNI",
+            numero_documento="30123456",
+            document_number_normalized="30123456",
+            email="andrea@example.com",
+            obra_social="OSDE",
+        )
+    )
+    login(client, "tenant-csv-cp1252@test.com", "secret-123")
+    page = client.get("/t/billing/pending")
+    csv_content = (
+        b'"Fecha","Paciente","M\xe9dico","Financiador"\n'
+        b'"03/07/2026","Andrea Blumtritt (61868706701)","Maria Laura Langdon","OSDE"\n'
+    )
+
+    response = client.post(
+        "/t/billing/pending/import",
+        data={"csrf_token": _csrf(page.text)},
+        files={"csv_file": ("pacientes_atendidos.csv", csv_content, "text/csv")},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 303)
+    assert "batch_id=" in response.headers["location"]
+    listing = client.get(response.headers["location"])
+    assert "Andrea Blumtritt" in listing.text
+    assert "DNI 30123456" in listing.text
+
 
 def test_billing_csv_reimport_updated_rows_still_shows_batch_grid(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant CSV Reimport", "whatsapp:+637"))

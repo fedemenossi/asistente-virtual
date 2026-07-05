@@ -136,6 +136,18 @@ def _validate_digits(value: str | None, field_name: str, errors: dict[str, str])
     return cleaned
 
 
+def _decode_csv_upload_content(content: bytes) -> str:
+    last_error: UnicodeDecodeError | None = None
+    for encoding in ("utf-8-sig", "cp1252", "latin-1"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    return content.decode("utf-8-sig")
+
+
 def _mask_calendar_id(calendar_id: str | None) -> str:
     value = str(calendar_id or "").strip()
     if not value:
@@ -1414,10 +1426,14 @@ async def pacientes_import_csv(
     validate_csrf(request, csrf_token)
     content = await csv_file.read()
     try:
-        text = content.decode("utf-8-sig")
+        text = _decode_csv_upload_content(content)
         rows = parse_consultorio_movil_patients_csv_text(text)
     except Exception as exc:
-        logger.warning("patient_csv_upload_parse_failed", extra={"tenant_id": user.tenant_id, "filename": csv_file.filename}, exc_info=True)
+        logger.warning(
+            "patient_csv_upload_parse_failed",
+            extra={"tenant_id": user.tenant_id, "csv_filename": csv_file.filename},
+            exc_info=True,
+        )
         add_flash(request, "error", f"No se pudo leer el CSV: {exc}")
         return RedirectResponse("/t/pacientes", status_code=303)
     job = start_patient_csv_import_job(int(user.tenant_id), rows, csv_file.filename or "uploaded_csv")
@@ -3451,9 +3467,13 @@ async def billing_pending_import(
         return RedirectResponse("/t/billing/pending", status_code=303)
     content = await csv_file.read()
     try:
-        rows = parse_billing_attended_csv_text(content.decode("utf-8-sig"))
+        rows = parse_billing_attended_csv_text(_decode_csv_upload_content(content))
     except Exception as exc:
-        logger.warning("billing_csv_import_parse_failed", extra={"tenant_id": user.tenant_id, "filename": csv_file.filename}, exc_info=True)
+        logger.warning(
+            "billing_csv_import_parse_failed",
+            extra={"tenant_id": user.tenant_id, "csv_filename": csv_file.filename},
+            exc_info=True,
+        )
         add_flash(request, "error", f"No se pudo leer el CSV: {exc}")
         return RedirectResponse("/t/billing/pending", status_code=303)
     batch_id = uuid.uuid4().hex
