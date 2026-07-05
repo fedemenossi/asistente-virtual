@@ -31,3 +31,4 @@ class BillingSetting(Base, TimestampMixin):
     email_body_template: Mapped[str | None] = mapped_column(Text, nullable=True)
     diagnosis_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     diagnosis_visible_on_invoice: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    include_diagnosis_in_invoice_pdf: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

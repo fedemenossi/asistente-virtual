@@ -37,6 +37,11 @@
       <option value="sent" {% if email_status == 'sent' %}selected{% endif %}>Enviado</option>
       <option value="not_sent" {% if email_status == 'not_sent' %}selected{% endif %}>No enviado</option>
     </select>
+    <select class="select" name="pdf_status">
+      <option value="">PDF</option>
+      <option value="generated" {% if pdf_status == 'generated' %}selected{% endif %}>Generado</option>
+      <option value="missing" {% if pdf_status == 'missing' %}selected{% endif %}>Sin PDF</option>
+    </select>
     <button class="btn btn-secondary" type="submit">Filtrar</button>
   </form>
 
@@ -51,6 +56,7 @@
             <th class="px-4 py-3 text-left font-medium">Ambiente</th>
             <th class="px-4 py-3 text-left font-medium">Importe</th>
             <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-left font-medium">PDF</th>
             <th class="px-4 py-3 text-left font-medium">Mail</th>
             <th class="px-4 py-3 text-right font-medium">Detalle</th>
           </tr>
@@ -96,6 +102,14 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3">
+                {% if invoice.pdf_generated_at or invoice.document_pdf %}
+                  {{ badge("Generado", "success") }}
+                  <p class="mt-1 text-xs text-slate-500">{{ invoice.pdf_generated_at or invoice.document_generated_at or "-" }}</p>
+                {% else %}
+                  {{ badge("Sin PDF", "neutral") }}
+                {% endif %}
+              </td>
+              <td class="px-4 py-3">
                 {% if invoice.email_sent_at %}
                   {{ badge("Enviado", "success") }}
                   <p class="mt-1 text-xs text-slate-500">{{ invoice.email_to or "-" }}</p>
@@ -107,7 +121,25 @@
               <td class="px-4 py-3 text-right">
                 <div class="row-actions">
                   {{ action_link("/t/billing/invoices/" ~ invoice.id, "Ver factura", "view") }}
-                  {{ action_link("/t/billing-arca/" ~ invoice.id ~ "/comprobante.pdf", "Descargar PDF", "pdf", "", "_blank") }}
+                  {% if status == 'authorized' and invoice.cae %}
+                    {% if invoice.pdf_generated_at or invoice.document_pdf %}
+                      {{ action_link("/t/billing/invoices/" ~ invoice.id ~ "/download-pdf", "Descargar PDF", "pdf", "", "_blank") }}
+                      <form method="post" action="/t/billing/invoices/{{ invoice.id }}/generate-pdf">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                        <input type="hidden" name="force" value="1" />
+                        <button class="icon-button" type="submit" title="Regenerar PDF" aria-label="Regenerar PDF">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+                        </button>
+                      </form>
+                    {% else %}
+                      <form method="post" action="/t/billing/invoices/{{ invoice.id }}/generate-pdf">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                        <button class="icon-button" type="submit" title="Generar PDF" aria-label="Generar PDF">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/></svg>
+                        </button>
+                      </form>
+                    {% endif %}
+                  {% endif %}
                 </div>
               </td>
             </tr>

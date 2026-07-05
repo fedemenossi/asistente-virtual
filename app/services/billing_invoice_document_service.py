@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import html
+import base64
+import json
 import re
 from dataclasses import dataclass
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -12,8 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timezone import now_ba
 from app.models.arca_invoice import ArcaInvoice
+from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_email_log import BillingEmailLog
 from app.models.billing_external_consultation import BillingExternalConsultation
+from app.models.billing_setting import BillingSetting
 from app.models.tenant import Tenant
 
 
@@ -47,10 +52,13 @@ class BillingInvoiceDocumentService:
         invoice: ArcaInvoice,
         *,
         consultation: BillingExternalConsultation | None = None,
+        include_diagnosis: bool | None = None,
     ) -> BillingInvoiceDocument:
         if consultation is None:
             consultation = await self.get_consultation(invoice)
-        diagnosis = extract_invoice_diagnosis(invoice, consultation)
+        if include_diagnosis is None:
+            include_diagnosis = await self.include_diagnosis_in_pdf(invoice.tenant_id)
+        diagnosis = extract_invoice_diagnosis(invoice, consultation) if include_diagnosis else ""
         patient_email = extract_patient_email(consultation)
         body = build_invoice_html(tenant, invoice, consultation, diagnosis)
         pdf = build_invoice_pdf(tenant, invoice, consultation, diagnosis)
@@ -60,6 +68,18 @@ class BillingInvoiceDocumentService:
             diagnosis=diagnosis,
             patient_email=patient_email,
         )
+
+    async def include_diagnosis_in_pdf(self, tenant_id: int) -> bool:
+        settings = await self._session.scalar(
+            select(BillingSetting).where(BillingSetting.tenant_id == tenant_id)
+        )
+        if settings is None:
+            return True
+        if hasattr(settings, "include_diagnosis_in_invoice_pdf"):
+            value = getattr(settings, "include_diagnosis_in_invoice_pdf")
+            if value is not None:
+                return bool(value)
+        return bool(getattr(settings, "diagnosis_visible_on_invoice", True))
 
     async def ensure_document(
         self,
@@ -72,7 +92,8 @@ class BillingInvoiceDocumentService:
         if consultation is None:
             consultation = await self.get_consultation(invoice)
         patient_email = extract_patient_email(consultation)
-        diagnosis = extract_invoice_diagnosis(invoice, consultation)
+        include_diagnosis = await self.include_diagnosis_in_pdf(invoice.tenant_id)
+        diagnosis = extract_invoice_diagnosis(invoice, consultation) if include_diagnosis else ""
         if (
             not force
             and invoice.document_html
@@ -84,11 +105,56 @@ class BillingInvoiceDocumentService:
                 diagnosis=diagnosis,
                 patient_email=patient_email,
             )
-        document = await self.build_document(tenant, invoice, consultation=consultation)
+        document = await self.build_document(
+            tenant,
+            invoice,
+            consultation=consultation,
+            include_diagnosis=include_diagnosis,
+        )
         invoice.document_html = document.html
         invoice.document_pdf = document.pdf
         invoice.document_filename = invoice.document_filename or invoice_pdf_filename(invoice)
         invoice.document_generated_at = now_ba()
+        invoice.qr_url = build_arca_qr_url(invoice)
+        self._session.add(invoice)
+        await self._session.flush()
+        return document
+
+    async def generate_and_store_document(
+        self,
+        tenant: Tenant,
+        invoice: ArcaInvoice,
+        *,
+        user_id: int | None,
+        consultation: BillingExternalConsultation | None = None,
+        force: bool = False,
+    ) -> BillingInvoiceDocument:
+        if not invoice.cae or not invoice.cae_fch_vto:
+            raise BillingInvoiceDocumentError("La factura no tiene CAE o vencimiento de CAE.")
+        status = invoice.status.value if hasattr(invoice.status, "value") else str(invoice.status)
+        if status != "authorized":
+            raise BillingInvoiceDocumentError("Solo se puede generar PDF de facturas autorizadas.")
+        document = await self.ensure_document(
+            tenant,
+            invoice,
+            consultation=consultation,
+            force=force,
+        )
+        invoice.qr_url = build_arca_qr_url(invoice)
+        invoice.document_filename = invoice.document_filename or invoice_pdf_filename(invoice)
+        pdf_path = invoice_pdf_storage_path(invoice)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        pdf_path.write_bytes(document.pdf)
+        invoice.pdf_path = str(pdf_path)
+        invoice.pdf_generated_at = now_ba()
+        invoice.pdf_generated_by = user_id
+        self._session.add(
+            ArcaInvoiceEvent(
+                invoice_id=invoice.id,
+                event_type="arca_invoice_pdf_regenerated" if force else "arca_invoice_pdf_generated",
+                payload_json={"pdf_path": invoice.pdf_path, "qr_url": invoice.qr_url},
+            )
+        )
         self._session.add(invoice)
         await self._session.flush()
         return document
@@ -204,6 +270,9 @@ def build_invoice_html(
     patient_name = consultation.patient_name if consultation else "-"
     patient_document = consultation.patient_document if consultation else invoice.doc_nro
     fiscal = tenant.arca_settings or {}
+    qr_url = invoice.qr_url or build_arca_qr_url(invoice)
+    copy_label = "ORIGINAL"
+    environment = str(invoice.environment or "").lower()
     title = f"Factura ARCA {invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}"
     return f"""<!doctype html>
 <html lang="es">
@@ -212,6 +281,8 @@ def build_invoice_html(
   <title>{html.escape(title)}</title>
   <style>
     body {{ font-family: Arial, sans-serif; color: #0f172a; margin: 32px; }}
+    .copy {{ text-align: center; font-size: 20px; font-weight: 700; letter-spacing: 0.08em; }}
+    .watermark {{ color: #b91c1c; font-weight: 700; text-align: center; margin: 8px 0; }}
     .header {{ display: flex; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 16px; }}
     .box {{ border: 1px solid #cbd5e1; padding: 14px; margin-top: 18px; }}
     .label {{ color: #64748b; font-size: 12px; text-transform: uppercase; }}
@@ -222,6 +293,8 @@ def build_invoice_html(
   </style>
 </head>
 <body>
+  <div class="copy">{copy_label}</div>
+  {'<div class="watermark">HOMOLOGACION - SIN VALIDEZ FISCAL</div>' if environment == 'homo' else ''}
   <div class="header">
     <div>
       <p class="label">Emisor</p>
@@ -256,6 +329,10 @@ def build_invoice_html(
     <p class="label">Diagnostico informado en factura</p>
     <p class="diagnosis">{html.escape(diagnosis or "No informado")}</p>
   </div>
+  <div class="box">
+    <p class="label">QR ARCA</p>
+    <p style="word-break: break-all;">{html.escape(qr_url)}</p>
+  </div>
 </body>
 </html>"""
 
@@ -270,6 +347,8 @@ def build_invoice_pdf(
     patient = consultation.patient_name if consultation else "-"
     lines = [
         f"Factura ARCA {invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}",
+        "ORIGINAL",
+        "HOMOLOGACION - SIN VALIDEZ FISCAL" if str(invoice.environment or "").lower() == "homo" else "",
         f"Emisor: {fiscal.get('fiscal_name') or tenant.nombre}",
         f"CUIT: {invoice.represented_cuit}",
         f"Paciente: {patient or '-'}",
@@ -277,6 +356,7 @@ def build_invoice_pdf(
         f"Importe: {_money(invoice.imp_total)} {invoice.mon_id}",
         f"CAE: {invoice.cae or '-'}",
         f"Vencimiento CAE: {invoice.cae_fch_vto or '-'}",
+        f"QR ARCA: {invoice.qr_url or build_arca_qr_url(invoice)}",
         "Diagnostico:",
         diagnosis or "No informado",
     ]
@@ -286,6 +366,34 @@ def build_invoice_pdf(
 def invoice_pdf_filename(invoice: ArcaInvoice) -> str:
     cbte_nro = invoice.cbte_nro or invoice.id
     return f"factura-arca-{invoice.pto_vta}-{invoice.cbte_tipo}-{cbte_nro}.pdf"
+
+
+def invoice_pdf_storage_path(invoice: ArcaInvoice) -> Path:
+    return Path.cwd() / "storage" / "invoices" / str(invoice.tenant_id) / str(invoice.id) / invoice_pdf_filename(invoice)
+
+
+def build_arca_qr_url(invoice: ArcaInvoice) -> str:
+    doc_digits = "".join(ch for ch in str(invoice.doc_nro or "") if ch.isdigit())
+    cae_digits = "".join(ch for ch in str(invoice.cae or "") if ch.isdigit())
+    payload = {
+        "ver": 1,
+        "fecha": invoice.cbte_fch.isoformat() if invoice.cbte_fch else "",
+        "cuit": int(invoice.represented_cuit or 0),
+        "ptoVta": int(invoice.pto_vta or 0),
+        "tipoCmp": int(invoice.cbte_tipo or 0),
+        "nroCmp": int(invoice.cbte_nro or 0),
+        "importe": float(invoice.imp_total or 0),
+        "moneda": invoice.mon_id or "PES",
+        "ctz": float(invoice.mon_cotiz or 1),
+        "tipoDocRec": int(invoice.doc_tipo or 99),
+        "nroDocRec": int(doc_digits or 0),
+        "tipoCodAut": "E",
+        "codAut": int(cae_digits or 0),
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).decode("ascii")
+    return f"https://www.afip.gob.ar/fe/qr/?p={encoded}"
 
 
 def _invoice_detail(invoice: ArcaInvoice) -> dict[str, Any]:

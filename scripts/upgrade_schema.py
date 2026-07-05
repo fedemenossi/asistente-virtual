@@ -133,6 +133,9 @@ EXTRA_COLUMNS = {
         "iva_id": "VARCHAR(20) NULL",
         "default_item": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
+    "billing_settings": {
+        "include_diagnosis_in_invoice_pdf": "BOOLEAN NOT NULL DEFAULT TRUE",
+    },
     "billing_external_consultations": {
         "patient_id": "INT NULL",
         "billing_item_id": "INT NULL",
@@ -159,6 +162,10 @@ EXTRA_COLUMNS = {
         "document_pdf": "LONGBLOB NULL",
         "document_filename": "VARCHAR(255) NULL",
         "document_generated_at": "DATETIME NULL",
+        "qr_url": "TEXT NULL",
+        "pdf_path": "VARCHAR(500) NULL",
+        "pdf_generated_at": "DATETIME NULL",
+        "pdf_generated_by": "INT NULL",
         "created_by": "INT NULL",
     },
 }

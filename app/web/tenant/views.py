@@ -10,10 +10,11 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import json
 import re
+from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import Depends, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -2908,6 +2909,7 @@ async def billing_arca_list(
     status_filter = request.query_params.get("status", "").strip()
     q = request.query_params.get("q", "").strip()
     email_status = request.query_params.get("email_status", "").strip()
+    pdf_status = request.query_params.get("pdf_status", "").strip()
     stmt = (
         select(ArcaInvoice, BillingExternalConsultation)
         .outerjoin(
@@ -2926,18 +2928,30 @@ async def billing_arca_list(
                 BillingExternalConsultation.patient_document.ilike(like_q),
                 BillingExternalConsultation.patient_email.ilike(like_q),
                 ArcaInvoice.email_to.ilike(like_q),
+                ArcaInvoice.cae.ilike(like_q),
+                ArcaInvoice.doc_nro.ilike(like_q),
             )
         )
     if email_status == "sent":
         stmt = stmt.where(ArcaInvoice.email_sent_at.is_not(None))
     elif email_status == "not_sent":
         stmt = stmt.where(ArcaInvoice.email_sent_at.is_(None))
+    if pdf_status == "generated":
+        stmt = stmt.where(or_(ArcaInvoice.pdf_generated_at.is_not(None), ArcaInvoice.document_pdf.is_not(None)))
+    elif pdf_status == "missing":
+        stmt = stmt.where(ArcaInvoice.pdf_generated_at.is_(None), ArcaInvoice.document_pdf.is_(None))
     result = await session.execute(stmt.order_by(desc(ArcaInvoice.created_at)))
     rows = list(result.all())
     return _template(
         request,
         "tenant/billing_arca_list.html",
-        {"rows": rows, "status_filter": status_filter, "q": q, "email_status": email_status},
+        {
+            "rows": rows,
+            "status_filter": status_filter,
+            "q": q,
+            "email_status": email_status,
+            "pdf_status": pdf_status,
+        },
     )
 
 
@@ -2982,7 +2996,7 @@ async def billing_arca_detail(
     patient_email = ""
     document_error = ""
     try:
-        document = await document_service.ensure_document(
+        document = await document_service.build_document(
             await get_entity_or_404(session, Tenant, user.tenant_id),
             invoice,
             consultation=consultation,
@@ -3022,7 +3036,7 @@ async def billing_arca_invoice_html(
     if invoice is None:
         raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
-    document = await BillingInvoiceDocumentService(session).ensure_document(tenant, invoice)
+    document = await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
     return Response(document.html, media_type="text/html; charset=utf-8")
 
 
@@ -3032,7 +3046,37 @@ async def billing_arca_invoice_pdf(
     user: CurrentUser = Depends(require_permission("billing_arca:read")),
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
-    del request
+    invoice = await session.scalar(
+        select(ArcaInvoice).where(
+            ArcaInvoice.id == invoice_id,
+            ArcaInvoice.tenant_id == user.tenant_id,
+        )
+    )
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
+    filename = invoice.document_filename or invoice_pdf_filename(invoice)
+    path = Path(invoice.pdf_path) if invoice.pdf_path else None
+    if path and path.exists():
+        return FileResponse(path, media_type="application/pdf", filename=filename)
+    if not invoice.document_pdf:
+        add_flash(request, "error", "La factura todavia no tiene PDF generado.")
+        return RedirectResponse(f"/t/billing/invoices/{invoice.id}", status_code=303)
+    return Response(
+        bytes(invoice.document_pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+async def billing_arca_generate_pdf(
+    request: Request,
+    invoice_id: int,
+    csrf_token: str = Form(""),
+    force: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
     invoice = await session.scalar(
         select(ArcaInvoice).where(
             ArcaInvoice.id == invoice_id,
@@ -3042,13 +3086,83 @@ async def billing_arca_invoice_pdf(
     if invoice is None:
         raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
-    document = await BillingInvoiceDocumentService(session).ensure_document(tenant, invoice)
-    filename = invoice.document_filename or invoice_pdf_filename(invoice)
-    return Response(
-        document.pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    consultation = await session.scalar(
+        select(BillingExternalConsultation).where(
+            BillingExternalConsultation.tenant_id == user.tenant_id,
+            BillingExternalConsultation.arca_invoice_id == invoice.id,
+        )
     )
+    try:
+        await BillingInvoiceDocumentService(session).generate_and_store_document(
+            tenant,
+            invoice,
+            user_id=user.id,
+            consultation=consultation,
+            force=force == "1",
+        )
+        await audit_log(
+            session,
+            request,
+            user,
+            action="arca_invoice_pdf_regenerated" if force == "1" else "arca_invoice_pdf_generated",
+            entity="arca_invoice",
+            entity_id=invoice.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"invoice_id": invoice.id},
+        )
+    except BillingInvoiceDocumentError as exc:
+        add_flash(request, "error", f"No se pudo generar el PDF: {exc}")
+    else:
+        add_flash(request, "success", "PDF generado correctamente.")
+    return RedirectResponse(f"/t/billing/invoices/{invoice.id}", status_code=303)
+
+
+async def billing_arca_download_pdf(
+    request: Request,
+    invoice_id: int,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    invoice = await session.scalar(
+        select(ArcaInvoice).where(
+            ArcaInvoice.id == invoice_id,
+            ArcaInvoice.tenant_id == user.tenant_id,
+        )
+    )
+    if invoice is None:
+        raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
+    filename = invoice.document_filename or invoice_pdf_filename(invoice)
+    path = Path(invoice.pdf_path) if invoice.pdf_path else None
+    if path and path.exists():
+        await audit_log(
+            session,
+            request,
+            user,
+            action="arca_invoice_pdf_downloaded",
+            entity="arca_invoice",
+            entity_id=invoice.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"invoice_id": invoice.id},
+        )
+        return FileResponse(path, media_type="application/pdf", filename=filename)
+    if invoice.document_pdf:
+        await audit_log(
+            session,
+            request,
+            user,
+            action="arca_invoice_pdf_downloaded",
+            entity="arca_invoice",
+            entity_id=invoice.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"invoice_id": invoice.id, "source": "database"},
+        )
+        return Response(
+            bytes(invoice.document_pdf),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    add_flash(request, "error", "La factura todavia no tiene PDF generado.")
+    return RedirectResponse(f"/t/billing/invoices/{invoice.id}", status_code=303)
 
 
 async def billing_arca_send_email(

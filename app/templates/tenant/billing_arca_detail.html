@@ -80,7 +80,21 @@
       </div>
       <div class="flex flex-wrap gap-2">
         <a class="btn btn-secondary" href="/t/billing-arca/{{ invoice.id }}/comprobante.html" target="_blank">Ver HTML</a>
-        <a class="btn btn-secondary" href="/t/billing-arca/{{ invoice.id }}/comprobante.pdf" target="_blank">Ver PDF</a>
+        {% if status == 'authorized' and invoice.cae %}
+          {% if invoice.pdf_generated_at or invoice.document_pdf %}
+            <a class="btn btn-secondary" href="/t/billing/invoices/{{ invoice.id }}/download-pdf" target="_blank">Descargar PDF</a>
+            <form method="post" action="/t/billing/invoices/{{ invoice.id }}/generate-pdf">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <input type="hidden" name="force" value="1" />
+              <button class="btn btn-secondary" type="submit">Regenerar PDF</button>
+            </form>
+          {% else %}
+            <form method="post" action="/t/billing/invoices/{{ invoice.id }}/generate-pdf">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+              <button class="btn btn-primary" type="submit">Generar PDF</button>
+            </form>
+          {% endif %}
+        {% endif %}
       </div>
       <form method="post" action="/t/billing-arca/{{ invoice.id }}/send-email" class="rounded-lg border border-slate-200 p-4">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />

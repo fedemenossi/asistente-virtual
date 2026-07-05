@@ -260,7 +260,6 @@ class ArcaService:
                 consultation.arca_invoice_id = invoice.id
                 consultation.status = "billed"
                 consultation.billed_at = datetime.now()
-                await self._ensure_invoice_document(tenant, invoice, consultation)
                 return ArcaEmissionResult(invoice=invoice, recovered=True)
             invoice.status = ArcaInvoiceStatus.REJECTED
             invoice.error_message = str(exc)
@@ -286,7 +285,6 @@ class ArcaService:
         consultation.arca_invoice_id = invoice.id
         consultation.status = "billed"
         consultation.billed_at = datetime.now()
-        await self._ensure_invoice_document(tenant, invoice, consultation)
         self._session.add(
             ArcaInvoiceEvent(
                 invoice_id=invoice.id,

@@ -272,6 +272,18 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
+    "/billing/invoices/{invoice_id}/generate-pdf",
+    views.billing_arca_generate_pdf,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/invoices/{invoice_id}/download-pdf",
+    views.billing_arca_download_pdf,
+    methods=["GET"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing-arca/{invoice_id}/send-email",
     views.billing_arca_send_email,
     methods=["POST"],

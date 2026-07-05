@@ -1694,8 +1694,8 @@ def test_billing_invoice_document_html_and_pdf_include_diagnosis(db_session):
     assert document.patient_email == "paciente@example.com"
 
 
-def test_billing_invoice_document_is_stored_when_invoice_is_authorized(db_session):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Stored Document", "whatsapp:+685"))
+def test_billing_invoice_document_is_not_stored_until_requested(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Deferred Document", "whatsapp:+685"))
     item_id, consultation_id = asyncio.run(
         _create_arca_emission_seed(
             db_session,
@@ -1719,11 +1719,54 @@ def test_billing_invoice_document_is_stored_when_invoice_is_authorized(db_sessio
             )
 
     document_html, document_pdf, filename, generated_at = asyncio.run(_fetch())
-    assert "Diagnostico almacenado" in document_html
-    assert document_pdf.startswith(b"%PDF")
-    assert filename.startswith("factura-arca-")
-    assert filename.endswith("-11-51.pdf")
-    assert generated_at is not None
+    assert document_html is None
+    assert document_pdf is None
+    assert filename is None
+    assert generated_at is None
+
+
+def test_billing_invoice_generate_pdf_route_stores_document(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Generate PDF", "whatsapp:+6851"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(
+            db_session,
+            tenant_id,
+            diagnosis="Diagnostico generado bajo demanda",
+            patient_email="paciente@example.com",
+        )
+    )
+    invoice_id = asyncio.run(
+        _emit_authorized_test_invoice(db_session, tenant_id, item_id, consultation_id)
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-generate-pdf@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-generate-pdf@test.com", "secret-123")
+    detail = client.get(f"/t/billing/invoices/{invoice_id}")
+    response = client.post(
+        f"/t/billing/invoices/{invoice_id}/generate-pdf",
+        data={"csrf_token": _csrf(detail.text)},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    async def _fetch():
+        async with db_session() as session:
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            return invoice
+
+    invoice = asyncio.run(_fetch())
+    assert invoice.document_pdf.startswith(b"%PDF")
+    assert "Diagnostico generado bajo demanda" in invoice.document_html
+    assert invoice.pdf_generated_at is not None
+    assert invoice.pdf_path
+    assert invoice.qr_url and "afip.gob.ar/fe/qr" in invoice.qr_url
 
 
 def test_billing_invoice_document_allows_missing_diagnosis(db_session):
