@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from sqlalchemy import and_, or_, select
@@ -13,6 +14,8 @@ from app.models.paciente import Paciente
 from app.models.tenant import Tenant
 from app.models.turno import AppointmentStatus, EstadoTurno, Turno
 from app.services.messaging_service import MessagingService
+
+logger = logging.getLogger(__name__)
 
 
 class ReminderService:
@@ -51,9 +54,20 @@ class ReminderService:
             )
             self._messaging.send_whatsapp(paciente.telefono, message, tenant=tenant)
             if paciente.email:
-                self._messaging.send_email(
-                    paciente.email, "Recordatorio de turno", message
-                )
+                try:
+                    self._messaging.send_email(
+                        paciente.email, "Recordatorio de turno", message
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "appointment_reminder_email_failed",
+                        extra={
+                            "turno_id": turno.id,
+                            "tenant_id": consultorio.tenant_id,
+                            "error_type": exc.__class__.__name__,
+                            "error_message": str(exc),
+                        },
+                    )
             turno.reminder_sent_at = now
             if hours_before >= 20:
                 turno.reminder_24h_sent = True

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from enum import Enum
 
-from sqlalchemy import Date, DateTime, Enum as SqlEnum, ForeignKey, JSON, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import Date, DateTime, Enum as SqlEnum, ForeignKey, JSON, LargeBinary, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
@@ -73,6 +73,10 @@ class ArcaInvoice(Base, TimestampMixin):
     send_email: Mapped[bool | None] = mapped_column(nullable=True)
     email_to: Mapped[str | None] = mapped_column(String(200), nullable=True)
     email_sent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    document_html: Mapped[str | None] = mapped_column(Text, nullable=True)
+    document_pdf: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    document_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    document_generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     request_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     response_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)

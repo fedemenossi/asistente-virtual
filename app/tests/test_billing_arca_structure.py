@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import re
+from types import SimpleNamespace
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy import select
 
 from app.core.security import hash_password
@@ -30,6 +32,7 @@ from app.services.billing_invoice_document_service import (
     BillingInvoiceDocumentService,
     BillingInvoiceEmailService,
 )
+from app.services.messaging_service import MessagingService
 from app.services.tenant_feature_service import TenantFeatureService
 from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_user, login
 
@@ -1267,6 +1270,72 @@ def test_arca_service_emits_invoice_without_diagnosis(db_session):
     assert line.diagnosis_text == ""
 
 
+def test_arca_service_authorizes_with_fecae_detail_response_and_events(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Emit Event OK", "whatsapp:+683"))
+    item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
+
+    class EventWsfe:
+        def __init__(self, settings, auth_provider):
+            pass
+
+        def get_ultimo_autorizado(self, pto_vta, cbte_tipo):
+            return WsfeResult(data={"CbteNro": 40})
+
+        def solicitar_cae(self, request):
+            return WsfeResult(
+                data={
+                    "FeCabResp": {"Resultado": "A"},
+                    "FeDetResp": {
+                        "FECAEDetResponse": [
+                            {
+                                "Resultado": "A",
+                                "CAE": "32345678901234",
+                                "CAEFchVto": "20260714",
+                            }
+                        ]
+                    },
+                    "Events": {
+                        "Evt": [
+                            {
+                                "Code": 39,
+                                "Msg": "IMPORTANTE: campo Condicion Frente al IVA del receptor.",
+                            }
+                        ]
+                    },
+                }
+            )
+
+        def consultar_comprobante(self, pto_vta, cbte_tipo, cbte_nro):
+            raise AssertionError("No debe recuperar cuando FECAESolicitar autoriza")
+
+    async def _run():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            item = await session.get(ArcaBillableItem, item_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            result = await ArcaService(
+                session,
+                wsaa_factory=_FakeWsaaForEmission,
+                wsfe_factory=EventWsfe,
+            ).emit_invoice_for_consultation(tenant, consultation, item)
+            await session.commit()
+            return result.invoice.id
+
+    invoice_id = asyncio.run(_run())
+
+    async def _fetch():
+        async with db_session() as session:
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            return invoice, consultation
+
+    invoice, consultation = asyncio.run(_fetch())
+    assert invoice.status == ArcaInvoiceStatus.AUTHORIZED
+    assert invoice.cae == "32345678901234"
+    assert invoice.error_message in (None, "")
+    assert consultation.status == "billed"
+
+
 def test_arca_service_persists_rejected_invoice_on_arca_error(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Emit Error", "whatsapp:+627"))
     item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
@@ -1625,6 +1694,38 @@ def test_billing_invoice_document_html_and_pdf_include_diagnosis(db_session):
     assert document.patient_email == "paciente@example.com"
 
 
+def test_billing_invoice_document_is_stored_when_invoice_is_authorized(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Stored Document", "whatsapp:+685"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(
+            db_session,
+            tenant_id,
+            diagnosis="Diagnostico almacenado",
+            patient_email="paciente@example.com",
+        )
+    )
+    invoice_id = asyncio.run(
+        _emit_authorized_test_invoice(db_session, tenant_id, item_id, consultation_id)
+    )
+
+    async def _fetch():
+        async with db_session() as session:
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            return (
+                invoice.document_html,
+                invoice.document_pdf,
+                invoice.document_filename,
+                invoice.document_generated_at,
+            )
+
+    document_html, document_pdf, filename, generated_at = asyncio.run(_fetch())
+    assert "Diagnostico almacenado" in document_html
+    assert document_pdf.startswith(b"%PDF")
+    assert filename.startswith("factura-arca-")
+    assert filename.endswith("-11-51.pdf")
+    assert generated_at is not None
+
+
 def test_billing_invoice_document_allows_missing_diagnosis(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Document No Diagnosis", "whatsapp:+647"))
     item_id, consultation_id = asyncio.run(
@@ -1706,6 +1807,71 @@ def test_billing_invoice_email_sends_pdf_and_logs(db_session):
     assert log.sent_at is not None
 
 
+def test_messaging_service_raises_when_smtp_missing():
+    service = MessagingService()
+    service._settings = SimpleNamespace(
+        smtp_host=None,
+        smtp_port=587,
+        smtp_username=None,
+        smtp_password=None,
+        smtp_from_email=None,
+        smtp_from_name=None,
+        smtp_use_tls=True,
+        app_name="test",
+    )
+
+    with pytest.raises(RuntimeError, match="SMTP no configurado"):
+        service.send_email("paciente@example.com", "Factura", "Body")
+
+
+def test_billing_invoice_email_logs_failed_mailer(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Email Fail", "whatsapp:+684"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(
+            db_session,
+            tenant_id,
+            diagnosis="Rinitis",
+            patient_email="paciente-fail@example.com",
+        )
+    )
+    invoice_id = asyncio.run(
+        _emit_authorized_test_invoice(db_session, tenant_id, item_id, consultation_id)
+    )
+
+    class FailingMailer:
+        def send_email(self, to_email, subject, body, *, html_body=None, attachments=None):
+            raise RuntimeError("SMTP no configurado. Falta SMTP_HOST.")
+
+    async def _send():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            document = await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
+            try:
+                await BillingInvoiceEmailService(session, mailer=FailingMailer()).send_invoice(
+                    tenant,
+                    invoice,
+                    to_email=document.patient_email,
+                    document=document,
+                )
+            except Exception as exc:
+                message = str(exc)
+            else:
+                raise AssertionError("Debia fallar")
+            await session.commit()
+            log = await session.scalar(
+                select(BillingEmailLog).where(BillingEmailLog.invoice_id == invoice_id)
+            )
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            return message, log, invoice
+
+    message, log, invoice = asyncio.run(_send())
+    assert "SMTP no configurado" in message
+    assert log.status == "failed"
+    assert "SMTP no configurado" in log.error_message
+    assert invoice.email_sent_at is None
+
+
 def test_billing_invoice_send_email_route_uses_patient_email(client, db_session, monkeypatch):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Email Route", "whatsapp:+633"))
     item_id, consultation_id = asyncio.run(
@@ -1755,3 +1921,43 @@ def test_billing_invoice_send_email_route_uses_patient_email(client, db_session,
     assert "Rinitis alergica" in sent["body"]
     assert "Rinitis alergica" in sent["html_body"]
     assert sent["attachments"][0][1].startswith(b"%PDF")
+
+
+def test_billing_invoice_pdf_route_returns_stored_document(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Stored PDF Route", "whatsapp:+686"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(
+            db_session,
+            tenant_id,
+            diagnosis="PDF persistido",
+            patient_email="paciente-route@example.com",
+        )
+    )
+    invoice_id = asyncio.run(
+        _emit_authorized_test_invoice(db_session, tenant_id, item_id, consultation_id)
+    )
+
+    async def _replace_pdf():
+        async with db_session() as session:
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            invoice.document_pdf = b"%PDF-STORED"
+            invoice.document_html = "<html>stored</html>"
+            invoice.document_filename = "factura-almacenada.pdf"
+            await session.commit()
+
+    asyncio.run(_replace_pdf())
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-pdf-route@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-pdf-route@test.com", "secret-123")
+    response = client.get(f"/t/billing-arca/{invoice_id}/comprobante.pdf")
+    assert response.status_code == 200
+    assert response.content == b"%PDF-STORED"
+    assert response.headers["content-type"] == "application/pdf"
+    assert "factura-almacenada.pdf" in response.headers["content-disposition"]

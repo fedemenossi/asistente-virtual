@@ -61,6 +61,38 @@ class BillingInvoiceDocumentService:
             patient_email=patient_email,
         )
 
+    async def ensure_document(
+        self,
+        tenant: Tenant,
+        invoice: ArcaInvoice,
+        *,
+        consultation: BillingExternalConsultation | None = None,
+        force: bool = False,
+    ) -> BillingInvoiceDocument:
+        if consultation is None:
+            consultation = await self.get_consultation(invoice)
+        patient_email = extract_patient_email(consultation)
+        diagnosis = extract_invoice_diagnosis(invoice, consultation)
+        if (
+            not force
+            and invoice.document_html
+            and invoice.document_pdf
+        ):
+            return BillingInvoiceDocument(
+                html=invoice.document_html,
+                pdf=bytes(invoice.document_pdf),
+                diagnosis=diagnosis,
+                patient_email=patient_email,
+            )
+        document = await self.build_document(tenant, invoice, consultation=consultation)
+        invoice.document_html = document.html
+        invoice.document_pdf = document.pdf
+        invoice.document_filename = invoice.document_filename or invoice_pdf_filename(invoice)
+        invoice.document_generated_at = now_ba()
+        self._session.add(invoice)
+        await self._session.flush()
+        return document
+
 
 class BillingInvoiceEmailService:
     def __init__(self, session: AsyncSession, mailer: Any | None = None) -> None:
@@ -104,7 +136,7 @@ class BillingInvoiceEmailService:
                 html_body=document.html,
                 attachments=[
                     (
-                        f"factura-arca-{invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}.pdf",
+                        invoice.document_filename or invoice_pdf_filename(invoice),
                         document.pdf,
                         "application/pdf",
                     )
@@ -249,6 +281,11 @@ def build_invoice_pdf(
         diagnosis or "No informado",
     ]
     return _simple_pdf(lines)
+
+
+def invoice_pdf_filename(invoice: ArcaInvoice) -> str:
+    cbte_nro = invoice.cbte_nro or invoice.id
+    return f"factura-arca-{invoice.pto_vta}-{invoice.cbte_tipo}-{cbte_nro}.pdf"
 
 
 def _invoice_detail(invoice: ArcaInvoice) -> dict[str, Any]:

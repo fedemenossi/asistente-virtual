@@ -101,7 +101,7 @@ class BillingService:
         consultation.status = "billed"
 
     async def send_invoice_email(self, tenant: Tenant, invoice: ArcaInvoice, to_email: str):
-        document = await BillingInvoiceDocumentService(self._session).build_document(tenant, invoice)
+        document = await BillingInvoiceDocumentService(self._session).ensure_document(tenant, invoice)
         return await BillingInvoiceEmailService(self._session).send_invoice(
             tenant,
             invoice,

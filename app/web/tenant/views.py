@@ -93,6 +93,7 @@ from app.services.billing_invoice_document_service import (
     BillingInvoiceDocumentError,
     BillingInvoiceDocumentService,
     BillingInvoiceEmailService,
+    invoice_pdf_filename,
 )
 from app.services.billing_service import BillingService
 from app.services.billing_consultation_csv_service import (
@@ -2981,7 +2982,7 @@ async def billing_arca_detail(
     patient_email = ""
     document_error = ""
     try:
-        document = await document_service.build_document(
+        document = await document_service.ensure_document(
             await get_entity_or_404(session, Tenant, user.tenant_id),
             invoice,
             consultation=consultation,
@@ -3021,7 +3022,7 @@ async def billing_arca_invoice_html(
     if invoice is None:
         raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
-    document = await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
+    document = await BillingInvoiceDocumentService(session).ensure_document(tenant, invoice)
     return Response(document.html, media_type="text/html; charset=utf-8")
 
 
@@ -3041,8 +3042,8 @@ async def billing_arca_invoice_pdf(
     if invoice is None:
         raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
-    document = await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
-    filename = f"factura-arca-{invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}.pdf"
+    document = await BillingInvoiceDocumentService(session).ensure_document(tenant, invoice)
+    filename = invoice.document_filename or invoice_pdf_filename(invoice)
     return Response(
         document.pdf,
         media_type="application/pdf",
@@ -3073,7 +3074,7 @@ async def billing_arca_send_email(
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
     document_service = BillingInvoiceDocumentService(session)
     try:
-        document = await document_service.build_document(tenant, invoice)
+        document = await document_service.ensure_document(tenant, invoice)
         recipient = to_email.strip() or document.patient_email or ""
         await BillingInvoiceEmailService(session).send_invoice(
             tenant,

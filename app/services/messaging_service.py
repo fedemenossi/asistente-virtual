@@ -49,12 +49,10 @@ class MessagingService:
         attachments: list[tuple[str, bytes, str]] | None = None,
     ) -> None:
         if not self._settings.smtp_host:
-            logger.info("SMTP no configurado, omitido envio email: %s", to_email)
-            return
+            raise RuntimeError("SMTP no configurado. Falta SMTP_HOST.")
         from_email = self._settings.smtp_from_email or self._settings.smtp_username
         if not from_email:
-            logger.warning("SMTP_FROM_EMAIL o SMTP_USERNAME no configurado")
-            return
+            raise RuntimeError("SMTP_FROM_EMAIL o SMTP_USERNAME no configurado.")
 
         message = EmailMessage()
         from_name = self._settings.smtp_from_name or self._settings.app_name

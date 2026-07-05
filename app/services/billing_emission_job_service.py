@@ -125,6 +125,17 @@ async def _run_billing_emission_job(job_id: str, consultation_ids: list[int]) ->
                         invoice_id = result.invoice.id
                         should_send_email = bool(consultation.send_email)
                         email_to = consultation.patient_email or result.invoice.email_to or ""
+                    if should_send_email and not email_to and invoice_id is not None:
+                        job.error_message = f"Email factura #{invoice_id}: paciente sin email destino."
+                        logger.warning(
+                            "billing_emission_job_email_skipped",
+                            extra={
+                                "job_id": job.id,
+                                "tenant_id": job.tenant_id,
+                                "invoice_id": invoice_id,
+                                "reason": "missing_recipient",
+                            },
+                        )
                     if should_send_email and email_to and invoice_id is not None:
                         try:
                             async with session.begin():

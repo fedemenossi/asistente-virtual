@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -20,6 +21,9 @@ from app.models.billing_invoice_line import BillingInvoiceLine
 from app.models.tenant import Tenant
 from app.repositories.arca_ticket_repository import ArcaTicketRepository
 from app.services.billing_arca_settings_service import decrypt_secret
+
+
+logger = logging.getLogger(__name__)
 
 
 class ArcaConfigurationError(RuntimeError):
@@ -256,6 +260,7 @@ class ArcaService:
                 consultation.arca_invoice_id = invoice.id
                 consultation.status = "billed"
                 consultation.billed_at = datetime.now()
+                await self._ensure_invoice_document(tenant, invoice, consultation)
                 return ArcaEmissionResult(invoice=invoice, recovered=True)
             invoice.status = ArcaInvoiceStatus.REJECTED
             invoice.error_message = str(exc)
@@ -281,6 +286,7 @@ class ArcaService:
         consultation.arca_invoice_id = invoice.id
         consultation.status = "billed"
         consultation.billed_at = datetime.now()
+        await self._ensure_invoice_document(tenant, invoice, consultation)
         self._session.add(
             ArcaInvoiceEvent(
                 invoice_id=invoice.id,
@@ -289,6 +295,35 @@ class ArcaService:
             )
         )
         return ArcaEmissionResult(invoice=invoice, recovered=False)
+
+    async def _ensure_invoice_document(
+        self,
+        tenant: Tenant,
+        invoice: ArcaInvoice,
+        consultation: BillingExternalConsultation,
+    ) -> None:
+        try:
+            from app.services.billing_invoice_document_service import BillingInvoiceDocumentService
+
+            await BillingInvoiceDocumentService(self._session).ensure_document(
+                tenant,
+                invoice,
+                consultation=consultation,
+            )
+        except Exception as exc:
+            logger.warning(
+                "billing_invoice_document_generation_failed invoice_id=%s error_type=%s message=%s",
+                invoice.id,
+                type(exc).__name__,
+                str(exc),
+            )
+            self._session.add(
+                ArcaInvoiceEvent(
+                    invoice_id=invoice.id,
+                    event_type="document_generation_failed",
+                    payload_json={"error": str(exc)},
+                )
+            )
 
     def _build_fe_cae_request(
         self,
@@ -506,7 +541,21 @@ def _get_any(data: Any, *keys: str) -> Any:
 def _first_detail_response(data: dict[str, Any]) -> dict[str, Any]:
     det = data.get("FeDetResp") or data.get("feDetResp") or data
     if isinstance(det, dict):
-        det = det.get("FEDetResponse") or det.get("feDetResponse") or det
+        det = (
+            det.get("FEDetResponse")
+            or det.get("feDetResponse")
+            or det.get("FECAEDetResponse")
+            or det.get("feCAEDetResponse")
+            or det
+        )
+    if isinstance(det, dict):
+        det = (
+            det.get("FEDetResponse")
+            or det.get("feDetResponse")
+            or det.get("FECAEDetResponse")
+            or det.get("feCAEDetResponse")
+            or det
+        )
     if isinstance(det, list):
         det = det[0] if det else {}
     return det if isinstance(det, dict) else {}

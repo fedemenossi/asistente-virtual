@@ -155,6 +155,10 @@ EXTRA_COLUMNS = {
         "send_email": "BOOLEAN NULL",
         "email_to": "VARCHAR(200) NULL",
         "email_sent_at": "DATETIME NULL",
+        "document_html": "TEXT NULL",
+        "document_pdf": "LONGBLOB NULL",
+        "document_filename": "VARCHAR(255) NULL",
+        "document_generated_at": "DATETIME NULL",
         "created_by": "INT NULL",
     },
 }
