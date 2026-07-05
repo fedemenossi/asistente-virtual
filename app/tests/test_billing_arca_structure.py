@@ -1171,6 +1171,7 @@ def test_arca_service_emits_invoice_with_diagnosis(db_session):
     assert "metadata" not in captured["request"]
     assert "Diagnostico" not in detail
     assert "Descripcion" not in detail
+    assert detail["CondicionIVAReceptorId"] == 5
 
     async def _fetch():
         async with db_session() as session:
@@ -1190,6 +1191,7 @@ def test_arca_service_emits_invoice_with_diagnosis(db_session):
     assert invoice.billing_item_id == item_id
     assert invoice.request_json["metadata"]["diagnosis"] == "Bronquitis aguda"
     assert "Bronquitis aguda" in invoice.request_json["metadata"]["description"]
+    assert invoice.request_json["metadata"]["receiver_tax_condition_id"] == 5
     assert invoice.diagnosis_original_snapshot == "Bronquitis aguda"
     assert invoice.diagnosis_final_snapshot == "Bronquitis aguda"
     assert consultation.arca_invoice_id == invoice_id
@@ -1316,6 +1318,68 @@ def test_arca_service_persists_rejected_invoice_on_arca_error(db_session):
     assert invoice.cbte_nro == 21
     assert invoice.error_message == "ARCA rechazo la solicitud"
     assert linked_invoice_id is None
+
+
+def test_arca_service_surfaces_arca_observations_on_rejection(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Emit Observed", "whatsapp:+682"))
+    item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
+
+    class RejectedWsfe:
+        def __init__(self, settings, auth_provider):
+            pass
+
+        def get_ultimo_autorizado(self, pto_vta, cbte_tipo):
+            return WsfeResult(data={"CbteNro": 30})
+
+        def solicitar_cae(self, request):
+            return WsfeResult(
+                data={
+                    "FeCabResp": {"Resultado": "R"},
+                    "FeDetResp": {
+                        "FEDetResponse": {
+                            "Resultado": "R",
+                            "Obs": {
+                                "Observaciones": [
+                                    {
+                                        "Code": 10246,
+                                        "Msg": "Campo Condicion Frente al IVA del receptor es obligatorio.",
+                                    }
+                                ]
+                            },
+                        }
+                    },
+                }
+            )
+
+        def consultar_comprobante(self, pto_vta, cbte_tipo, cbte_nro):
+            raise AssertionError("No debe recuperar si FECAESolicitar respondio rechazo controlado")
+
+    async def _run():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            item = await session.get(ArcaBillableItem, item_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            try:
+                await ArcaService(
+                    session,
+                    wsaa_factory=_FakeWsaaForEmission,
+                    wsfe_factory=RejectedWsfe,
+                ).emit_invoice_for_consultation(tenant, consultation, item)
+            except ArcaEmissionError as exc:
+                message = str(exc)
+            else:
+                raise AssertionError("Debia rechazar")
+            await session.commit()
+            invoice = await session.scalar(
+                select(ArcaInvoice).where(ArcaInvoice.external_consultation_id == consultation_id)
+            )
+            return message, invoice.error_message
+
+    message, invoice_error = asyncio.run(_run())
+
+    assert "10246" in message
+    assert "Condicion Frente al IVA" in message
+    assert invoice_error == message
 
 
 def test_arca_service_blocks_double_billing(db_session):

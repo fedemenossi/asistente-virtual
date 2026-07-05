@@ -91,8 +91,9 @@
           <input class="input" name="tax_condition" value="{{ settings.get('tax_condition', '') }}" />
         </div>
         <div>
-          <label class="text-xs text-slate-500">Condicion IVA receptor por defecto</label>
-          <input class="input" name="receiver_tax_condition" value="{{ settings.get('receiver_tax_condition', '') }}" />
+          <label class="text-xs text-slate-500">Codigo condicion IVA receptor por defecto</label>
+          <input class="input" name="receiver_tax_condition" value="{{ settings.get('receiver_tax_condition', '') }}" placeholder="5 = Consumidor Final" />
+          <p class="mt-1 text-xs text-slate-500">Si queda vacio se usa 5, Consumidor Final.</p>
         </div>
         <div class="md:col-span-2">
           <label class="text-xs text-slate-500">Domicilio fiscal</label>

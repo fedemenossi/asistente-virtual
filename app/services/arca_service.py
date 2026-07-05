@@ -274,7 +274,7 @@ class ArcaService:
                 ArcaInvoiceEvent(
                     invoice_id=invoice.id,
                     event_type="authorization_rejected",
-                    payload_json={"result": "rejected"},
+                    payload_json={"result": "rejected", "error": invoice.error_message},
                 )
             )
             raise ArcaEmissionError(invoice.error_message or "ARCA rechazo la autorizacion.")
@@ -308,6 +308,8 @@ class ArcaService:
         service_date = (consultation.attended_at or datetime.now()).date()
         diagnosis = (consultation.diagnosis or "").strip()
         description = f"{item.name} - Diagnostico: {diagnosis}" if diagnosis else item.name
+        arca_cfg = tenant.arca_settings or {}
+        receiver_tax_condition_id = _receiver_tax_condition_id(arca_cfg.get("receiver_tax_condition"))
         detail = {
             "Concepto": concepto,
             "DocTipo": doc_tipo,
@@ -323,6 +325,7 @@ class ArcaService:
             "ImpIVA": 0,
             "MonId": item.currency,
             "MonCotiz": 1,
+            "CondicionIVAReceptorId": receiver_tax_condition_id,
         }
         if concepto in {2, 3}:
             detail["FchServDesde"] = service_date.strftime("%Y%m%d")
@@ -344,6 +347,7 @@ class ArcaService:
                 "billable_item_id": item.id,
                 "diagnosis": diagnosis,
                 "description": description,
+                "receiver_tax_condition_id": receiver_tax_condition_id,
             },
         }
 
@@ -403,7 +407,7 @@ class ArcaService:
         invoice.authorized_at = datetime.now()
         invoice.status = ArcaInvoiceStatus.AUTHORIZED if cae and result != "R" else ArcaInvoiceStatus.REJECTED
         if invoice.status == ArcaInvoiceStatus.REJECTED:
-            invoice.error_message = "ARCA rechazo la autorizacion."
+            invoice.error_message = _arca_rejection_message(data, det)
 
     async def _recover_invoice(
         self,
@@ -465,6 +469,28 @@ def _document_for_arca(document: str | None) -> tuple[int, int]:
     return 99, 0
 
 
+def _receiver_tax_condition_id(value: Any) -> int:
+    text = str(value or "").strip().lower()
+    if text.isdigit():
+        return int(text)
+    aliases = {
+        "responsable inscripto": 1,
+        "iva responsable inscripto": 1,
+        "exento": 4,
+        "iva sujeto exento": 4,
+        "consumidor final": 5,
+        "final": 5,
+        "monotributo": 6,
+        "responsable monotributo": 6,
+        "monotributista": 6,
+        "sujeto no categorizado": 7,
+        "no categorizado": 7,
+        "iva no alcanzado": 15,
+        "no alcanzado": 15,
+    }
+    return aliases.get(text, 5)
+
+
 def _get_any(data: Any, *keys: str) -> Any:
     if not isinstance(data, dict):
         return None
@@ -484,6 +510,47 @@ def _first_detail_response(data: dict[str, Any]) -> dict[str, Any]:
     if isinstance(det, list):
         det = det[0] if det else {}
     return det if isinstance(det, dict) else {}
+
+
+def _arca_rejection_message(data: dict[str, Any], detail: dict[str, Any]) -> str:
+    messages: list[str] = []
+    for container in (
+        detail.get("Obs"),
+        detail.get("obs"),
+        detail.get("Observaciones"),
+        detail.get("observaciones"),
+        data.get("Errors"),
+        data.get("errors"),
+        data.get("Events"),
+        data.get("events"),
+    ):
+        messages.extend(_arca_message_items(container))
+    unique = list(dict.fromkeys(item for item in messages if item))
+    if unique:
+        return "ARCA rechazo la autorizacion: " + "; ".join(unique)
+    return "ARCA rechazo la autorizacion."
+
+
+def _arca_message_items(container: Any) -> list[str]:
+    if not container:
+        return []
+    if isinstance(container, list):
+        messages: list[str] = []
+        for item in container:
+            messages.extend(_arca_message_items(item))
+        return messages
+    if not isinstance(container, dict):
+        return []
+
+    code = _get_any(container, "Code", "codigo", "Codigo")
+    msg = _get_any(container, "Msg", "mensaje", "Mensaje")
+    if code or msg:
+        return [f"{code}: {msg}".strip(": ")]
+
+    messages = []
+    for key in ("Obs", "obs", "Observaciones", "observaciones", "Err", "err", "Evt", "evt"):
+        messages.extend(_arca_message_items(container.get(key)))
+    return messages
 
 
 def _parse_arca_date(value: str):
