@@ -5,10 +5,10 @@
 {% set breadcrumb = "Tenant / Facturacion ARCA" %}
 
 {% block content %}
-  <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+  <div class="page-header">
     <div>
-      <p class="text-sm text-slate-600">Comprobantes fiscales del tenant</p>
-      <h1 class="text-2xl font-semibold text-slate-900">Facturacion ARCA</h1>
+      <p class="page-subtitle">Comprobantes fiscales del tenant</p>
+      <h1 class="page-title">Facturacion ARCA</h1>
     </div>
     <div class="flex gap-2">
       <a class="btn btn-secondary" href="/t/settings/billing/items">Items</a>
@@ -16,8 +16,12 @@
     </div>
   </div>
 
-  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
-    <input class="input" name="q" value="{{ q or '' }}" placeholder="Paciente, DNI o email" />
+  <section class="surface">
+  <form method="get" class="toolbar">
+    <div class="searchbox min-w-0 flex-1">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
+      <input name="q" value="{{ q or '' }}" placeholder="Paciente, DNI o email" />
+    </div>
     <select class="select" name="status">
       <option value="">Estado</option>
       <option value="draft" {% if status_filter == 'draft' %}selected{% endif %}>Borrador</option>
@@ -36,9 +40,9 @@
   </form>
 
   {% if rows %}
-    <div class="card overflow-x-auto overflow-y-visible">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-slate-600">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Comprobante</th>
             <th class="px-4 py-3 text-left font-medium">Consulta</th>
@@ -55,7 +59,7 @@
             {% set invoice = row[0] %}
             {% set consultation = row[1] %}
             {% set status = invoice.status.value if invoice.status.value is defined else invoice.status %}
-            <tr class="border-t border-slate-200 hover:bg-slate-50">
+            <tr>
               <td class="px-4 py-3 text-slate-900">
                 {{ invoice.pto_vta }}-{{ invoice.cbte_tipo }}-{{ invoice.cbte_nro or "sin numero" }}
                 <p class="text-xs text-slate-500">CAE {{ invoice.cae or "-" }}</p>
@@ -100,8 +104,8 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">
-                <div class="flex justify-end gap-2">
-                  <a class="btn btn-secondary" href="/t/billing/invoices/{{ invoice.id }}">Ver</a>
+                <div class="row-actions">
+                  <a class="icon-button" href="/t/billing/invoices/{{ invoice.id }}" aria-label="Ver factura">...</a>
                   <a class="btn btn-secondary" href="/t/billing-arca/{{ invoice.id }}/comprobante.pdf" target="_blank">PDF</a>
                 </div>
               </td>
@@ -111,8 +115,9 @@
       </table>
     </div>
   {% else %}
-    <div class="card p-10 text-center">
+    <div class="p-10 text-center">
       <p class="text-sm text-slate-600">Todavia no hay comprobantes ARCA registrados.</p>
     </div>
   {% endif %}
+  </section>
 {% endblock %}

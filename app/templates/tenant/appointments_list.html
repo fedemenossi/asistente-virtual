@@ -5,14 +5,14 @@
 {% set breadcrumb = "Tenant / Turnos" %}
 
 {% block content %}
-  <div class="mb-2 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+  <div class="page-header">
     <div>
-      <p class="text-xs text-slate-500">Agenda operativa del tenant</p>
-      <h1 class="text-xl font-semibold text-slate-900">Agenda por rango</h1>
+      <p class="page-subtitle">Agenda operativa del tenant</p>
+      <h1 class="page-title">Agenda por rango</h1>
     </div>
   </div>
 
-  <form method="get" class="mb-3 rounded-xl border border-slate-200 bg-white p-2 shadow-sm" style="display: grid; grid-template-columns: 142px 142px minmax(160px, 1fr) 150px minmax(180px, 1fr) 84px; gap: 8px; align-items: end;">
+  <form method="get" class="surface mb-4" style="display: grid; grid-template-columns: 142px 142px minmax(160px, 1fr) 150px minmax(180px, 1fr) 84px; gap: 8px; align-items: end;">
     <label class="space-y-0.5">
       <span class="text-[11px] font-medium text-slate-500">Desde</span>
       <input class="input text-sm" style="height: 34px; padding-top: 4px; padding-bottom: 4px;" type="date" name="date_from" value="{{ date_from or date or '' }}" />
@@ -75,7 +75,7 @@
     </div>
   {% endif %}
 
-  <div class="mb-4 card p-4">
+  <div class="mb-4 surface">
     <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
       <div>
         <h2 class="text-lg font-semibold text-slate-900">Agenda Google en vivo</h2>
@@ -92,9 +92,9 @@
     {% elif google_events_error %}
       <p class="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{{ google_events_error }}</p>
     {% elif google_events %}
-      <div class="mt-4 overflow-x-auto rounded-xl border border-slate-200">
-        <table class="min-w-full text-sm">
-          <thead class="bg-slate-50 text-slate-600">
+      <div class="table-wrap mt-4">
+        <table class="data-table">
+          <thead>
             <tr>
               <th class="px-4 py-3 text-left font-medium">Hora</th>
               <th class="px-4 py-3 text-left font-medium">Evento</th>
@@ -105,7 +105,7 @@
           </thead>
           <tbody>
             {% for event in google_events %}
-              <tr class="border-t border-slate-200">
+              <tr>
                 <td class="px-4 py-3 whitespace-nowrap text-slate-900">{{ event.start_at|format_ba('%H:%M') }} - {{ event.end_at|format_ba('%H:%M') }}</td>
                 <td class="px-4 py-3 text-slate-900">{{ event.summary or "Sin titulo" }}</td>
                 <td class="px-4 py-3">
@@ -283,9 +283,10 @@
   </div>
 
   {% if rows %}
-    <div class="card overflow-x-auto overflow-y-visible">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-slate-600">
+    <section class="surface">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Hora</th>
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
@@ -305,7 +306,7 @@
             {% set status = turno.status.value if turno.status is not none else turno.estado %}
             {% set provider = (turno.provider or turno.external_calendar_provider or 'manual') %}
             {% set fecha = turno.start_at if turno.start_at else turno.fecha_hora %}
-            <tr class="border-t border-slate-200 hover:bg-slate-50">
+            <tr>
               <td class="px-4 py-3 text-slate-900 whitespace-nowrap">{{ fecha|format_ba('%H:%M') }}</td>
               <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</td>
               <td class="px-4 py-3">
@@ -346,8 +347,8 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">
-                <div class="flex justify-end gap-2">
-                  <a class="btn btn-secondary" href="/t/appointments/{{ turno.id }}">Ver</a>
+                <div class="row-actions">
+                  <a class="icon-button" href="/t/appointments/{{ turno.id }}" aria-label="Ver turno">...</a>
                   {% if status not in ['cancelled', 'cancelado', 'completed'] %}
                     <form method="post" action="/t/appointments/{{ turno.id }}/cancel">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
@@ -361,8 +362,9 @@
         </tbody>
       </table>
     </div>
+    </section>
   {% else %}
-    <div class="card p-10 text-center">
+    <div class="surface p-10 text-center">
       <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
       <p class="text-sm text-slate-600">No hay turnos asignados para el rango seleccionado.</p>
     </div>

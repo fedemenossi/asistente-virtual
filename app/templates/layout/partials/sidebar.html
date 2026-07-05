@@ -1,4 +1,4 @@
-<aside data-sidebar class="app-sidebar fixed inset-y-0 left-0 z-40 flex w-72 -translate-x-full flex-col text-slate-900 transition duration-200 lg:translate-x-0">
+<aside data-sidebar class="sidebar app-sidebar fixed inset-y-0 left-0 z-40 flex w-[272px] -translate-x-full flex-col text-slate-900 transition duration-200 lg:translate-x-0">
   {% set path = request.url.path %}
   {% set role = request.session.get('role') %}
 
@@ -54,14 +54,14 @@
         {{ icon("flag") }}
       </div>
       <div class="min-w-0">
-        <p class="truncate text-[17px] font-extrabold leading-5 text-slate-950">SaaS Medico</p>
-        <p class="mt-0.5 truncate text-sm font-semibold text-violet-500">{{ "Panel administrador" if role == "SUPER_ADMIN" else "Panel consultorio" }}</p>
+        <p class="truncate text-[15px] font-extrabold leading-5 text-slate-950">SaaS Medico</p>
+        <p class="mt-0.5 truncate text-xs font-semibold text-slate-500">{{ "Panel administrador" if role == "SUPER_ADMIN" else "Panel consultorio" }}</p>
       </div>
       <button data-sidebar-close class="action-button ml-auto lg:hidden" type="button" aria-label="Cerrar menu">X</button>
     </div>
   </div>
 
-  <nav class="flex-1 overflow-y-auto px-3 pb-5 pt-2">
+  <nav class="flex-1 overflow-y-auto px-4 pb-5 pt-2">
     {% if role == 'SUPER_ADMIN' %}
       {{ section_title("Principal") }}
       {{ nav_item("/admin/dashboard", "Dashboard", "/admin/dashboard", "dashboard", "sidebar-tone-sky") }}
@@ -113,8 +113,8 @@
   </nav>
 
   <div class="border-t border-slate-200 p-4">
-    <div class="mb-3 flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-      <span class="grid h-9 w-9 place-items-center rounded-xl bg-white font-bold text-blue-700 shadow-sm">{{ (request.session.get('user_email') or 'U')[0]|upper }}</span>
+    <div class="mb-3 flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+      <span class="grid h-9 w-9 place-items-center rounded-lg bg-white font-bold text-slate-700 shadow-sm">{{ (request.session.get('user_email') or 'U')[0]|upper }}</span>
       <div class="min-w-0">
         <p class="truncate text-sm font-bold text-slate-900">{{ request.session.get('user_email') or 'Usuario' }}</p>
         <p class="truncate text-xs font-medium text-slate-500">{{ role|replace('_', ' ')|title if role else 'Tenant' }}</p>

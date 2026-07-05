@@ -6,15 +6,16 @@
 {% set breadcrumb = "Admin / Usuarios" %}
 
 {% block content %}
-  <div class="mb-6 flex items-center justify-between">
+  <div class="page-header">
     <div>
-      <p class="text-sm text-slate-600">Gestion de usuarios</p>
-      <h1 class="text-2xl font-semibold text-slate-900">Usuarios</h1>
+      <p class="page-subtitle">Gestion de usuarios</p>
+      <h1 class="page-title">Usuarios</h1>
     </div>
     <a class="btn btn-primary" href="/admin/users/new">Crear usuario</a>
   </div>
 
-  <form method="get" class="mb-4">
+  <section class="surface">
+  <form method="get" class="toolbar justify-start">
     <label class="inline-flex items-center gap-2 text-sm text-slate-600">
       <input type="checkbox" name="show_deleted" value="1" {% if show_deleted %}checked{% endif %} />
       Ver eliminados
@@ -23,9 +24,9 @@
   </form>
 
   {% if users %}
-    <div class="card overflow-x-auto overflow-y-visible">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-slate-600">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Email</th>
             <th class="px-4 py-3 text-left font-medium">Rol</th>
@@ -36,7 +37,7 @@
         </thead>
         <tbody>
           {% for user in users %}
-            <tr class="border-t border-slate-200 hover:bg-slate-50">
+            <tr>
               <td class="px-4 py-3 text-slate-900">{{ user.email }}</td>
               <td class="px-4 py-3">
                 {% if user.role == 'SUPER_ADMIN' %}
@@ -57,7 +58,7 @@
               </td>
               <td class="px-4 py-3 text-right">
                 <div data-dropdown class="relative inline-block text-left">
-                  <button data-dropdown-toggle type="button" class="btn btn-ghost">...</button>
+                  <button data-dropdown-toggle type="button" class="icon-button" aria-label="Acciones de usuario">...</button>
                   <div data-dropdown-menu class="absolute right-0 z-10 mt-2 hidden w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
                     <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/admin/users/{{ user.id }}/edit">Editar</a>
                     <div class="border-t border-slate-200"></div>
@@ -90,7 +91,7 @@
       </table>
     </div>
   {% else %}
-    <div class="card p-10 text-center">
+    <div class="p-10 text-center">
       <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
       <p class="text-sm text-slate-600">No hay usuarios creados.</p>
       <div class="mt-4">
@@ -98,5 +99,6 @@
       </div>
     </div>
   {% endif %}
+  </section>
 {% endblock %}
 

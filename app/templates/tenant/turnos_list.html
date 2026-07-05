@@ -6,12 +6,15 @@
 {% set breadcrumb = "Tenant / Turnos" %}
 
 {% block content %}
-  <div class="mb-6">
-    <p class="text-sm text-slate-600">Agenda</p>
-    <h1 class="text-2xl font-semibold text-slate-900">Turnos</h1>
+  <div class="page-header">
+    <div>
+      <p class="page-subtitle">Agenda</p>
+      <h1 class="page-title">Turnos</h1>
+    </div>
   </div>
 
-  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
+  <section class="surface">
+  <form method="get" class="toolbar">
     <input class="input" type="date" name="date" value="{{ date or '' }}" />
     <select class="select" name="tipo">
       <option value="">Tipo</option>
@@ -32,9 +35,9 @@
   </form>
 
   {% if rows %}
-    <div class="card overflow-x-auto overflow-y-visible">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-slate-600">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
             <th class="px-4 py-3 text-left font-medium">Consultorio</th>
@@ -50,7 +53,7 @@
             {% set paciente = row[1] %}
             {% set consultorio = row[2] %}
             {% set status = turno.estado.value if turno.estado.value is defined else turno.estado %}
-            <tr class="border-t border-slate-200 hover:bg-slate-50">
+            <tr>
               <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }} {{ paciente.apellido }}</td>
               <td class="px-4 py-3 text-slate-600">{{ consultorio.nombre }}</td>
               {% set fecha = turno.start_at if turno.start_at else turno.fecha_hora %}
@@ -72,7 +75,7 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-right">
-                <a class="btn btn-secondary" href="/t/turnos/{{ turno.id }}">Ver</a>
+                <a class="icon-button" href="/t/turnos/{{ turno.id }}" aria-label="Ver turno">...</a>
               </td>
             </tr>
           {% endfor %}
@@ -83,10 +86,11 @@
       {{ pagination(page, total_pages, "/t/turnos", query_string) }}
     {% endif %}
   {% else %}
-    <div class="card p-10 text-center">
+    <div class="p-10 text-center">
       <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
       <p class="text-sm text-slate-600">No hay turnos disponibles con estos filtros.</p>
     </div>
   {% endif %}
+  </section>
 {% endblock %}
 

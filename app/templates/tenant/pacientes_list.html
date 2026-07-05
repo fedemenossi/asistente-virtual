@@ -6,10 +6,10 @@
 {% set breadcrumb = "Tenant / Pacientes" %}
 
 {% block content %}
-  <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+  <div class="page-header">
     <div>
-      <p class="text-sm text-slate-600">Gestion de pacientes</p>
-      <h1 class="text-2xl font-semibold text-slate-900">Pacientes</h1>
+      <p class="page-subtitle">Gestion de pacientes</p>
+      <h1 class="page-title">Pacientes</h1>
     </div>
     <div class="flex flex-wrap gap-2">
       <a class="btn btn-primary" href="/t/pacientes/new">Nuevo paciente</a>
@@ -36,16 +36,20 @@
     </div>
   </div>
 
-  <form method="get" class="mb-4 grid gap-3 md:grid-cols-3">
-    <input class="input" type="search" name="q" placeholder="Nombre, documento, email, telefono" value="{{ q }}" />
-    <input class="input" type="text" name="obra" placeholder="Obra social" value="{{ obra }}" />
-    <button class="btn btn-secondary" type="submit">Filtrar</button>
-  </form>
+  <section class="surface">
+    <form method="get" class="toolbar">
+      <div class="searchbox min-w-0 flex-1">
+        <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
+        <input type="search" name="q" placeholder="Nombre, documento, email, telefono" value="{{ q }}" />
+      </div>
+      <input class="input max-w-xs" type="text" name="obra" placeholder="Obra social" value="{{ obra }}" />
+      <button class="btn btn-secondary" type="submit">Filtrar</button>
+    </form>
 
   {% if pacientes %}
-    <div class="card overflow-x-auto overflow-y-visible">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-slate-600">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Nombre</th>
             <th class="px-4 py-3 text-left font-medium">Apellido</th>
@@ -60,7 +64,7 @@
         </thead>
         <tbody>
           {% for paciente in pacientes %}
-            <tr class="border-t border-slate-200 hover:bg-slate-50">
+            <tr>
               <td class="px-4 py-3 text-slate-900">{{ paciente.nombre }}</td>
               <td class="px-4 py-3 text-slate-900">{{ paciente.apellido }}</td>
               <td class="px-4 py-3 text-slate-600">
@@ -77,7 +81,7 @@
               </td>
               <td class="px-4 py-3 text-right">
                 <div data-dropdown class="relative inline-block text-left">
-                  <button data-dropdown-toggle type="button" class="btn btn-ghost">...</button>
+                  <button data-dropdown-toggle type="button" class="icon-button" aria-label="Acciones de paciente">...</button>
                   <div data-dropdown-menu class="absolute right-0 z-10 mt-2 hidden w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
                     <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/t/pacientes/{{ paciente.id }}/edit">Editar</a>
                     <div class="border-t border-slate-200"></div>
@@ -103,7 +107,7 @@
       {{ pagination(page, total_pages, "/t/pacientes", query_string) }}
     {% endif %}
   {% else %}
-    <div class="card p-10 text-center">
+    <div class="p-10 text-center">
       <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
       <p class="text-sm text-slate-600">No hay pacientes. Crea el primero.</p>
       <div class="mt-4">
@@ -111,6 +115,7 @@
       </div>
     </div>
   {% endif %}
+  </section>
   <script>
     (() => {
       const form = document.querySelector("[data-patient-csv-form]");

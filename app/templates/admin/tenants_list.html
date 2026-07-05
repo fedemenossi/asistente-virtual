@@ -9,16 +9,20 @@
 {% set show_search = true %}
 
 {% block content %}
-  <div class="mb-6 flex items-center justify-between">
+  <div class="page-header">
     <div>
-      <p class="text-sm text-slate-600">Gestion de clientes</p>
-      <h1 class="text-2xl font-semibold text-slate-900">Tenants</h1>
+      <p class="page-subtitle">Gestion de clientes</p>
+      <h1 class="page-title">Tenants</h1>
     </div>
     {{ button("Crear tenant", href="/admin/tenants/new", variant="primary") }}
   </div>
 
-  <form method="get" class="mb-4 grid gap-3 md:grid-cols-4">
-    <input class="input" type="search" name="q" placeholder="Buscar por nombre" value="{{ q }}" />
+  <section class="surface">
+  <form method="get" class="toolbar">
+    <div class="searchbox min-w-0 flex-1">
+      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
+      <input type="search" name="q" placeholder="Buscar por nombre" value="{{ q }}" />
+    </div>
     <select class="select" name="status">
       <option value="">Todos</option>
       <option value="active" {% if status_filter == 'active' %}selected{% endif %}>Activos</option>
@@ -32,9 +36,9 @@
   </form>
 
   {% if tenants %}
-    <div class="card overflow-x-auto overflow-y-visible">
-      <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-slate-600">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Nombre</th>
             <th class="px-4 py-3 text-left font-medium">WhatsApp</th>
@@ -45,7 +49,7 @@
         </thead>
         <tbody>
           {% for tenant in tenants %}
-            <tr class="border-t border-slate-200 hover:bg-slate-50">
+            <tr>
               <td class="px-4 py-3 text-slate-900">{{ tenant.nombre }}</td>
               <td class="px-4 py-3 text-slate-600">{{ tenant.whatsapp_number }}</td>
               <td class="px-4 py-3">
@@ -60,7 +64,7 @@
               <td class="px-4 py-3 text-slate-600">{{ tenant.created_at.strftime('%Y-%m-%d') if tenant.created_at else '' }}</td>
               <td class="px-4 py-3 text-right">
                 <div data-dropdown class="relative inline-block text-left">
-                  <button data-dropdown-toggle type="button" class="btn btn-ghost">...</button>
+                  <button data-dropdown-toggle type="button" class="icon-button" aria-label="Acciones de tenant">...</button>
                   <div data-dropdown-menu class="absolute right-0 z-10 mt-2 hidden w-40 rounded-lg border border-slate-200 bg-white shadow-soft">
                     <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/admin/tenants/{{ tenant.id }}">Ver</a>
                     <a class="block px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="/admin/tenants/{{ tenant.id }}/edit">Editar</a>
@@ -97,7 +101,7 @@
       {{ pagination(page, total_pages, "/admin/tenants", query_string) }}
     {% endif %}
   {% else %}
-    <div class="card p-10 text-center">
+    <div class="p-10 text-center">
       <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
       <p class="text-sm text-slate-600">No hay tenants cargados todavia.</p>
       <div class="mt-4">
@@ -105,5 +109,6 @@
       </div>
     </div>
   {% endif %}
+  </section>
 {% endblock %}
 

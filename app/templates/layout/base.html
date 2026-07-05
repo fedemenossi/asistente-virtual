@@ -4,16 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{ title or "Panel" }}</title>
-    <meta name="theme-color" content="#f7f7fb" />
+    <meta name="theme-color" content="#F8FAFC" />
     <link rel="manifest" href="/static/manifest.json" />
     <link rel="apple-touch-icon" href="/static/icons/icon-192.svg" />
     <meta name="csrf-token" content="{{ csrf_token }}" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/static/dist/tailwind.css" />
   </head>
-  <body class="bg-[#F7F7FB] text-slate-900">
+  <body class="bg-[#F4F6F8] text-slate-900">
     {% set path = request.url.path %}
     {% set current_section = "default" %}
     {% if path.startswith('/t/dashboard') or path.startswith('/admin/dashboard') %}
@@ -32,7 +32,7 @@
     <div class="app-shell relative min-h-screen">
       <div data-sidebar-overlay class="fixed inset-0 z-30 hidden bg-slate-900/40 lg:hidden"></div>
       {% include "layout/partials/sidebar.html" %}
-      <div class="app-main lg:pl-72">
+      <div class="app-main lg:pl-[272px]">
         {% include "layout/partials/topbar.html" %}
         <main class="pb-12">
           <div class="app-content page-wrap">
