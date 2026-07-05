@@ -6,46 +6,43 @@
 {% set breadcrumb = "Tenant" %}
 
 {% block content %}
-  <div class="mb-6">
-    <p class="text-sm text-slate-600">Resumen del consultorio</p>
-    <h1 class="text-2xl font-semibold text-slate-900">Dashboard</h1>
+  <div class="page-header">
+    <div>
+      <p class="page-subtitle">Resumen del consultorio</p>
+      <h1 class="page-title">Dashboard</h1>
+    </div>
   </div>
+
   <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-    {% call card("Pacientes") %}
-      <div class="text-3xl font-semibold text-slate-900">{{ kpis.pacientes }}</div>
-    {% endcall %}
-    {% call card("Consultorios") %}
-      <div class="text-3xl font-semibold text-slate-900">{{ kpis.consultorios }}</div>
-    {% endcall %}
-    {% call card("Turnos") %}
-      <div class="text-3xl font-semibold text-slate-900">{{ kpis.turnos }}</div>
-    {% endcall %}
-    {% call card("Conversaciones") %}
-      <div class="text-3xl font-semibold text-slate-900">{{ kpis.conversaciones }}</div>
-    {% endcall %}
+    <div class="stat-card stat-card-pastel pastel-lavender">
+      <p class="text-sm font-bold text-violet-700">Pacientes</p>
+      <div class="mt-4 text-4xl font-extrabold text-slate-950">{{ kpis.pacientes }}</div>
+    </div>
+    <div class="stat-card stat-card-pastel pastel-mint">
+      <p class="text-sm font-bold text-emerald-700">Consultorios</p>
+      <div class="mt-4 text-4xl font-extrabold text-slate-950">{{ kpis.consultorios }}</div>
+    </div>
+    <div class="stat-card stat-card-pastel pastel-sky">
+      <p class="text-sm font-bold text-sky-700">Turnos</p>
+      <div class="mt-4 text-4xl font-extrabold text-slate-950">{{ kpis.turnos }}</div>
+    </div>
+    <div class="stat-card stat-card-pastel pastel-peach">
+      <p class="text-sm font-bold text-orange-700">Conversaciones</p>
+      <div class="mt-4 text-4xl font-extrabold text-slate-950">{{ kpis.conversaciones }}</div>
+    </div>
   </div>
 
   <div class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-    {% call card("Turnos de hoy") %}
-      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.turnos_hoy }}</div>
-    {% endcall %}
-    {% call card("Proximos") %}
-      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.proximos_turnos }}</div>
-    {% endcall %}
-    {% call card("Virtuales hoy") %}
-      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.virtuales_hoy }}</div>
-    {% endcall %}
-    {% call card("Presenciales hoy") %}
-      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.presenciales_hoy }}</div>
-    {% endcall %}
-    {% call card("Pendientes") %}
-      <div class="text-3xl font-semibold text-slate-900">{{ daily_kpis.pendientes }}</div>
-    {% endcall %}
+    {% call card("Turnos de hoy") %}<div class="text-3xl font-bold text-slate-950">{{ daily_kpis.turnos_hoy }}</div>{% endcall %}
+    {% call card("Proximos") %}<div class="text-3xl font-bold text-slate-950">{{ daily_kpis.proximos_turnos }}</div>{% endcall %}
+    {% call card("Virtuales hoy") %}<div class="text-3xl font-bold text-slate-950">{{ daily_kpis.virtuales_hoy }}</div>{% endcall %}
+    {% call card("Presenciales hoy") %}<div class="text-3xl font-bold text-slate-950">{{ daily_kpis.presenciales_hoy }}</div>{% endcall %}
+    {% call card("Pendientes") %}<div class="text-3xl font-bold text-slate-950">{{ daily_kpis.pendientes }}</div>{% endcall %}
   </div>
 
   <div class="mt-6 grid gap-6 xl:grid-cols-[1.2fr,0.8fr]">
     <div class="space-y-6">
-      <div class="card">
+      <div class="card p-5">
         <div class="mb-4 flex items-start justify-between gap-4">
           <div>
             <p class="text-sm text-slate-600">Resumen operativo del dia</p>
@@ -65,7 +62,7 @@
         </div>
       </div>
 
-      <div class="card">
+      <div class="card p-5">
         <div class="mb-4">
           <p class="text-sm text-slate-600">Lista de tareas</p>
           <h2 class="text-xl font-semibold text-slate-900">Tareas del dia</h2>
@@ -99,7 +96,7 @@
     </div>
 
     <div class="space-y-6">
-      <div class="card">
+      <div class="card p-5">
         <div class="mb-4">
           <p class="text-sm text-slate-600">Agenda del dia</p>
           <h2 class="text-xl font-semibold text-slate-900">Turnos de hoy</h2>
@@ -126,7 +123,7 @@
         {% endif %}
       </div>
 
-      <div class="card">
+      <div class="card p-5">
         <div class="mb-4">
           <p class="text-sm text-slate-600">Proximos turnos</p>
           <h2 class="text-xl font-semibold text-slate-900">Siguientes atenciones</h2>

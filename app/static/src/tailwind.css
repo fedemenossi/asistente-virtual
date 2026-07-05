@@ -4,18 +4,24 @@
 
 @layer components {
   :root {
-    --bg: #f7f7fb;
+    --bg: #f8f6ff;
     --surface: #ffffff;
-    --border: #e5e7eb;
-    --border-soft: #eef2f7;
+    --surface-soft: #fffaf7;
+    --border: #e8e3f3;
+    --border-soft: #f1edf8;
     --text: #111827;
     --muted: #6b7280;
     --muted-2: #9ca3af;
-    --primary: #2563eb;
-    --primary-soft: #dbeafe;
-    --active: #eaf1ff;
-    --shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
-    --shadow-lg: 0 18px 45px rgba(15, 23, 42, 0.08);
+    --primary: #7c3aed;
+    --primary-soft: #ede9fe;
+    --active: #f0ecff;
+    --pastel-mint: #dcfce7;
+    --pastel-sky: #e0f2fe;
+    --pastel-peach: #ffedd5;
+    --pastel-rose: #ffe4e6;
+    --pastel-lavender: #ede9fe;
+    --shadow: 0 1px 2px rgba(80, 63, 122, 0.06);
+    --shadow-lg: 0 18px 45px rgba(80, 63, 122, 0.1);
     --radius: 16px;
     --radius-sm: 12px;
     --pad-1: 12px;
@@ -46,16 +52,108 @@
   .app-shell {
     min-height: 100vh;
     background:
-      radial-gradient(circle at top left, rgba(219, 234, 254, 0.55), transparent 28rem),
-      linear-gradient(180deg, #f7f7fb 0%, #f9fafb 100%);
+      radial-gradient(circle at 8% 0%, rgba(237, 233, 254, 0.9), transparent 26rem),
+      radial-gradient(circle at 92% 8%, rgba(220, 252, 231, 0.65), transparent 24rem),
+      linear-gradient(180deg, #f8f6ff 0%, #f7fafc 100%);
   }
 
   .app-sidebar {
-    background: rgba(255, 255, 255, 0.96);
-    border-right: 1px solid rgba(229, 231, 235, 0.95);
-    box-shadow: 0 12px 34px rgba(15, 23, 42, 0.08);
+    background: linear-gradient(180deg, #fffaf7 0%, #ffffff 45%, #f8f6ff 100%);
+    border-right: 1px solid rgba(232, 227, 243, 0.95);
+    box-shadow: 10px 0 32px rgba(80, 63, 122, 0.08);
     backdrop-filter: blur(16px);
   }
+
+  .sidebar-header {
+    min-height: 92px;
+    padding: 20px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand-mark {
+    display: grid;
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+    place-items: center;
+    border-radius: 16px;
+    color: #fff;
+    background: linear-gradient(135deg, #8b5cf6 0%, #14b8a6 100%);
+    box-shadow: 0 10px 24px rgba(124, 58, 237, 0.22);
+  }
+
+  .sidebar-section-title {
+    margin: 18px 10px 8px;
+    color: #8b7ca8;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .sidebar-nav-item {
+    position: relative;
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 11px;
+    margin: 3px 0;
+    padding: 7px 10px;
+    border-radius: 14px;
+    color: #354052;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.2;
+    transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .sidebar-nav-item:hover {
+    background: rgba(255, 255, 255, 0.78);
+    color: #111827;
+    box-shadow: inset 0 0 0 1px rgba(232, 227, 243, 0.8);
+  }
+
+  .sidebar-nav-item.is-active {
+    background: var(--active);
+    color: #5b21b6;
+    box-shadow: inset 0 0 0 1px #ddd6fe, 0 8px 18px rgba(124, 58, 237, 0.1);
+  }
+
+  .sidebar-nav-item.is-active::before {
+    content: "";
+    position: absolute;
+    left: -6px;
+    width: 4px;
+    height: 24px;
+    border-radius: 999px;
+    background: #8b5cf6;
+  }
+
+  .sidebar-icon {
+    display: grid;
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+    place-items: center;
+    border-radius: 13px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.75);
+  }
+
+  .sidebar-icon svg,
+  .brand-mark svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .sidebar-tone-sky { background: #e0f2fe; color: #0369a1; }
+  .sidebar-tone-violet { background: #ede9fe; color: #6d28d9; }
+  .sidebar-tone-mint { background: #dcfce7; color: #15803d; }
+  .sidebar-tone-amber { background: #fef3c7; color: #b45309; }
+  .sidebar-tone-teal { background: #ccfbf1; color: #0f766e; }
+  .sidebar-tone-pink { background: #fce7f3; color: #be185d; }
+  .sidebar-tone-rose { background: #ffe4e6; color: #be123c; }
+  .sidebar-tone-orange { background: #ffedd5; color: #c2410c; }
+  .sidebar-tone-slate { background: #f1f5f9; color: #475569; }
 
   .app-main {
     min-height: 100vh;
@@ -198,7 +296,7 @@
   .card {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 18px;
+    border-radius: 20px;
     box-shadow: var(--shadow);
     overflow: hidden;
   }
@@ -213,10 +311,30 @@
   .stat-card {
     background: #fff;
     border: 1px solid var(--border);
-    border-radius: 20px;
-    box-shadow: var(--shadow);
+    border-radius: 22px;
+    box-shadow: 0 10px 28px rgba(80, 63, 122, 0.08);
     padding: 20px;
   }
+
+  .stat-card-pastel {
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card-pastel::after {
+    content: "";
+    position: absolute;
+    right: -28px;
+    top: -32px;
+    width: 96px;
+    height: 96px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.45);
+  }
+  .pastel-lavender { background: linear-gradient(135deg, #f5f3ff 0%, #ede9fe 100%); border-color: #ddd6fe; }
+  .pastel-mint { background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%); border-color: #bbf7d0; }
+  .pastel-sky { background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border-color: #bae6fd; }
+  .pastel-peach { background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); border-color: #fed7aa; }
+  .pastel-rose { background: linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%); border-color: #fecdd3; }
   .card-sm {
     padding: var(--pad-2);
     border-radius: var(--radius-sm);

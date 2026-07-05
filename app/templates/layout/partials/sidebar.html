@@ -36,8 +36,8 @@
 
   {% macro nav_item(href, label, active_prefix, icon_name, tone) -%}
     {% set is_active = path == active_prefix if active_prefix in ["/t/settings", "/admin/settings"] else path.startswith(active_prefix) %}
-    <a href="{{ href }}" class="group mb-1 flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-semibold transition focus:outline-none focus:ring-4 focus:ring-blue-100 {% if is_active %}bg-blue-50 text-blue-700 shadow-sm ring-1 ring-blue-100{% else %}text-slate-700 hover:bg-slate-100 hover:text-slate-950{% endif %}">
-      <span class="grid h-9 w-9 place-items-center rounded-xl ring-1 ring-inset {% if is_active %}bg-white text-blue-700 ring-blue-100{% else %}{{ tone }} ring-black/5 group-hover:bg-white{% endif %}">
+    <a href="{{ href }}" class="sidebar-nav-item{% if is_active %} is-active{% endif %}">
+      <span class="sidebar-icon {{ tone }}">
         {{ icon(icon_name) }}
       </span>
       <span class="min-w-0 flex-1 truncate">{{ label }}</span>
@@ -45,17 +45,17 @@
   {%- endmacro %}
 
   {% macro section_title(label) -%}
-    <p class="mb-2 mt-5 px-3 text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">{{ label }}</p>
+    <p class="sidebar-section-title">{{ label }}</p>
   {%- endmacro %}
 
-  <div class="border-b border-slate-200 px-5 py-5">
+  <div class="sidebar-header">
     <div class="flex items-center gap-3">
-      <div class="grid h-11 w-11 place-items-center rounded-2xl bg-slate-950 text-white shadow-lg shadow-slate-900/15">
+      <div class="brand-mark">
         {{ icon("flag") }}
       </div>
       <div class="min-w-0">
-        <p class="truncate text-base font-bold leading-tight text-slate-950">SaaS Medico</p>
-        <p class="text-sm font-medium text-slate-500">{{ "Panel administrador" if role == "SUPER_ADMIN" else "Panel consultorio" }}</p>
+        <p class="truncate text-[17px] font-extrabold leading-5 text-slate-950">SaaS Medico</p>
+        <p class="mt-0.5 truncate text-sm font-semibold text-violet-500">{{ "Panel administrador" if role == "SUPER_ADMIN" else "Panel consultorio" }}</p>
       </div>
       <button data-sidebar-close class="action-button ml-auto lg:hidden" type="button" aria-label="Cerrar menu">X</button>
     </div>
@@ -64,51 +64,51 @@
   <nav class="flex-1 overflow-y-auto px-3 pb-5 pt-2">
     {% if role == 'SUPER_ADMIN' %}
       {{ section_title("Principal") }}
-      {{ nav_item("/admin/dashboard", "Dashboard", "/admin/dashboard", "dashboard", "bg-sky-50 text-sky-700") }}
-      {{ nav_item("/admin/tenants", "Tenants", "/admin/tenants", "clinic", "bg-violet-50 text-violet-700") }}
-      {{ nav_item("/admin/users", "Usuarios", "/admin/users", "patients", "bg-emerald-50 text-emerald-700") }}
+      {{ nav_item("/admin/dashboard", "Dashboard", "/admin/dashboard", "dashboard", "sidebar-tone-sky") }}
+      {{ nav_item("/admin/tenants", "Tenants", "/admin/tenants", "clinic", "sidebar-tone-violet") }}
+      {{ nav_item("/admin/users", "Usuarios", "/admin/users", "patients", "sidebar-tone-mint") }}
 
       {{ section_title("Operacion") }}
-      {{ nav_item("/admin/appointments", "Turnos", "/admin/appointments", "calendar", "bg-amber-50 text-amber-700") }}
-      {{ nav_item("/admin/calendars", "Calendarios", "/admin/calendars", "calendar", "bg-cyan-50 text-cyan-700") }}
-      {{ nav_item("/admin/payments", "Pagos", "/admin/payments", "payments", "bg-green-50 text-green-700") }}
+      {{ nav_item("/admin/appointments", "Turnos", "/admin/appointments", "calendar", "sidebar-tone-amber") }}
+      {{ nav_item("/admin/calendars", "Calendarios", "/admin/calendars", "calendar", "sidebar-tone-teal") }}
+      {{ nav_item("/admin/payments", "Pagos", "/admin/payments", "payments", "sidebar-tone-mint") }}
 
       {{ section_title("Plataforma") }}
-      {{ nav_item("/admin/tenant-features", "Features por tenant", "/admin/tenant-features", "flag", "bg-orange-50 text-orange-700") }}
-      {{ nav_item("/admin/chat-simulator", "Simulador de chat", "/admin/chat-simulator", "chat", "bg-indigo-50 text-indigo-700") }}
-      {{ nav_item("/admin/audit-logs", "Auditoria", "/admin/audit-logs", "audit", "bg-slate-100 text-slate-700") }}
-      {{ nav_item("/admin/notifications", "Notificaciones", "/admin/notifications", "bell", "bg-pink-50 text-pink-700") }}
-      {{ nav_item("/admin/settings/notifications", "Configuracion", "/admin/settings", "settings", "bg-rose-50 text-rose-700") }}
+      {{ nav_item("/admin/tenant-features", "Features por tenant", "/admin/tenant-features", "flag", "sidebar-tone-orange") }}
+      {{ nav_item("/admin/chat-simulator", "Simulador de chat", "/admin/chat-simulator", "chat", "sidebar-tone-violet") }}
+      {{ nav_item("/admin/audit-logs", "Auditoria", "/admin/audit-logs", "audit", "sidebar-tone-slate") }}
+      {{ nav_item("/admin/notifications", "Notificaciones", "/admin/notifications", "bell", "sidebar-tone-pink") }}
+      {{ nav_item("/admin/settings/notifications", "Configuracion", "/admin/settings", "settings", "sidebar-tone-rose") }}
     {% else %}
       {% set features = tenant_features or {} %}
       {{ section_title("Principal") }}
-      {% if features.get("dashboard", true) %}{{ nav_item("/t/dashboard", "Dashboard", "/t/dashboard", "dashboard", "bg-sky-50 text-sky-700") }}{% endif %}
-      {% if features.get("consultorios", true) %}{{ nav_item("/t/consultorios", "Consultorios", "/t/consultorios", "clinic", "bg-violet-50 text-violet-700") }}{% endif %}
-      {% if features.get("pacientes", true) %}{{ nav_item("/t/pacientes", "Pacientes", "/t/pacientes", "patients", "bg-emerald-50 text-emerald-700") }}{% endif %}
+      {% if features.get("dashboard", true) %}{{ nav_item("/t/dashboard", "Dashboard", "/t/dashboard", "dashboard", "sidebar-tone-sky") }}{% endif %}
+      {% if features.get("consultorios", true) %}{{ nav_item("/t/consultorios", "Consultorios", "/t/consultorios", "clinic", "sidebar-tone-violet") }}{% endif %}
+      {% if features.get("pacientes", true) %}{{ nav_item("/t/pacientes", "Pacientes", "/t/pacientes", "patients", "sidebar-tone-mint") }}{% endif %}
 
       {{ section_title("Operacion") }}
-      {% if features.get("appointments", true) %}{{ nav_item("/t/appointments", "Turnos", "/t/appointments", "calendar", "bg-amber-50 text-amber-700") }}{% endif %}
-      {% if features.get("conversaciones", true) %}{{ nav_item("/t/conversation-states", "Conversaciones", "/t/conversation-states", "chat", "bg-indigo-50 text-indigo-700") }}{% endif %}
-      {% if features.get("payments", true) %}{{ nav_item("/t/payments", "Pagos", "/t/payments", "payments", "bg-green-50 text-green-700") }}{% endif %}
+      {% if features.get("appointments", true) %}{{ nav_item("/t/appointments", "Turnos", "/t/appointments", "calendar", "sidebar-tone-amber") }}{% endif %}
+      {% if features.get("conversaciones", true) %}{{ nav_item("/t/conversation-states", "Conversaciones", "/t/conversation-states", "chat", "sidebar-tone-violet") }}{% endif %}
+      {% if features.get("payments", true) %}{{ nav_item("/t/payments", "Pagos", "/t/payments", "payments", "sidebar-tone-mint") }}{% endif %}
 
       {% if features.get("billing_arca", true) %}
         {{ section_title("Facturacion") }}
         <a hidden href="/t/billing-arca">Facturacion ARCA</a>
         <a hidden href="/t/settings/billing-arca">Settings ARCA</a>
-        {{ nav_item("/t/billing/pending", "Consultas a facturar", "/t/billing/pending", "invoice", "bg-orange-50 text-orange-700") }}
-        {{ nav_item("/t/billing/invoices", "Facturas emitidas", "/t/billing/invoices", "invoice", "bg-blue-50 text-blue-700") }}
-        {{ nav_item("/t/settings/billing/items", "Items facturables", "/t/settings/billing/items", "items", "bg-fuchsia-50 text-fuchsia-700") }}
-        {{ nav_item("/t/settings/billing", "Configuracion ARCA", "/t/settings/billing", "settings", "bg-cyan-50 text-cyan-700") }}
+        {{ nav_item("/t/billing/pending", "Consultas a facturar", "/t/billing/pending", "invoice", "sidebar-tone-orange") }}
+        {{ nav_item("/t/billing/invoices", "Facturas emitidas", "/t/billing/invoices", "invoice", "sidebar-tone-sky") }}
+        {{ nav_item("/t/settings/billing/items", "Items facturables", "/t/settings/billing/items", "items", "sidebar-tone-pink") }}
+        {{ nav_item("/t/settings/billing", "Configuracion ARCA", "/t/settings/billing", "settings", "sidebar-tone-teal") }}
       {% endif %}
 
       {{ section_title("Sistema") }}
-      {% if features.get("notifications", true) %}{{ nav_item("/t/notifications", "Notificaciones", "/t/notifications", "bell", "bg-pink-50 text-pink-700") }}{% endif %}
-      {% if features.get("audit_logs", true) %}{{ nav_item("/t/audit-logs", "Auditoria", "/t/audit-logs", "audit", "bg-slate-100 text-slate-700") }}{% endif %}
-      {% if features.get("settings", true) %}{{ nav_item("/t/settings", "Configuracion", "/t/settings", "settings", "bg-slate-100 text-slate-700") }}{% endif %}
-      {% if features.get("settings", true) %}{{ nav_item("/t/settings/patients", "Datos pacientes", "/t/settings/patients", "patients", "bg-emerald-50 text-emerald-700") }}{% endif %}
-      {% if features.get("settings_payments", true) %}{{ nav_item("/t/settings/payments", "Pagos", "/t/settings/payments", "payments", "bg-green-50 text-green-700") }}{% endif %}
-      {% if features.get("settings_calendar", true) %}{{ nav_item("/t/settings/calendar", "Calendario", "/t/settings/calendar", "calendar", "bg-amber-50 text-amber-700") }}{% endif %}
-      {% if features.get("settings_notifications", true) %}{{ nav_item("/t/settings/notifications", "Notificaciones config.", "/t/settings/notifications", "bell", "bg-rose-50 text-rose-700") }}{% endif %}
+      {% if features.get("notifications", true) %}{{ nav_item("/t/notifications", "Notificaciones", "/t/notifications", "bell", "sidebar-tone-pink") }}{% endif %}
+      {% if features.get("audit_logs", true) %}{{ nav_item("/t/audit-logs", "Auditoria", "/t/audit-logs", "audit", "sidebar-tone-slate") }}{% endif %}
+      {% if features.get("settings", true) %}{{ nav_item("/t/settings", "Configuracion", "/t/settings", "settings", "sidebar-tone-slate") }}{% endif %}
+      {% if features.get("settings", true) %}{{ nav_item("/t/settings/patients", "Datos pacientes", "/t/settings/patients", "patients", "sidebar-tone-mint") }}{% endif %}
+      {% if features.get("settings_payments", true) %}{{ nav_item("/t/settings/payments", "Pagos", "/t/settings/payments", "payments", "sidebar-tone-mint") }}{% endif %}
+      {% if features.get("settings_calendar", true) %}{{ nav_item("/t/settings/calendar", "Calendario", "/t/settings/calendar", "calendar", "sidebar-tone-amber") }}{% endif %}
+      {% if features.get("settings_notifications", true) %}{{ nav_item("/t/settings/notifications", "Notificaciones config.", "/t/settings/notifications", "bell", "sidebar-tone-rose") }}{% endif %}
     {% endif %}
   </nav>
 
