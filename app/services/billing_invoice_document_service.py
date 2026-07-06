@@ -558,12 +558,11 @@ def _draw_invoice_page(
     pdf.setFillColor(colors.black)
     pdf.setFont("Helvetica-Bold", 8)
     columns = [
-        (left, left + 244, "Codigo Producto / Servicio", "left"),
-        (left + 244, left + 302, "Cantidad", "right"),
-        (left + 302, left + 372, "U. Medida", "left"),
-        (left + 372, left + 452, "Precio Unit.", "right"),
-        (left + 452, left + 506, "% Bonif", "right"),
-        (left + 506, right, "Subtotal", "right"),
+        (left, left + 270, "Codigo Producto / Servicio", "left"),
+        (left + 270, left + 328, "Cantidad", "right"),
+        (left + 328, left + 408, "U. Medida", "left"),
+        (left + 408, left + 486, "Precio Unit.", "right"),
+        (left + 486, right, "Subtotal", "right"),
     ]
     for x0, _, _, _ in columns[1:]:
         pdf.setStrokeColor(colors.HexColor("#d1d5db"))
@@ -576,11 +575,10 @@ def _draw_invoice_page(
             pdf.drawString(x0 + 8, y - 15, text)
     pdf.setFont("Helvetica", 9)
     row_y = y - 42
-    pdf.drawString(left + 8, row_y, _clip(description, 40))
-    pdf.drawRightString(left + 294, row_y, "1,00")
-    pdf.drawString(left + 310, row_y, "unidades")
-    pdf.drawRightString(left + 444, row_y, _money_ar(invoice.imp_total))
-    pdf.drawRightString(left + 498, row_y, "0,00")
+    pdf.drawString(left + 8, row_y, _clip(description, 44))
+    pdf.drawRightString(left + 320, row_y, "1,00")
+    pdf.drawString(left + 336, row_y, "unidades")
+    pdf.drawRightString(left + 478, row_y, _money_ar(invoice.imp_total))
     pdf.drawRightString(right - 8, row_y, _money_ar(invoice.imp_total))
     pdf.setFont("Helvetica-Bold", 8)
     pdf.drawString(left + 8, row_y - 28, "Diagnostico:")
