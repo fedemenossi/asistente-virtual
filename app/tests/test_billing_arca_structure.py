@@ -1822,6 +1822,11 @@ def test_billing_invoice_email_sends_pdf_and_logs(db_session):
     async def _send():
         async with db_session() as session:
             tenant = await session.get(Tenant, tenant_id)
+            tenant.arca_settings = {
+                **(tenant.arca_settings or {}),
+                "email_subject_template": "Factura {numero} - {importe} {moneda}",
+                "email_body_template": "Adjuntamos la factura {numero}. CAE {cae}.",
+            }
             invoice = await session.get(ArcaInvoice, invoice_id)
             document = await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
             log = await BillingInvoiceEmailService(session, mailer=FakeMailer()).send_invoice(
@@ -1835,8 +1840,12 @@ def test_billing_invoice_email_sends_pdf_and_logs(db_session):
 
     log_id = asyncio.run(_send())
     assert sent["to_email"] == "paciente@example.com"
-    assert "Laringitis aguda" in sent["body"]
+    assert sent["subject"].startswith("Factura ")
+    assert "1500.00 PES" in sent["subject"]
+    assert "CAE" in sent["body"]
     assert "Laringitis aguda" in sent["html_body"]
+    assert "Factura electronica" in sent["html_body"]
+    assert "El comprobante fiscal se encuentra adjunto" in sent["html_body"]
     assert sent["attachments"][0][0].endswith(".pdf")
     assert sent["attachments"][0][1].startswith(b"%PDF")
 

@@ -3205,6 +3205,11 @@ async def billing_arca_send_email(
         )
         add_flash(request, "error", f"No se pudo enviar la factura: {exc}")
     else:
+        logger.info(
+            "billing_invoice_email_send_success invoice_id=%s tenant_id=%s",
+            invoice.id,
+            user.tenant_id,
+        )
         async with session.begin_nested():
             await audit_log(
                 session,

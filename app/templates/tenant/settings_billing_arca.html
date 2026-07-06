@@ -121,10 +121,12 @@
         <div>
           <label class="text-xs text-slate-500">Asunto de mail</label>
           <input class="input" name="email_subject_template" value="{{ settings.get('email_subject_template', '') }}" placeholder="Factura ARCA {{ '{numero}' }}" />
+          <p class="mt-1 text-xs text-slate-500">Variables: {numero}, {importe}, {moneda}, {cae}, {cae_vto}, {emisor}</p>
         </div>
         <div class="md:col-span-2">
           <label class="text-xs text-slate-500">Cuerpo de mail</label>
           <textarea class="textarea" name="email_body_template" rows="4">{{ settings.get('email_body_template', '') }}</textarea>
+          <p class="mt-1 text-xs text-slate-500">Tambien podes usar {diagnostico} si corresponde.</p>
         </div>
         <div class="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
           Diagnostico en factura: opcional. Si esta informado, se muestra en el comprobante y en el mail.

@@ -181,11 +181,9 @@ class BillingInvoiceEmailService:
         recipient = (to_email or "").strip().lower()
         if not _valid_email(recipient):
             raise BillingInvoiceDocumentError("Email del paciente invalido.")
-        subject = f"Factura ARCA {invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}"
-        text_body = (
-            f"Adjuntamos la factura ARCA {invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}.\n\n"
-            f"Diagnostico: {document.diagnosis or 'No informado'}\n"
-        )
+        subject = build_invoice_email_subject(tenant, invoice)
+        text_body = build_invoice_email_text(tenant, invoice, document)
+        html_body = build_invoice_email_html(tenant, invoice, document)
         log = BillingEmailLog(
             tenant_id=tenant.id,
             invoice_id=invoice.id,
@@ -200,7 +198,7 @@ class BillingInvoiceEmailService:
                 recipient,
                 subject,
                 text_body,
-                html_body=document.html,
+                html_body=html_body,
                 attachments=[
                     (
                         invoice.document_filename or invoice_pdf_filename(invoice),
@@ -333,6 +331,83 @@ def build_invoice_html(
   <div class="box">
     <p class="label">QR ARCA</p>
     <p style="word-break: break-all;">{html.escape(qr_url)}</p>
+  </div>
+</body>
+</html>"""
+
+
+def build_invoice_email_subject(tenant: Tenant, invoice: ArcaInvoice) -> str:
+    template = str((tenant.arca_settings or {}).get("email_subject_template") or "").strip()
+    if not template:
+        template = "Factura electronica {numero}"
+    return _render_template(template, _email_context(tenant, invoice))
+
+
+def build_invoice_email_text(tenant: Tenant, invoice: ArcaInvoice, document: BillingInvoiceDocument) -> str:
+    template = str((tenant.arca_settings or {}).get("email_body_template") or "").strip()
+    context = _email_context(tenant, invoice, diagnosis=document.diagnosis)
+    if template:
+        return _render_template(template, context)
+    diagnosis_line = f"Diagnostico: {document.diagnosis}\n" if document.diagnosis else ""
+    return (
+        f"Hola,\n\n"
+        f"Adjuntamos la factura electronica {context['numero']} por {context['importe']} {context['moneda']}.\n\n"
+        f"CAE: {context['cae']}\n"
+        f"Vencimiento CAE: {context['cae_vto']}\n\n"
+        f"{diagnosis_line}"
+        f"Saludos,\n{context['emisor']}\n"
+    )
+
+
+def build_invoice_email_html(tenant: Tenant, invoice: ArcaInvoice, document: BillingInvoiceDocument) -> str:
+    context = _email_context(tenant, invoice, diagnosis=document.diagnosis)
+    diagnosis_block = ""
+    if document.diagnosis:
+        diagnosis_block = f"""
+          <tr>
+            <td style="padding:10px 0;color:#64748b;">Diagnostico</td>
+            <td style="padding:10px 0;text-align:right;font-weight:600;color:#0f172a;">{html.escape(document.diagnosis)}</td>
+          </tr>
+        """
+    body_text = str((tenant.arca_settings or {}).get("email_body_template") or "").strip()
+    intro = _render_template(body_text, context) if body_text else "Adjuntamos la factura electronica correspondiente."
+    return f"""<!doctype html>
+<html lang="es">
+<body style="margin:0;background:#f8fafc;font-family:Arial,sans-serif;color:#0f172a;">
+  <div style="max-width:680px;margin:0 auto;padding:28px;">
+    <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+      <div style="padding:22px 24px;border-bottom:1px solid #e5e7eb;background:#f9fafb;">
+        <p style="margin:0 0 6px;color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:.08em;">Factura electronica</p>
+        <h1 style="margin:0;font-size:22px;color:#111827;">{html.escape(context['numero'])}</h1>
+      </div>
+      <div style="padding:24px;">
+        <p style="margin:0 0 18px;line-height:1.5;color:#334155;">{html.escape(intro).replace(chr(10), '<br>')}</p>
+        <table style="width:100%;border-collapse:collapse;border-top:1px solid #e5e7eb;border-bottom:1px solid #e5e7eb;">
+          <tr>
+            <td style="padding:10px 0;color:#64748b;">Emisor</td>
+            <td style="padding:10px 0;text-align:right;font-weight:600;color:#0f172a;">{html.escape(context['emisor'])}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;color:#64748b;">Comprobante</td>
+            <td style="padding:10px 0;text-align:right;font-weight:600;color:#0f172a;">{html.escape(context['numero'])}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;color:#64748b;">Importe</td>
+            <td style="padding:10px 0;text-align:right;font-weight:700;color:#0f172a;">{html.escape(context['importe'])} {html.escape(context['moneda'])}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;color:#64748b;">CAE</td>
+            <td style="padding:10px 0;text-align:right;font-weight:600;color:#0f172a;">{html.escape(context['cae'])}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 0;color:#64748b;">Vencimiento CAE</td>
+            <td style="padding:10px 0;text-align:right;font-weight:600;color:#0f172a;">{html.escape(context['cae_vto'])}</td>
+          </tr>
+          {diagnosis_block}
+        </table>
+        <p style="margin:18px 0 0;color:#64748b;font-size:13px;">El comprobante fiscal se encuentra adjunto en formato PDF.</p>
+      </div>
+    </div>
   </div>
 </body>
 </html>"""
@@ -483,13 +558,12 @@ def _draw_invoice_page(
     pdf.setFillColor(colors.black)
     pdf.setFont("Helvetica-Bold", 8)
     columns = [
-        (left, left + 220, "Codigo Producto / Servicio", "left"),
-        (left + 220, left + 278, "Cantidad", "right"),
-        (left + 278, left + 344, "U. Medida", "left"),
-        (left + 344, left + 415, "Precio Unit.", "right"),
-        (left + 415, left + 468, "% Bonif", "right"),
-        (left + 468, left + 532, "Imp. Bonif.", "right"),
-        (left + 532, right, "Subtotal", "right"),
+        (left, left + 244, "Codigo Producto / Servicio", "left"),
+        (left + 244, left + 302, "Cantidad", "right"),
+        (left + 302, left + 372, "U. Medida", "left"),
+        (left + 372, left + 452, "Precio Unit.", "right"),
+        (left + 452, left + 506, "% Bonif", "right"),
+        (left + 506, right, "Subtotal", "right"),
     ]
     for x0, _, _, _ in columns[1:]:
         pdf.setStrokeColor(colors.HexColor("#d1d5db"))
@@ -502,12 +576,11 @@ def _draw_invoice_page(
             pdf.drawString(x0 + 8, y - 15, text)
     pdf.setFont("Helvetica", 9)
     row_y = y - 42
-    pdf.drawString(left + 8, row_y, _clip(description, 34))
-    pdf.drawRightString(left + 270, row_y, "1,00")
-    pdf.drawString(left + 286, row_y, "unidades")
-    pdf.drawRightString(left + 407, row_y, _money_ar(invoice.imp_total))
-    pdf.drawRightString(left + 460, row_y, "0,00")
-    pdf.drawRightString(left + 524, row_y, "0,00")
+    pdf.drawString(left + 8, row_y, _clip(description, 40))
+    pdf.drawRightString(left + 294, row_y, "1,00")
+    pdf.drawString(left + 310, row_y, "unidades")
+    pdf.drawRightString(left + 444, row_y, _money_ar(invoice.imp_total))
+    pdf.drawRightString(left + 498, row_y, "0,00")
     pdf.drawRightString(right - 8, row_y, _money_ar(invoice.imp_total))
     pdf.setFont("Helvetica-Bold", 8)
     pdf.drawString(left + 8, row_y - 28, "Diagnostico:")
@@ -696,6 +769,40 @@ def _invoice_detail(invoice: ArcaInvoice) -> dict[str, Any]:
     if isinstance(det, list):
         det = det[0] if det else {}
     return det if isinstance(det, dict) else {}
+
+
+def _email_context(
+    tenant: Tenant,
+    invoice: ArcaInvoice,
+    *,
+    diagnosis: str = "",
+) -> dict[str, str]:
+    numero = f"{int(invoice.pto_vta or 0):05d}-{int(invoice.cbte_nro or 0):08d}"
+    fiscal = tenant.arca_settings or {}
+    return {
+        "numero": numero,
+        "pto_vta": str(invoice.pto_vta or ""),
+        "cbte_tipo": str(invoice.cbte_tipo or ""),
+        "cbte_nro": str(invoice.cbte_nro or ""),
+        "importe": _money(invoice.imp_total),
+        "moneda": invoice.mon_id or "PES",
+        "cae": invoice.cae or "-",
+        "cae_vto": _format_date_display(invoice.cae_fch_vto),
+        "emisor": str(fiscal.get("fiscal_name") or tenant.nombre or ""),
+        "diagnostico": diagnosis or "",
+        "diagnosis": diagnosis or "",
+    }
+
+
+def _render_template(template: str, context: dict[str, str]) -> str:
+    class SafeDict(dict):
+        def __missing__(self, key):
+            return "{" + str(key) + "}"
+
+    try:
+        return template.format_map(SafeDict(context))
+    except Exception:
+        return template
 
 
 def _find_key(value: Any, key: str) -> Any:
