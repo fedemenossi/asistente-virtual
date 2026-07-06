@@ -96,11 +96,11 @@
           {% endif %}
         {% endif %}
       </div>
-      <form method="post" action="/t/billing-arca/{{ invoice.id }}/send-email" class="rounded-lg border border-slate-200 p-4">
+      <form method="post" action="/t/billing-arca/{{ invoice.id }}/send-email" class="rounded-lg border border-slate-200 p-4" data-submit-label="Enviando...">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
         <label class="block text-sm font-medium text-slate-700">Email del paciente</label>
         <div class="mt-2 flex flex-col gap-2 md:flex-row">
-          <input class="input" type="email" name="to_email" value="{{ patient_email }}" placeholder="paciente@correo.com" required />
+          <input class="input" type="email" name="to_email" value="{{ invoice.email_to or patient_email }}" placeholder="paciente@correo.com" required />
           <button class="btn btn-primary" type="submit" {% if not invoice.cae %}disabled{% endif %}>Enviar / reenviar</button>
         </div>
         <p class="mt-2 text-xs text-slate-500">Si hay diagnostico cargado, se incluye en el HTML, PDF y cuerpo del email.</p>

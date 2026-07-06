@@ -553,4 +553,14 @@
       calendarTestButton.textContent = "Probar conexion";
     }
   });
+
+  document.querySelectorAll("form[data-submit-label]").forEach((form) => {
+    form.addEventListener("submit", () => {
+      const button = form.querySelector("button[type='submit']");
+      if (!button) return;
+      button.dataset.originalText = button.textContent || "";
+      button.textContent = form.dataset.submitLabel || "Procesando...";
+      button.disabled = true;
+    });
+  });
 })();

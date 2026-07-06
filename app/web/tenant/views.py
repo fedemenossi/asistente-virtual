@@ -94,6 +94,8 @@ from app.services.billing_invoice_document_service import (
     BillingInvoiceDocumentError,
     BillingInvoiceDocumentService,
     BillingInvoiceEmailService,
+    extract_invoice_diagnosis,
+    extract_patient_email,
     invoice_pdf_filename,
 )
 from app.services.billing_service import BillingService
@@ -2991,20 +2993,9 @@ async def billing_arca_detail(
         .order_by(desc(BillingEmailLog.created_at))
     )
     email_logs = list(email_logs_result.scalars().all())
-    document_service = BillingInvoiceDocumentService(session)
-    diagnosis = ""
-    patient_email = ""
+    diagnosis = extract_invoice_diagnosis(invoice, consultation)
+    patient_email = invoice.email_to or extract_patient_email(consultation) or ""
     document_error = ""
-    try:
-        document = await document_service.build_document(
-            await get_entity_or_404(session, Tenant, user.tenant_id),
-            invoice,
-            consultation=consultation,
-        )
-        diagnosis = document.diagnosis
-        patient_email = document.patient_email or ""
-    except BillingInvoiceDocumentError as exc:
-        document_error = str(exc)
     return _template(
         request,
         "tenant/billing_arca_detail.html",
@@ -3189,7 +3180,15 @@ async def billing_arca_send_email(
     document_service = BillingInvoiceDocumentService(session)
     try:
         document = await document_service.ensure_document(tenant, invoice)
-        recipient = to_email.strip() or document.patient_email or ""
+        recipient = to_email.strip() or document.patient_email or invoice.email_to or ""
+        if not recipient:
+            raise BillingInvoiceDocumentError("No hay email de paciente configurado.")
+        logger.info(
+            "billing_invoice_email_send_start invoice_id=%s tenant_id=%s recipient_present=%s",
+            invoice.id,
+            user.tenant_id,
+            bool(recipient),
+        )
         await BillingInvoiceEmailService(session).send_invoice(
             tenant,
             invoice,
@@ -3197,6 +3196,13 @@ async def billing_arca_send_email(
             document=document,
         )
     except BillingInvoiceDocumentError as exc:
+        logger.warning(
+            "billing_invoice_email_send_failed invoice_id=%s tenant_id=%s error_type=%s message=%s",
+            invoice.id,
+            user.tenant_id,
+            type(exc).__name__,
+            str(exc),
+        )
         add_flash(request, "error", f"No se pudo enviar la factura: {exc}")
     else:
         async with session.begin_nested():
