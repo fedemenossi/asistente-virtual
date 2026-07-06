@@ -449,8 +449,12 @@ def _draw_invoice_page(
     if inicio_actividades:
         pdf.drawString(left + 200, y - 88, f"Inicio actividades: {_format_date_display(inicio_actividades)}")
 
+    box_size = 34
+    pdf.setFillColor(colors.white)
+    pdf.rect(center - box_size / 2, y - 44, box_size, box_size, stroke=1, fill=1)
+    pdf.setFillColor(colors.black)
     pdf.setFont("Helvetica-Bold", 22)
-    pdf.drawCentredString(center, y - 36, letter)
+    pdf.drawCentredString(center, y - 35, letter)
     pdf.setFont("Helvetica-Bold", 13)
     pdf.drawString(center + 24, y - 22, title)
     pdf.setFont("Helvetica", 9)
@@ -478,26 +482,33 @@ def _draw_invoice_page(
     pdf.rect(left, y - 22, right - left, 22, stroke=0, fill=1)
     pdf.setFillColor(colors.black)
     pdf.setFont("Helvetica-Bold", 8)
-    headers = [
-        ("Codigo Producto / Servicio", left + 8),
-        ("Cantidad", left + 230),
-        ("U. Medida", left + 282),
-        ("Precio Unit.", left + 350),
-        ("% Bonif", left + 420),
-        ("Imp. Bonif.", left + 470),
-        ("Subtotal", left + 535),
+    columns = [
+        (left, left + 220, "Codigo Producto / Servicio", "left"),
+        (left + 220, left + 278, "Cantidad", "right"),
+        (left + 278, left + 344, "U. Medida", "left"),
+        (left + 344, left + 415, "Precio Unit.", "right"),
+        (left + 415, left + 468, "% Bonif", "right"),
+        (left + 468, left + 532, "Imp. Bonif.", "right"),
+        (left + 532, right, "Subtotal", "right"),
     ]
-    for text, x in headers:
-        pdf.drawString(x, y - 15, text)
+    for x0, _, _, _ in columns[1:]:
+        pdf.setStrokeColor(colors.HexColor("#d1d5db"))
+        pdf.line(x0, y, x0, y - table_h)
+    pdf.setStrokeColor(colors.HexColor("#111827"))
+    for x0, x1, text, align in columns:
+        if align == "right":
+            pdf.drawRightString(x1 - 8, y - 15, text)
+        else:
+            pdf.drawString(x0 + 8, y - 15, text)
     pdf.setFont("Helvetica", 9)
     row_y = y - 42
-    pdf.drawString(left + 8, row_y, _clip(description, 38))
+    pdf.drawString(left + 8, row_y, _clip(description, 34))
     pdf.drawRightString(left + 270, row_y, "1,00")
-    pdf.drawString(left + 282, row_y, "unidades")
-    pdf.drawRightString(left + 402, row_y, _money_ar(invoice.imp_total))
-    pdf.drawRightString(left + 455, row_y, "0,00")
-    pdf.drawRightString(left + 522, row_y, "0,00")
-    pdf.drawRightString(right - 10, row_y, _money_ar(invoice.imp_total))
+    pdf.drawString(left + 286, row_y, "unidades")
+    pdf.drawRightString(left + 407, row_y, _money_ar(invoice.imp_total))
+    pdf.drawRightString(left + 460, row_y, "0,00")
+    pdf.drawRightString(left + 524, row_y, "0,00")
+    pdf.drawRightString(right - 8, row_y, _money_ar(invoice.imp_total))
     pdf.setFont("Helvetica-Bold", 8)
     pdf.drawString(left + 8, row_y - 28, "Diagnostico:")
     pdf.setFont("Helvetica", 8)
@@ -527,8 +538,6 @@ def _draw_invoice_page(
     pdf.drawString(left + 112, y - 54, "Comprobante Autorizado")
     pdf.setFont("Helvetica", 8)
     pdf.drawString(left + 112, y - 72, "Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operacion")
-    pdf.setFont("Helvetica", 6)
-    _draw_wrapped(pdf, qr_url, left, y - 108, right - left, 7, max_lines=2)
     pdf.setFont("Helvetica", 8)
     footer = str(fiscal.get("invoice_footer") or fiscal.get("footer") or '"Medica especialista en Ginecologia y Obstetricia  M.N. 122.674"')
     pdf.drawCentredString(center, 36, _clip(footer, 90))
