@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import smtplib
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, parseaddr
 
 from twilio.rest import Client
 
@@ -48,15 +48,34 @@ class MessagingService:
         html_body: str | None = None,
         attachments: list[tuple[str, bytes, str]] | None = None,
     ) -> None:
-        if not self._settings.smtp_host:
+        provider = str(getattr(self._settings, "email_provider", "") or "").strip().lower()
+        resend_api_key = getattr(self._settings, "resend_api_key", None)
+        use_resend = provider == "resend" or (not provider and bool(resend_api_key))
+        smtp_host = self._settings.smtp_host
+        smtp_port = int(self._settings.smtp_port or 587)
+        smtp_username = self._settings.smtp_username
+        smtp_password = self._settings.smtp_password
+        smtp_use_tls = bool(self._settings.smtp_use_tls)
+        if use_resend:
+            smtp_host = "smtp.resend.com"
+            smtp_port = 587
+            smtp_username = "resend"
+            smtp_password = resend_api_key
+            smtp_use_tls = True
+            if not smtp_password:
+                raise RuntimeError("RESEND_API_KEY no configurado.")
+        if not smtp_host:
             raise RuntimeError("SMTP no configurado. Falta SMTP_HOST.")
-        from_email = self._settings.smtp_from_email or self._settings.smtp_username
-        if not from_email:
-            raise RuntimeError("SMTP_FROM_EMAIL o SMTP_USERNAME no configurado.")
+        from_header = _resolve_from_header(
+            email_from=getattr(self._settings, "email_from", None),
+            smtp_from_email=self._settings.smtp_from_email,
+            smtp_from_name=self._settings.smtp_from_name,
+            app_name=self._settings.app_name,
+            smtp_username=smtp_username,
+        )
 
         message = EmailMessage()
-        from_name = self._settings.smtp_from_name or self._settings.app_name
-        message["From"] = formataddr((from_name, from_email))
+        message["From"] = from_header
         message["To"] = to_email
         message["Subject"] = subject
         message.set_content(body)
@@ -71,9 +90,29 @@ class MessagingService:
                 filename=filename,
             )
 
-        with smtplib.SMTP(self._settings.smtp_host, self._settings.smtp_port, timeout=20) as smtp:
-            if self._settings.smtp_use_tls:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as smtp:
+            if smtp_use_tls:
                 smtp.starttls()
-            if self._settings.smtp_username:
-                smtp.login(self._settings.smtp_username, self._settings.smtp_password or "")
+            if smtp_username:
+                smtp.login(smtp_username, smtp_password or "")
             smtp.send_message(message)
+
+
+def _resolve_from_header(
+    *,
+    email_from: str | None,
+    smtp_from_email: str | None,
+    smtp_from_name: str | None,
+    app_name: str,
+    smtp_username: str | None,
+) -> str:
+    if email_from:
+        _, parsed_email = parseaddr(email_from)
+        if not parsed_email:
+            raise RuntimeError("EMAIL_FROM invalido.")
+        return email_from
+    from_email = smtp_from_email or smtp_username
+    if not from_email:
+        raise RuntimeError("EMAIL_FROM, SMTP_FROM_EMAIL o SMTP_USERNAME no configurado.")
+    from_name = smtp_from_name or app_name
+    return formataddr((from_name, from_email))

@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     smtp_from_email: str | None = Field(default=None, alias="SMTP_FROM_EMAIL")
     smtp_from_name: str | None = Field(default=None, alias="SMTP_FROM_NAME")
     smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
+    email_provider: str | None = Field(default=None, alias="EMAIL_PROVIDER")
+    email_from: str | None = Field(default=None, alias="EMAIL_FROM")
+    resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")
 
     model_config = SettingsConfigDict(
         env_file=".env", case_sensitive=False, extra="ignore"

@@ -1860,11 +1860,67 @@ def test_messaging_service_raises_when_smtp_missing():
         smtp_from_email=None,
         smtp_from_name=None,
         smtp_use_tls=True,
+        email_provider=None,
+        email_from=None,
+        resend_api_key=None,
         app_name="test",
     )
 
     with pytest.raises(RuntimeError, match="SMTP no configurado"):
         service.send_email("paciente@example.com", "Factura", "Body")
+
+
+def test_messaging_service_uses_resend_api_key(monkeypatch):
+    calls = {}
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout=None):
+            calls["host"] = host
+            calls["port"] = port
+            calls["timeout"] = timeout
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def starttls(self):
+            calls["starttls"] = True
+
+        def login(self, username, password):
+            calls["login"] = (username, password)
+
+        def send_message(self, message):
+            calls["from"] = message["From"]
+            calls["to"] = message["To"]
+            calls["subject"] = message["Subject"]
+
+    monkeypatch.setattr("smtplib.SMTP", FakeSMTP)
+    service = MessagingService()
+    service._settings = SimpleNamespace(
+        smtp_host=None,
+        smtp_port=587,
+        smtp_username=None,
+        smtp_password=None,
+        smtp_from_email=None,
+        smtp_from_name="Facturacion",
+        smtp_use_tls=True,
+        email_provider="resend",
+        email_from="Nubelio - Factura electronica <facturacion@nubelio.app>",
+        resend_api_key="re_test_key",
+        app_name="test",
+    )
+
+    service.send_email("paciente@example.com", "Factura", "Body")
+
+    assert calls["host"] == "smtp.resend.com"
+    assert calls["port"] == 587
+    assert calls["starttls"] is True
+    assert calls["login"] == ("resend", "re_test_key")
+    assert calls["from"] == "Nubelio - Factura electronica <facturacion@nubelio.app>"
+    assert calls["to"] == "paciente@example.com"
+    assert calls["subject"] == "Factura"
 
 
 def test_billing_invoice_email_logs_failed_mailer(db_session):
