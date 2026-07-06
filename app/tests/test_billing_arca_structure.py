@@ -1873,30 +1873,21 @@ def test_messaging_service_raises_when_smtp_missing():
 def test_messaging_service_uses_resend_api_key(monkeypatch):
     calls = {}
 
-    class FakeSMTP:
-        def __init__(self, host, port, timeout=None):
-            calls["host"] = host
-            calls["port"] = port
-            calls["timeout"] = timeout
+    class FakeResponse:
+        status_code = 200
+        text = "{}"
 
-        def __enter__(self):
-            return self
+        def json(self):
+            return {"id": "email_123"}
 
-        def __exit__(self, exc_type, exc, tb):
-            return None
+    def fake_post(url, *, headers=None, json=None, timeout=None):
+        calls["url"] = url
+        calls["headers"] = headers
+        calls["json"] = json
+        calls["timeout"] = timeout
+        return FakeResponse()
 
-        def starttls(self):
-            calls["starttls"] = True
-
-        def login(self, username, password):
-            calls["login"] = (username, password)
-
-        def send_message(self, message):
-            calls["from"] = message["From"]
-            calls["to"] = message["To"]
-            calls["subject"] = message["Subject"]
-
-    monkeypatch.setattr("smtplib.SMTP", FakeSMTP)
+    monkeypatch.setattr("requests.post", fake_post)
     service = MessagingService()
     service._settings = SimpleNamespace(
         smtp_host=None,
@@ -1912,15 +1903,24 @@ def test_messaging_service_uses_resend_api_key(monkeypatch):
         app_name="test",
     )
 
-    service.send_email("paciente@example.com", "Factura", "Body")
+    service.send_email(
+        "paciente@example.com",
+        "Factura",
+        "Body",
+        html_body="<p>Body</p>",
+        attachments=[("factura.pdf", b"%PDF", "application/pdf")],
+    )
 
-    assert calls["host"] == "smtp.resend.com"
-    assert calls["port"] == 587
-    assert calls["starttls"] is True
-    assert calls["login"] == ("resend", "re_test_key")
-    assert calls["from"] == "Nubelio - Factura electronica <facturacion@nubelio.app>"
-    assert calls["to"] == "paciente@example.com"
-    assert calls["subject"] == "Factura"
+    assert calls["url"] == "https://api.resend.com/emails"
+    assert calls["headers"]["Authorization"] == "Bearer re_test_key"
+    assert calls["timeout"] == 20
+    assert calls["json"]["from"] == "Nubelio - Factura electronica <facturacion@nubelio.app>"
+    assert calls["json"]["to"] == ["paciente@example.com"]
+    assert calls["json"]["subject"] == "Factura"
+    assert calls["json"]["text"] == "Body"
+    assert calls["json"]["html"] == "<p>Body</p>"
+    assert calls["json"]["attachments"][0]["filename"] == "factura.pdf"
+    assert calls["json"]["attachments"][0]["content"] == "JVBERg=="
 
 
 def test_billing_invoice_email_logs_failed_mailer(db_session):

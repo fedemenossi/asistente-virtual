@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 import smtplib
+import base64
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 
+import requests
 from twilio.rest import Client
 
 from app.core.config import get_settings
@@ -51,19 +53,21 @@ class MessagingService:
         provider = str(getattr(self._settings, "email_provider", "") or "").strip().lower()
         resend_api_key = getattr(self._settings, "resend_api_key", None)
         use_resend = provider == "resend" or (not provider and bool(resend_api_key))
+        if use_resend:
+            self._send_resend_email(
+                resend_api_key=resend_api_key,
+                to_email=to_email,
+                subject=subject,
+                body=body,
+                html_body=html_body,
+                attachments=attachments,
+            )
+            return
         smtp_host = self._settings.smtp_host
         smtp_port = int(self._settings.smtp_port or 587)
         smtp_username = self._settings.smtp_username
         smtp_password = self._settings.smtp_password
         smtp_use_tls = bool(self._settings.smtp_use_tls)
-        if use_resend:
-            smtp_host = "smtp.resend.com"
-            smtp_port = 587
-            smtp_username = "resend"
-            smtp_password = resend_api_key
-            smtp_use_tls = True
-            if not smtp_password:
-                raise RuntimeError("RESEND_API_KEY no configurado.")
         if not smtp_host:
             raise RuntimeError("SMTP no configurado. Falta SMTP_HOST.")
         from_header = _resolve_from_header(
@@ -96,6 +100,62 @@ class MessagingService:
             if smtp_username:
                 smtp.login(smtp_username, smtp_password or "")
             smtp.send_message(message)
+
+    def _send_resend_email(
+        self,
+        *,
+        resend_api_key: str | None,
+        to_email: str,
+        subject: str,
+        body: str,
+        html_body: str | None,
+        attachments: list[tuple[str, bytes, str]] | None,
+    ) -> None:
+        if not resend_api_key:
+            raise RuntimeError("RESEND_API_KEY no configurado.")
+        from_header = _resolve_from_header(
+            email_from=getattr(self._settings, "email_from", None),
+            smtp_from_email=self._settings.smtp_from_email,
+            smtp_from_name=self._settings.smtp_from_name,
+            app_name=self._settings.app_name,
+            smtp_username=None,
+        )
+        payload: dict[str, object] = {
+            "from": from_header,
+            "to": [to_email],
+            "subject": subject,
+            "text": body,
+        }
+        if html_body:
+            payload["html"] = html_body
+        if attachments:
+            payload["attachments"] = [
+                {
+                    "filename": filename,
+                    "content": base64.b64encode(content).decode("ascii"),
+                    "content_type": mime_type,
+                }
+                for filename, content, mime_type in attachments
+            ]
+        try:
+            response = requests.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Resend API no respondio: {exc}") from exc
+        if response.status_code >= 400:
+            try:
+                data = response.json()
+            except ValueError:
+                data = {"message": response.text}
+            message = data.get("message") if isinstance(data, dict) else None
+            raise RuntimeError(f"Resend API rechazo el envio ({response.status_code}): {message or response.text}")
 
 
 def _resolve_from_header(
