@@ -269,6 +269,7 @@ def build_invoice_html(
     patient_name = consultation.patient_name if consultation else "-"
     patient_document = consultation.patient_document if consultation else invoice.doc_nro
     fiscal = tenant.arca_settings or {}
+    inicio_actividades = _activity_start_date(fiscal)
     qr_url = invoice.qr_url or build_arca_qr_url(invoice)
     copy_label = "ORIGINAL"
     environment = str(invoice.environment or "").lower()
@@ -300,6 +301,7 @@ def build_invoice_html(
       <h1>{html.escape(str(fiscal.get("fiscal_name") or tenant.nombre))}</h1>
       <p>CUIT {html.escape(invoice.represented_cuit)}</p>
       <p>{html.escape(str(fiscal.get("fiscal_address") or ""))}</p>
+      <p>Inicio de actividades: {html.escape(_format_date_display(inicio_actividades))}</p>
     </div>
     <div>
       <p class="label">Comprobante</p>
@@ -499,13 +501,7 @@ def _draw_invoice_page(
     emisor_address = str(fiscal.get("fiscal_address") or fiscal.get("address") or "")
     emisor_iva = str(fiscal.get("fiscal_iva_condition") or fiscal.get("iva_condition") or "Responsable Monotributo")
     ingresos_brutos = str(fiscal.get("gross_income") or fiscal.get("ingresos_brutos") or "EXENTO")
-    inicio_actividades = str(
-        fiscal.get("activity_start_date")
-        or fiscal.get("activity_start")
-        or fiscal.get("inicio_actividades")
-        or fiscal.get("fecha_inicio_actividades")
-        or ""
-    )
+    inicio_actividades = _activity_start_date(fiscal)
     professional_legend = str(fiscal.get("professional_legend") or fiscal.get("invoice_footer") or fiscal.get("footer") or "")
     receptor_iva = _receiver_tax_condition_label(invoice)
     amount = Decimal(str(invoice.imp_total or "0")).quantize(Decimal("0.01"))
@@ -565,7 +561,7 @@ def _draw_invoice_page(
     _draw_field(pdf, right_content_x, row_y - 18, "Fecha de Emision:", _format_date_display(invoice.cbte_fch), label_w=34 * mm, value_max=66)
     _draw_field(pdf, right_content_x, row_y - 36, "CUIT:", str(invoice.represented_cuit or "-"), label_w=12 * mm, value_max=76)
     _draw_field(pdf, right_content_x, row_y - 54, "Ingresos Brutos:", ingresos_brutos, label_w=30 * mm, value_max=72)
-    _draw_field(pdf, right_content_x, row_y - 72, "Fecha de Inicio de Actividades:", _format_date_display(inicio_actividades) if inicio_actividades else "-", label_w=56 * mm, value_max=52)
+    _draw_field(pdf, right_content_x, row_y - 72, "Inicio de actividades:", _format_date_display(inicio_actividades), label_w=38 * mm, value_max=68)
 
     period_h = 8 * mm
     period_top = header_bottom
@@ -873,7 +869,19 @@ def _format_date_display(value: Any) -> str:
     text = str(value)
     if re.fullmatch(r"\d{8}", text):
         return f"{text[6:8]}/{text[4:6]}/{text[0:4]}"
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return f"{text[8:10]}/{text[5:7]}/{text[0:4]}"
     return text
+
+
+def _activity_start_date(fiscal: dict[str, Any]) -> str:
+    return str(
+        fiscal.get("activity_start_date")
+        or fiscal.get("activity_start")
+        or fiscal.get("inicio_actividades")
+        or fiscal.get("fecha_inicio_actividades")
+        or ""
+    ).strip()
 
 
 def _clip(value: Any, max_len: int) -> str:
