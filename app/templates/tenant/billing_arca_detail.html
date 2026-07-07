@@ -42,7 +42,7 @@
           <p class="text-xs text-slate-500">Consulta facturada</p>
           {% if consultation %}
             <p class="text-sm font-medium text-slate-900">#{{ consultation.id }} - {{ consultation.patient_name or "-" }}</p>
-            <p class="text-xs text-slate-500">Fecha consulta: {{ consultation.attended_at|format_ba('%d/%m/%Y %H:%M:%S') if consultation.attended_at else "-" }}</p>
+            <p class="text-xs text-slate-500">Fecha consulta: {{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</p>
             <p class="text-xs text-slate-500">{{ consultation.external_provider }}: {{ consultation.external_id }}</p>
           {% else %}
             <p class="text-sm font-medium text-slate-900">-</p>
