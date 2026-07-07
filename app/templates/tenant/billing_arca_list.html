@@ -51,13 +51,13 @@
         <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Comprobante</th>
-            <th class="px-4 py-3 text-left font-medium">Fecha facturacion</th>
+            <th class="px-4 py-3 text-center font-medium">Fecha facturacion</th>
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
-            <th class="px-4 py-3 text-left font-medium">Importe</th>
-            <th class="px-4 py-3 text-left font-medium">Estado</th>
-            <th class="px-4 py-3 text-left font-medium">PDF</th>
-            <th class="px-4 py-3 text-left font-medium">Mail</th>
-            <th class="px-4 py-3 text-right font-medium">Detalle</th>
+            <th class="px-4 py-3 text-center font-medium">Importe</th>
+            <th class="px-4 py-3 text-center font-medium">Estado</th>
+            <th class="px-4 py-3 text-center font-medium">PDF</th>
+            <th class="px-4 py-3 text-center font-medium">Mail</th>
+            <th class="px-4 py-3 text-center font-medium">Detalle</th>
           </tr>
         </thead>
         <tbody>
@@ -74,7 +74,7 @@
                 {% endif %}
                 <p class="text-xs text-slate-500">CAE {{ invoice.cae or "-" }}</p>
               </td>
-              <td class="px-4 py-3 whitespace-nowrap text-slate-600">
+              <td class="px-4 py-3 whitespace-nowrap text-center text-slate-600">
                 {{ (invoice.authorized_at or invoice.created_at)|format_ba('%d/%m/%Y %H:%M:%S') if (invoice.authorized_at or invoice.created_at) else "-" }}
               </td>
               <td class="px-4 py-3 text-slate-600">
@@ -85,7 +85,7 @@
                   -
                 {% endif %}
               </td>
-              <td class="px-4 py-3 text-slate-600">
+              <td class="px-4 py-3 text-center text-slate-600">
                 {% if invoice.imp_total is not none %}
                   {% if invoice.mon_id == "PES" %}
                     $ {{ invoice.imp_total }}
@@ -96,7 +96,7 @@
                   -
                 {% endif %}
               </td>
-              <td class="px-4 py-3">
+              <td class="px-4 py-3 text-center">
                 {% if status == 'authorized' %}
                   {{ badge("Autorizado", "success") }}
                 {% elif status in ['rejected', 'cancelled'] %}
@@ -107,14 +107,14 @@
                   {{ badge("Borrador", "neutral") }}
                 {% endif %}
               </td>
-              <td class="px-4 py-3">
+              <td class="px-4 py-3 text-center">
                 {% if invoice.pdf_generated_at or invoice.document_pdf %}
                   {{ badge("Generado", "success") }}
                 {% else %}
                   {{ badge("Sin PDF", "neutral") }}
                 {% endif %}
               </td>
-              <td class="px-4 py-3">
+              <td class="px-4 py-3 text-center">
                 {% if invoice.email_sent_at %}
                   {{ badge("Enviado", "success") }}
                   <p class="mt-1 text-xs text-slate-500">{{ invoice.email_to or "-" }}</p>
@@ -123,8 +123,8 @@
                   <p class="mt-1 text-xs text-slate-500">{{ invoice.email_to or "-" }}</p>
                 {% endif %}
               </td>
-              <td class="px-4 py-3 text-right">
-                <div class="row-actions">
+              <td class="px-4 py-3 text-center">
+                <div class="row-actions justify-center">
                   {{ action_link("/t/billing/invoices/" ~ invoice.id, "Ver factura", "view") }}
                   {% if status == 'authorized' and invoice.cae %}
                     {% if invoice.pdf_generated_at or invoice.document_pdf %}

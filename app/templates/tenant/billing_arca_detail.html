@@ -6,6 +6,18 @@
 
 {% block content %}
   {% set status = invoice.status.value if invoice.status.value is defined else invoice.status %}
+  {% set receipt_types = {
+    1: "Factura A",
+    2: "Nota de debito A",
+    3: "Nota de credito A",
+    6: "Factura B",
+    7: "Nota de debito B",
+    8: "Nota de credito B",
+    11: "Factura C",
+    12: "Nota de debito C",
+    13: "Nota de credito C"
+  } %}
+  {% set receipt_type_description = receipt_types.get(invoice.cbte_tipo, "Tipo " ~ invoice.cbte_tipo) %}
   <div class="mb-6">
     <h1 class="text-2xl font-semibold text-slate-900">Comprobante ARCA #{{ invoice.id }}</h1>
     <p class="text-sm text-slate-600">Detalle fiscal, comprobante visual y envio al paciente.</p>
@@ -50,16 +62,32 @@
           <p class="text-sm font-medium text-slate-900">{{ invoice.represented_cuit }}</p>
         </div>
         <div>
-          <p class="text-xs text-slate-500">Ambiente</p>
-          <p class="text-sm font-medium text-slate-900">{{ invoice.environment }}</p>
+          <p class="text-xs text-slate-500">Tipo de comprobante</p>
+          <p class="text-sm font-medium text-slate-900">{{ receipt_type_description }}</p>
         </div>
         <div>
-          <p class="text-xs text-slate-500">Punto / tipo / numero</p>
-          <p class="text-sm font-medium text-slate-900">{{ invoice.pto_vta }} / {{ invoice.cbte_tipo }} / {{ invoice.cbte_nro or "-" }}</p>
+          <p class="text-xs text-slate-500">Numero de comprobante</p>
+          <p class="text-sm font-medium text-slate-900">
+            {% if invoice.cbte_nro %}
+              {{ "%05d"|format(invoice.pto_vta) }}-{{ "%08d"|format(invoice.cbte_nro) }}
+            {% else %}
+              {{ "%05d"|format(invoice.pto_vta) }}-sin numero
+            {% endif %}
+          </p>
         </div>
         <div>
           <p class="text-xs text-slate-500">Importe</p>
-          <p class="text-sm font-medium text-slate-900">{{ invoice.imp_total or "-" }} {{ invoice.mon_id }}</p>
+          <p class="text-sm font-medium text-slate-900">
+            {% if invoice.imp_total is not none %}
+              {% if invoice.mon_id == "PES" %}
+                $ {{ invoice.imp_total }}
+              {% else %}
+                {{ invoice.imp_total }} {{ invoice.mon_id }}
+              {% endif %}
+            {% else %}
+              -
+            {% endif %}
+          </p>
         </div>
         <div>
           <p class="text-xs text-slate-500">CAE</p>
