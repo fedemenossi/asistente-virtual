@@ -64,6 +64,33 @@
   {% endif %}
 
   {% if rows %}
+    <section class="surface mb-4">
+      <form method="get" action="/t/billing/pending" class="toolbar">
+        <input type="hidden" name="date_from" value="{{ date_from }}" />
+        <input type="hidden" name="date_to" value="{{ date_to }}" />
+        <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
+        <input type="hidden" name="dni" value="{{ dni or '' }}" />
+        <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
+        <input type="hidden" name="staff_id" value="{{ staff_id or '' }}" />
+        <input type="hidden" name="batch_id" value="{{ batch_id or '' }}" />
+        <div class="searchbox min-w-0 flex-1">
+          <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
+          <input name="q" value="{{ q or '' }}" placeholder="Nombre, DNI, email, obra social o diagnostico" />
+        </div>
+        <select class="select" name="status">
+          <option value="">Estado</option>
+          <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pendiente</option>
+          <option value="billed" {% if status == 'billed' %}selected{% endif %}>Facturado</option>
+          <option value="missing_patient_match" {% if status == 'missing_patient_match' %}selected{% endif %}>Sin DNI</option>
+          <option value="error" {% if status == 'error' %}selected{% endif %}>Error</option>
+        </select>
+        <button class="btn btn-secondary" type="submit">Filtrar</button>
+      </form>
+      <div class="mt-4 flex flex-wrap gap-2 text-sm">
+        <span class="status-badge bg-slate-100 text-slate-700">Consultas listadas: {{ rows|length }}</span>
+        <span class="status-badge bg-indigo-50 text-indigo-700">Seleccionadas para facturar: <span data-billing-selected-count>0</span></span>
+      </div>
+    </section>
     <form id="billing-grid-form" method="post" action="/t/billing/emit">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="date_from" value="{{ date_from }}" />
@@ -111,9 +138,9 @@
             {% set consultation = row[0] %}
             {% set invoice = row[2] if row|length > 2 else none %}
             {% set is_billed = consultation.arca_invoice_id is not none %}
-            <tr class="align-top {% if is_billed %}bg-slate-50{% endif %}">
+            <tr class="align-top {% if is_billed %}bg-rose-50/70{% endif %}">
               <td>
-                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" {% if consultation.selected_for_billing and not is_billed %}checked{% endif %} {% if is_billed %}disabled{% endif %} />
+                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" data-billing-select-row {% if consultation.selected_for_billing and not is_billed %}checked{% endif %} {% if is_billed %}disabled{% endif %} />
               </td>
               <td class="text-slate-600">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</td>
               <td class="text-slate-900">
@@ -139,6 +166,7 @@
                       -
                     {% endif %}
                   </p>
+                  <div class="mt-2 h-10"></div>
                 {% else %}
                   <select class="select billing-grid-select" form="billing-grid-form" name="item_id_{{ consultation.id }}">
                     <option value="">Seleccionar</option>
@@ -167,7 +195,9 @@
               </td>
               <td>
                 {% if is_billed %}
-                  <p class="whitespace-pre-wrap text-sm text-slate-700">{{ consultation.diagnosis or "-" }}</p>
+                  <div class="min-h-[4.5rem] rounded-lg border border-rose-100 bg-white/60 px-3 py-2 text-sm text-slate-700">
+                    <p class="whitespace-pre-wrap">{{ consultation.diagnosis or "-" }}</p>
+                  </div>
                 {% else %}
                   <textarea class="textarea billing-grid-diagnosis" form="billing-grid-form" name="diagnosis_{{ consultation.id }}" rows="2">{{ consultation.diagnosis or '' }}</textarea>
                 {% endif %}
@@ -224,6 +254,15 @@
           amountInput.value = selectedOption.dataset.amount || "";
         });
       });
+
+      const selectedCount = document.querySelector("[data-billing-selected-count]");
+      const selectableRows = Array.from(document.querySelectorAll("[data-billing-select-row]"));
+      const refreshSelectedCount = () => {
+        if (!selectedCount) return;
+        selectedCount.textContent = String(selectableRows.filter((row) => row.checked && !row.disabled).length);
+      };
+      selectableRows.forEach((row) => row.addEventListener("change", refreshSelectedCount));
+      refreshSelectedCount();
 
       const jobBox = document.querySelector("[data-billing-job]");
       const jobId = jobBox?.dataset.billingJobId;

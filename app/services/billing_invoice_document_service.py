@@ -479,14 +479,17 @@ def _draw_invoice_page(
     copy_label: str,
 ) -> None:
     from reportlab.lib import colors
+    from reportlab.lib.units import mm
 
-    margin = 34
-    top = height - margin
-    left = margin
-    right = width - margin
+    margin_x = 12 * mm
+    margin_y = 10 * mm
+    margin = margin_x
+    top = height - margin_y
+    left = margin_x
+    right = width - margin_x
     center = width / 2
     letter = _invoice_letter(invoice.cbte_tipo)
-    title = _receipt_type_label(invoice.cbte_tipo).upper()
+    title = f"FACTURA {letter}".strip()
     cbte_nro = int(invoice.cbte_nro or 0)
     pto_vta = int(invoice.pto_vta or 0)
     patient_name = consultation.patient_name if consultation else "-"
@@ -502,10 +505,10 @@ def _draw_invoice_page(
     amount = Decimal(str(invoice.imp_total or "0")).quantize(Decimal("0.01"))
 
     pdf.setTitle(invoice_pdf_filename(invoice))
-    pdf.setStrokeColor(colors.HexColor("#111827"))
-    pdf.setLineWidth(0.7)
+    pdf.setStrokeColor(colors.HexColor("#111111"))
+    pdf.setLineWidth(0.6)
 
-    pdf.setFont("Helvetica-Bold", 15)
+    pdf.setFont("Helvetica-Bold", 14)
     pdf.drawCentredString(center, top, copy_label)
     if str(invoice.environment or "").lower() == "homo":
         pdf.setFillColor(colors.HexColor("#b91c1c"))
@@ -513,176 +516,160 @@ def _draw_invoice_page(
         pdf.drawCentredString(center, top - 16, "HOMOLOGACION - SIN VALIDEZ FISCAL")
         pdf.setFillColor(colors.black)
 
-    header_top = top - 34
-    header_h = 154
-    center_w = 92
-    side_w = ((right - left) - center_w) / 2
-    left_x = left
-    mid_l = left + side_w
-    mid_r = mid_l + center_w
-    right_x = mid_r
+    header_top = top - 18
+    header_h = 43 * mm
+    side_w = (right - left) / 2
+    divider_x = center
     header_bottom = header_top - header_h
 
-    pdf.setStrokeColor(colors.HexColor("#111111"))
-    pdf.setLineWidth(0.7)
+    pdf.setLineWidth(0.6)
     pdf.rect(left, header_bottom, right - left, header_h, stroke=1, fill=0)
-    pdf.line(mid_l, header_top, mid_l, header_bottom)
-    pdf.line(mid_r, header_top, mid_r, header_bottom)
+    pdf.line(divider_x, header_top, divider_x, header_bottom)
 
-    voucher_w = 62
-    voucher_h = 65
+    voucher_w = 20 * mm
+    voucher_h = 21 * mm
     pdf.setFillColor(colors.white)
     pdf.rect(center - voucher_w / 2, header_top - voucher_h, voucher_w, voucher_h, stroke=1, fill=1)
     pdf.setFillColor(colors.black)
-    pdf.setFont("Helvetica-Bold", 27)
-    pdf.drawCentredString(center, header_top - 31, letter)
-    pdf.setFont("Helvetica-Bold", 8)
-    pdf.drawCentredString(center, header_top - 48, f"COD. {int(invoice.cbte_tipo or 0):03d}")
+    pdf.setFont("Helvetica-Bold", 26)
+    pdf.drawCentredString(center, header_top - 30, letter)
+    pdf.setFont("Helvetica-Bold", 7.5)
+    pdf.drawCentredString(center, header_top - 47, f"COD. {int(invoice.cbte_tipo or 0):03d}")
 
-    pdf.setFont("Helvetica-Bold", 12)
-    pdf.drawCentredString(left_x + side_w / 2, header_top - 22, _clip(emisor_name, 40))
-    pdf.setFont("Helvetica-Bold", 8.5)
-    pdf.drawString(left_x + 14, header_top - 54, "Razon Social:")
-    pdf.drawString(left_x + 14, header_top - 76, "Domicilio Comercial:")
-    pdf.drawString(left_x + 14, header_top - 98, "Condicion frente al IVA:")
-    pdf.setFont("Helvetica", 8.5)
-    pdf.drawString(left_x + 84, header_top - 54, _clip(emisor_name, 34))
-    _draw_wrapped(pdf, emisor_address, left_x + 112, header_top - 76, side_w - 128, 10, max_lines=2)
-    pdf.drawString(left_x + 123, header_top - 98, _clip(emisor_iva, 28))
+    left_pad = 4 * mm
+    right_pad = 4 * mm
+    left_content_x = left + left_pad
+    right_content_x = divider_x + (13 * mm)
+    header_text_top = header_top - 7 * mm
 
-    pdf.setFont("Helvetica-Bold", 20)
-    pdf.drawString(right_x + 14, header_top - 28, title)
-    pdf.setFont("Helvetica-Bold", 8.5)
-    pdf.drawString(right_x + 14, header_top - 55, "Punto de Venta:")
-    pdf.drawString(right_x + 130, header_top - 55, "Comp. Nro:")
-    pdf.drawString(right_x + 14, header_top - 78, "Fecha de Emision:")
-    pdf.drawString(right_x + 14, header_top - 101, "CUIT:")
-    pdf.drawString(right_x + 14, header_top - 124, "Ingresos Brutos:")
-    pdf.drawString(right_x + 14, header_top - 145, "Inicio de Actividades:")
-    pdf.setFont("Helvetica", 8.5)
-    pdf.drawString(right_x + 84, header_top - 55, f"{pto_vta:05d}")
-    pdf.drawString(right_x + 180, header_top - 55, f"{cbte_nro:08d}")
-    pdf.drawString(right_x + 96, header_top - 78, _format_date_display(invoice.cbte_fch))
-    pdf.drawString(right_x + 42, header_top - 101, str(invoice.represented_cuit or "-"))
-    pdf.drawString(right_x + 90, header_top - 124, _clip(ingresos_brutos, 28))
-    pdf.drawString(right_x + 116, header_top - 145, _format_date_display(inicio_actividades) if inicio_actividades else "-")
+    pdf.setFont("Helvetica-Bold", 11)
+    pdf.drawString(left_content_x, header_text_top, _clip(emisor_name, 36))
+    _draw_field(pdf, left_content_x, header_text_top - 21, "Razon Social:", emisor_name, label_w=26 * mm, value_max=120)
+    _draw_field(pdf, left_content_x, header_text_top - 39, "Domicilio Comercial:", emisor_address, label_w=37 * mm, value_max=96)
+    _draw_field(pdf, left_content_x, header_text_top - 57, "Condicion frente al IVA:", emisor_iva, label_w=43 * mm, value_max=82)
 
-    period_h = 28
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(right_content_x, header_text_top, title)
+    row_y = header_text_top - 23
+    _draw_field(pdf, right_content_x, row_y, "Punto de Venta:", f"{pto_vta:05d}", label_w=27 * mm, value_max=38)
+    _draw_field(pdf, right_content_x + 45 * mm, row_y, "Comp. Nro:", f"{cbte_nro:08d}", label_w=20 * mm, value_max=48)
+    _draw_field(pdf, right_content_x, row_y - 18, "Fecha de Emision:", _format_date_display(invoice.cbte_fch), label_w=34 * mm, value_max=66)
+    _draw_field(pdf, right_content_x, row_y - 36, "CUIT:", str(invoice.represented_cuit or "-"), label_w=12 * mm, value_max=76)
+    _draw_field(pdf, right_content_x, row_y - 54, "Ingresos Brutos:", ingresos_brutos, label_w=30 * mm, value_max=72)
+    _draw_field(pdf, right_content_x, row_y - 72, "Fecha de Inicio de Actividades:", _format_date_display(inicio_actividades) if inicio_actividades else "-", label_w=56 * mm, value_max=52)
+
+    period_h = 8 * mm
     period_top = header_bottom
     period_bottom = period_top - period_h
     pdf.rect(left, period_bottom, right - left, period_h, stroke=1, fill=0)
     period_cols = [left, left + (right - left) / 3, left + 2 * (right - left) / 3, right]
     pdf.line(period_cols[1], period_top, period_cols[1], period_bottom)
     pdf.line(period_cols[2], period_top, period_cols[2], period_bottom)
-    pdf.setFont("Helvetica-Bold", 8)
-    pdf.drawString(period_cols[0] + 8, period_top - 17, f"Periodo Facturado Desde: {_format_date_display(invoice.cbte_fch)}")
-    pdf.drawString(period_cols[1] + 8, period_top - 17, f"Hasta: {_format_date_display(invoice.cbte_fch)}")
-    pdf.drawString(period_cols[2] + 8, period_top - 17, f"Fecha de Vto. para el pago: {_format_date_display(invoice.cbte_fch)}")
+    pdf.setFont("Helvetica-Bold", 7.7)
+    pdf.drawString(period_cols[0] + 7, period_top - 15, f"Periodo Facturado Desde: {_format_date_display(invoice.cbte_fch)}")
+    pdf.drawString(period_cols[1] + 7, period_top - 15, f"Hasta: {_format_date_display(invoice.cbte_fch)}")
+    pdf.drawString(period_cols[2] + 7, period_top - 15, f"Fecha de Vto. para el pago: {_format_date_display(invoice.cbte_fch)}")
 
-    customer_h = 74
+    customer_h = 24 * mm
     customer_top = period_bottom
     customer_bottom = customer_top - customer_h
     pdf.rect(left, customer_bottom, right - left, customer_h, stroke=1, fill=0)
-    pdf.setFont("Helvetica-Bold", 8.5)
-    pdf.drawString(left + 10, customer_top - 18, f"{_doc_label(invoice.doc_tipo)}:")
-    pdf.drawString(left + 210, customer_top - 18, "Apellido y Nombre / Razon Social:")
-    pdf.drawString(left + 10, customer_top - 40, "Condicion frente al IVA:")
-    pdf.drawString(left + 270, customer_top - 40, "Domicilio:")
-    pdf.drawString(left + 10, customer_top - 62, "Condicion de venta:")
-    pdf.setFont("Helvetica", 8.5)
-    pdf.drawString(left + 42, customer_top - 18, str(patient_document or "-"))
-    pdf.drawString(left + 368, customer_top - 18, _clip(patient_name or "-", 28))
-    pdf.drawString(left + 112, customer_top - 40, _clip(receptor_iva, 28))
-    pdf.drawString(left + 316, customer_top - 40, "-")
-    pdf.drawString(left + 92, customer_top - 62, "Contado")
+    _draw_field(pdf, left + 8, customer_top - 16, f"{_doc_label(invoice.doc_tipo)}:", str(patient_document or "-"), label_w=18 * mm, value_max=72)
+    _draw_field(pdf, left + 74 * mm, customer_top - 16, "Apellido y Nombre / Razon Social:", patient_name or "-", label_w=58 * mm, value_max=118)
+    _draw_field(pdf, left + 8, customer_top - 35, "Condicion frente al IVA:", receptor_iva, label_w=42 * mm, value_max=85)
+    _draw_field(pdf, left + 95 * mm, customer_top - 35, "Domicilio:", "-", label_w=18 * mm, value_max=88)
+    _draw_field(pdf, left + 8, customer_top - 54, "Condicion de venta:", "Contado", label_w=34 * mm, value_max=80)
     if _consumer_final_legend(invoice, receptor_iva):
         pdf.setFont("Helvetica-Bold", 8)
-        pdf.drawRightString(right - 10, customer_top - 62, "A CONSUMIDOR FINAL")
+        pdf.drawRightString(right - 8, customer_top - 54, "A CONSUMIDOR FINAL")
 
-    table_top = customer_bottom - 6
-    table_h = 182
-    header_h = 26
-    row_h = 58
-    col_widths = [38, 176, 54, 58, 72, 48, 62, 56]
+    table_top = customer_bottom - 3 * mm
+    table_h = 79 * mm
+    header_h = 12 * mm
+    row_h = 22 * mm
+    col_widths = [10 * mm, 63 * mm, 18 * mm, 18 * mm, 24 * mm, 16 * mm, 20 * mm, 17 * mm]
     col_titles = ["Codigo", "Producto / Servicio", "Cantidad", "U. Medida", "Precio Unit.", "% Bonif", "Imp. Bonif.", "Subtotal"]
     xs = [left]
     for col_w in col_widths:
         xs.append(xs[-1] + col_w)
-    xs[-1] = right
+    table_right = xs[-1]
 
-    pdf.setLineWidth(0.7)
-    pdf.setStrokeColor(colors.HexColor("#111111"))
-    pdf.rect(left, table_top - table_h, right - left, table_h, stroke=1, fill=0)
-    pdf.setFillColor(colors.HexColor("#d9d9d9"))
-    pdf.rect(left, table_top - header_h, right - left, header_h, stroke=0, fill=1)
-    pdf.setFillColor(colors.black)
     pdf.setLineWidth(0.6)
-    pdf.line(left, table_top - header_h, right, table_top - header_h)
-    pdf.line(left, table_top - header_h - row_h, right, table_top - header_h - row_h)
+    pdf.setStrokeColor(colors.HexColor("#111111"))
+    pdf.rect(left, table_top - table_h, table_right - left, table_h, stroke=1, fill=0)
+    pdf.setFillColor(colors.HexColor("#d9d9d9"))
+    pdf.rect(left, table_top - header_h, table_right - left, header_h, stroke=0, fill=1)
+    pdf.setFillColor(colors.black)
+    pdf.setLineWidth(0.5)
+    pdf.line(left, table_top - header_h, table_right, table_top - header_h)
+    pdf.line(left, table_top - header_h - row_h, table_right, table_top - header_h - row_h)
     for x in xs[1:-1]:
         pdf.line(x, table_top, x, table_top - table_h)
 
-    pdf.setFont("Helvetica-Bold", 7.6)
+    pdf.setFont("Helvetica-Bold", 7.5)
     for index, title_text in enumerate(col_titles):
-        pdf.drawCentredString((xs[index] + xs[index + 1]) / 2, table_top - 17, title_text)
+        _draw_centered_wrapped(pdf, title_text, xs[index], xs[index + 1], table_top - 12, 8, max_lines=2)
 
-    item_y = table_top - header_h - 18
-    pdf.setFont("Helvetica", 8.3)
+    item_y = table_top - header_h - 12
+    pdf.setFont("Helvetica", 8.2)
     pdf.drawCentredString((xs[0] + xs[1]) / 2, item_y, "")
     _draw_wrapped(pdf, description, xs[1] + 5, item_y, col_widths[1] - 10, 10, max_lines=2)
     if diagnosis:
         pdf.setFont("Helvetica-Bold", 7.5)
-        pdf.drawString(xs[1] + 5, item_y - 30, "Diagnostico:")
+        pdf.drawString(xs[1] + 5, item_y - 28, "Diagnostico:")
         pdf.setFont("Helvetica", 7.5)
-        _draw_wrapped(pdf, diagnosis, xs[1] + 58, item_y - 30, col_widths[1] - 64, 9, max_lines=2)
-    pdf.setFont("Helvetica", 8.3)
-    pdf.drawRightString(xs[3] - 6, item_y, "1,00")
+        _draw_wrapped(pdf, diagnosis, xs[1] + 55, item_y - 28, col_widths[1] - 61, 9, max_lines=2)
+    pdf.setFont("Helvetica", 8.2)
+    pdf.drawRightString(xs[3] - 4, item_y, "1,00")
     pdf.drawCentredString((xs[3] + xs[4]) / 2, item_y, "unidades")
-    pdf.drawRightString(xs[5] - 6, item_y, _money_ar(amount))
-    pdf.drawRightString(xs[6] - 6, item_y, "0,00")
-    pdf.drawRightString(xs[7] - 6, item_y, "0,00")
-    pdf.drawRightString(xs[8] - 6, item_y, _money_ar(amount))
+    pdf.drawRightString(xs[5] - 4, item_y, _money_ar(amount))
+    pdf.drawRightString(xs[6] - 4, item_y, "0,00")
+    pdf.drawRightString(xs[7] - 4, item_y, "0,00")
+    pdf.drawRightString(xs[8] - 4, item_y, _money_ar(amount))
 
-    totals_top = table_top - table_h - 12
-    totals_h = 88
-    totals_w = 214
+    totals_top = table_top - table_h - 4 * mm
+    totals_h = 30 * mm
+    totals_w = 72 * mm
     totals_left = right - totals_w
-    pdf.setLineWidth(0.7)
+    pdf.setLineWidth(0.6)
     pdf.rect(totals_left, totals_top - totals_h, totals_w, totals_h, stroke=1, fill=0)
     pdf.setFont("Helvetica-Bold", 9)
-    _draw_total_row(pdf, totals_left, right, totals_top - 20, "Subtotal:", _money_ar(invoice.imp_neto or amount))
-    _draw_total_row(pdf, totals_left, right, totals_top - 43, "Importe Otros Tributos:", _money_ar(invoice.imp_trib))
+    _draw_total_row(pdf, totals_left, right, totals_top - 17, "Subtotal:", _money_ar(invoice.imp_neto or amount))
+    _draw_total_row(pdf, totals_left, right, totals_top - 38, "Importe Otros Tributos:", _money_ar(invoice.imp_trib))
     pdf.setFont("Helvetica-Bold", 11)
-    _draw_total_row(pdf, totals_left, right, totals_top - 68, "Importe Total:", _money_ar(amount))
+    _draw_total_row(pdf, totals_left, right, totals_top - 64, "Importe Total:", _money_ar(amount))
 
     if professional_legend:
-        legend_top = totals_top - totals_h - 18
-        pdf.rect(left, legend_top - 26, right - left, 26, stroke=1, fill=0)
+        legend_top = totals_top - totals_h - 11 * mm
+        pdf.rect(left, legend_top - 10 * mm, right - left, 10 * mm, stroke=1, fill=0)
         pdf.setFont("Helvetica-Oblique", 9)
-        pdf.drawCentredString(center, legend_top - 17, _clip(f'"{professional_legend}"', 90))
+        pdf.drawCentredString(center, legend_top - 6 * mm, _clip(f'"{professional_legend}"', 90))
 
-    footer_y = 116
-    qr_size = 78
-    pdf.drawImage(qr_reader, left, footer_y - 16, width=qr_size, height=qr_size, mask="auto")
-    pdf.setFont("Helvetica-Bold", 20)
+    footer_y = 31 * mm
+    qr_size = 26 * mm
+    pdf.drawImage(qr_reader, left, footer_y, width=qr_size, height=qr_size, mask="auto")
+    arca_x = left + 35 * mm
+    pdf.setFont("Helvetica-Bold", 19)
     pdf.setFillColor(colors.HexColor("#444444"))
-    pdf.drawString(left + 96, footer_y + 44, "ARCA")
+    pdf.drawString(arca_x, footer_y + 21 * mm, "ARCA")
     pdf.setFont("Helvetica", 5.2)
-    pdf.drawString(left + 98, footer_y + 34, "AGENCIA DE RECAUDACION")
-    pdf.drawString(left + 98, footer_y + 27, "Y CONTROL ADUANERO")
+    pdf.drawString(arca_x + 2, footer_y + 17 * mm, "AGENCIA DE RECAUDACION")
+    pdf.drawString(arca_x + 2, footer_y + 14 * mm, "Y CONTROL ADUANERO")
     pdf.setFillColor(colors.black)
     pdf.setFont("Helvetica-BoldOblique", 9)
-    pdf.drawString(left + 98, footer_y + 6, "Comprobante Autorizado")
-    pdf.setFont("Helvetica-BoldOblique", 6.7)
-    pdf.drawString(left + 98, footer_y - 16, "Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operacion")
+    pdf.drawString(arca_x, footer_y + 3 * mm, "Comprobante Autorizado")
+    pdf.setFont("Helvetica-BoldOblique", 6.5)
+    _draw_wrapped(pdf, "Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operacion", arca_x, footer_y - 6 * mm, 62 * mm, 8, max_lines=2)
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.drawCentredString(left + 96 * mm, footer_y + 5 * mm, "Pag. 1/1")
+    cae_x = right - 65 * mm
+    cae_value_x = right
     pdf.setFont("Helvetica-Bold", 10)
-    pdf.drawCentredString(center + 36, footer_y + 8, "Pag. 1/1")
-    pdf.setFont("Helvetica-Bold", 11)
-    pdf.drawString(right - 168, footer_y + 42, "CAE Nro:")
-    pdf.drawString(right - 168, footer_y + 18, "Fecha de Vto. de CAE:")
-    pdf.setFont("Helvetica", 11)
-    pdf.drawString(right - 66, footer_y + 42, str(invoice.cae or "-"))
-    pdf.drawString(right - 66, footer_y + 18, _format_date_display(invoice.cae_fch_vto))
+    pdf.drawString(cae_x, footer_y + 20 * mm, "CAE Nro:")
+    pdf.drawString(cae_x, footer_y + 10 * mm, "Fecha de Vto. de CAE:")
+    pdf.setFont("Helvetica", 10)
+    pdf.drawRightString(cae_value_x, footer_y + 20 * mm, str(invoice.cae or "-"))
+    pdf.drawRightString(cae_value_x, footer_y + 10 * mm, _format_date_display(invoice.cae_fch_vto))
 
 
 def invoice_pdf_filename(invoice: ArcaInvoice) -> str:
@@ -820,6 +807,53 @@ def _draw_total_row(pdf: Any, left: float, right: float, y: float, label: str, a
     pdf.drawRightString(right - 72, y, label)
     pdf.drawString(right - 62, y, "$")
     pdf.drawRightString(right - 12, y, amount)
+
+
+def _draw_field(
+    pdf: Any,
+    x: float,
+    y: float,
+    label: str,
+    value: Any,
+    *,
+    label_w: float,
+    value_max: int,
+) -> None:
+    pdf.setFont("Helvetica-Bold", 8.4)
+    pdf.drawString(x, y, label)
+    pdf.setFont("Helvetica", 8.4)
+    pdf.drawString(x + label_w, y, _clip(value, value_max))
+
+
+def _draw_centered_wrapped(
+    pdf: Any,
+    text: str,
+    x0: float,
+    x1: float,
+    y: float,
+    line_height: float,
+    *,
+    max_lines: int,
+) -> None:
+    max_width = max(1, x1 - x0 - 4)
+    words = str(text or "").split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if pdf.stringWidth(candidate, pdf._fontname, pdf._fontsize) <= max_width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        current = word
+        if len(lines) >= max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    center = (x0 + x1) / 2
+    for index, line in enumerate(lines[:max_lines]):
+        pdf.drawCentredString(center, y - index * line_height, line)
 
 
 def _format_date_display(value: Any) -> str:

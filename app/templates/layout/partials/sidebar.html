@@ -35,7 +35,7 @@
   {%- endmacro %}
 
   {% macro nav_item(href, label, active_prefix, icon_name, tone) -%}
-    {% set is_active = path == active_prefix if active_prefix in ["/t/settings", "/admin/settings"] else path.startswith(active_prefix) %}
+    {% set is_active = path == active_prefix or path.startswith(active_prefix ~ "/") %}
     <a href="{{ href }}" class="sidebar-nav-item{% if is_active %} is-active{% endif %}">
       <span class="sidebar-icon {{ tone }}">
         {{ icon(icon_name) }}
