@@ -557,7 +557,6 @@ def _draw_invoice_page(
     pdf.setFont("Helvetica", 8.0)
     _draw_wrapped(pdf, emisor_address, left_content_x + 6, header_text_top - 51, side_w - 12 * mm, 9, max_lines=2)
     _draw_field(pdf, left_content_x, header_text_top - 74, "Condicion frente al IVA:", emisor_iva, label_w=43 * mm, value_max=82)
-    _draw_field(pdf, left_content_x, header_text_top - 92, "Inicio de actividades:", inicio_actividades_display, label_w=38 * mm, value_max=64)
 
     pdf.setFont("Helvetica-Bold", 18)
     pdf.drawString(right_content_x, header_text_top, title)
