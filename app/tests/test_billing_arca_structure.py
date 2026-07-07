@@ -1474,6 +1474,22 @@ def test_billing_pending_diagnosis_update_and_tenant_scope(client, db_session):
 def test_arca_service_emits_invoice_with_diagnosis(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Emit OK", "whatsapp:+626"))
     item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
+    asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491111111111",
+            nombre="Juan",
+            apellido="Perez",
+            dni="30111222",
+            tipo_documento="DNI",
+            numero_documento="30111222",
+            document_number_normalized="30111222",
+            email="juan@example.com",
+            obra_social="OSDE",
+            insurance_number="123456789",
+        )
+    )
     captured = {}
 
     class FakeWsfe:
@@ -1546,12 +1562,15 @@ def test_arca_service_emits_invoice_with_diagnosis(db_session):
     assert invoice.external_consultation_id == consultation_id
     assert invoice.billing_item_id == item_id
     assert invoice.request_json["metadata"]["diagnosis"] == "Bronquitis aguda"
-    assert "Bronquitis aguda" in invoice.request_json["metadata"]["description"]
+    assert invoice.request_json["metadata"]["description"] == "Consulta medica - OSDE - Afiliado 123456789"
+    assert invoice.request_json["metadata"]["insurance_name"] == "OSDE"
+    assert invoice.request_json["metadata"]["insurance_number"] == "123456789"
     assert invoice.request_json["metadata"]["receiver_tax_condition_id"] == 5
     assert invoice.diagnosis_original_snapshot == "Bronquitis aguda"
     assert invoice.diagnosis_final_snapshot == "Bronquitis aguda"
     assert consultation.arca_invoice_id == invoice_id
     assert consultation.status == "billed"
+    assert line.description == "Consulta medica - OSDE - Afiliado 123456789"
     assert line.diagnosis_text == "Bronquitis aguda"
 
 
@@ -1617,9 +1636,10 @@ def test_arca_service_emits_invoice_without_diagnosis(db_session):
     invoice, line = asyncio.run(_fetch())
     assert invoice.status == ArcaInvoiceStatus.AUTHORIZED
     assert invoice.request_json["metadata"]["diagnosis"] == ""
-    assert invoice.request_json["metadata"]["description"] == "Consulta medica"
+    assert invoice.request_json["metadata"]["description"] == "Consulta medica - OSDE"
     assert invoice.diagnosis_original_snapshot == ""
     assert invoice.diagnosis_final_snapshot == ""
+    assert line.description == "Consulta medica - OSDE"
     assert line.diagnosis_text == ""
 
 

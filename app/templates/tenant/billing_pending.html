@@ -88,7 +88,7 @@
       </form>
       <div class="mt-4 flex flex-wrap gap-2 text-sm">
         <span class="status-badge bg-slate-100 text-slate-700">Consultas listadas: {{ rows|length }}</span>
-        <span class="status-badge bg-indigo-50 text-indigo-700">Seleccionadas para facturar: <span data-billing-selected-count>0</span></span>
+        <span class="status-badge bg-indigo-50 text-indigo-700">Seleccionadas: <span data-billing-selected-count>0</span></span>
       </div>
     </section>
     <form id="billing-grid-form" method="post" action="/t/billing/emit">
@@ -125,7 +125,9 @@
         </colgroup>
         <thead>
           <tr>
-            <th class="text-left text-[13px] font-medium">Fact.</th>
+            <th class="text-left text-[13px] font-medium">
+              <input class="h-4 w-4 rounded border-slate-300" type="checkbox" data-billing-select-all title="Seleccionar todas" aria-label="Seleccionar todas las consultas disponibles" />
+            </th>
             <th class="text-left text-[13px] font-medium">Fecha</th>
             <th class="text-left text-[13px] font-medium">Paciente</th>
             <th class="text-left text-[13px] font-medium">Mail</th>
@@ -360,12 +362,26 @@
       });
 
       const selectedCount = document.querySelector("[data-billing-selected-count]");
+      const selectAll = document.querySelector("[data-billing-select-all]");
       const selectableRows = Array.from(document.querySelectorAll("[data-billing-select-row]"));
+      const enabledRows = () => selectableRows.filter((row) => !row.disabled);
       const refreshSelectedCount = () => {
-        if (!selectedCount) return;
-        selectedCount.textContent = String(selectableRows.filter((row) => row.checked && !row.disabled).length);
+        const rows = enabledRows();
+        const checked = rows.filter((row) => row.checked).length;
+        if (selectedCount) selectedCount.textContent = String(checked);
+        if (selectAll) {
+          selectAll.checked = rows.length > 0 && checked === rows.length;
+          selectAll.indeterminate = checked > 0 && checked < rows.length;
+          selectAll.disabled = rows.length === 0;
+        }
       };
       selectableRows.forEach((row) => row.addEventListener("change", refreshSelectedCount));
+      selectAll?.addEventListener("change", () => {
+        enabledRows().forEach((row) => {
+          row.checked = Boolean(selectAll.checked);
+        });
+        refreshSelectedCount();
+      });
       refreshSelectedCount();
 
       document.querySelectorAll("[data-confirm]").forEach((button) => {

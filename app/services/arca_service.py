@@ -7,7 +7,7 @@ from decimal import Decimal
 from typing import Any, Callable
 
 import anyio
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.arca.config import ArcaWsSettings
@@ -18,6 +18,7 @@ from app.models.arca_invoice import ArcaInvoice, ArcaInvoiceStatus
 from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_invoice_line import BillingInvoiceLine
+from app.models.paciente import Paciente
 from app.models.tenant import Tenant
 from app.repositories.arca_ticket_repository import ArcaTicketRepository
 from app.services.billing_arca_settings_service import decrypt_secret
@@ -219,6 +220,11 @@ class ArcaService:
             raise ArcaConnectivityError(str(exc)) from exc
         last_number = _extract_int(latest, "CbteNro", 0)
         cbte_nro = last_number + 1
+        line_description, insurance_name, insurance_number = await self._billing_line_description(
+            tenant.id,
+            consultation,
+            item,
+        )
         request = self._build_fe_cae_request(
             tenant=tenant,
             consultation=consultation,
@@ -228,6 +234,9 @@ class ArcaService:
             cbte_tipo=cbte_tipo,
             cbte_nro=cbte_nro,
             concepto=concepto,
+            line_description=line_description,
+            insurance_name=insurance_name,
+            insurance_number=insurance_number,
         )
         invoice = self._build_invoice(
             tenant=tenant,
@@ -250,7 +259,15 @@ class ArcaService:
                 payload_json={"consultation_id": consultation.id},
             )
         )
-        self._session.add(_build_invoice_line(invoice.id, item, diagnosis, amount_override=amount_override))
+        self._session.add(
+            _build_invoice_line(
+                invoice.id,
+                item,
+                diagnosis,
+                amount_override=amount_override,
+                description=line_description,
+            )
+        )
 
         try:
             response = await anyio.to_thread.run_sync(lambda: wsfe.solicitar_cae(_soap_fe_cae_request(request)).data)
@@ -334,13 +351,15 @@ class ArcaService:
         cbte_tipo: int,
         cbte_nro: int,
         concepto: int,
+        line_description: str,
+        insurance_name: str,
+        insurance_number: str,
     ) -> dict[str, Any]:
         doc_tipo, doc_nro = _document_for_arca(consultation.patient_document)
         amount = Decimal(str(amount_override if amount_override not in (None, "") else item.unit_price)).quantize(Decimal("0.01"))
         today = datetime.now().date()
         service_date = (consultation.attended_at or datetime.now()).date()
         diagnosis = (consultation.diagnosis or "").strip()
-        description = f"{item.name} - Diagnostico: {diagnosis}" if diagnosis else item.name
         arca_cfg = tenant.arca_settings or {}
         receiver_tax_condition_id = _receiver_tax_condition_id(arca_cfg.get("receiver_tax_condition"))
         detail = {
@@ -379,10 +398,54 @@ class ArcaService:
                 "external_id": consultation.external_id,
                 "billable_item_id": item.id,
                 "diagnosis": diagnosis,
-                "description": description,
+                "description": line_description,
+                "insurance_name": insurance_name,
+                "insurance_number": insurance_number,
                 "receiver_tax_condition_id": receiver_tax_condition_id,
             },
         }
+
+    async def _billing_line_description(
+        self,
+        tenant_id: int,
+        consultation: BillingExternalConsultation,
+        item: ArcaBillableItem,
+    ) -> tuple[str, str, str]:
+        patient = await self._consultation_patient(tenant_id, consultation)
+        insurance_name = (
+            consultation.insurance_name
+            or (patient.obra_social if patient else None)
+            or (patient.financiador_seguro if patient else None)
+            or ""
+        )
+        insurance_number = (patient.insurance_number if patient else None) or ""
+        description = _compose_invoice_line_description(item.name, insurance_name, insurance_number)
+        return description, insurance_name.strip(), insurance_number.strip()
+
+    async def _consultation_patient(
+        self,
+        tenant_id: int,
+        consultation: BillingExternalConsultation,
+    ) -> Paciente | None:
+        if consultation.patient_id:
+            patient = await self._session.get(Paciente, consultation.patient_id)
+            if patient and patient.tenant_id == tenant_id:
+                return patient
+        document = (consultation.patient_document or "").strip()
+        if not document:
+            return None
+        document_key = _document_key(document)
+        return await self._session.scalar(
+            select(Paciente).where(
+                Paciente.tenant_id == tenant_id,
+                Paciente.deleted_at.is_(None),
+                or_(
+                    Paciente.dni == document,
+                    Paciente.numero_documento == document,
+                    Paciente.document_number_normalized == document_key,
+                ),
+            )
+        )
 
     def _build_invoice(
         self,
@@ -615,13 +678,13 @@ def _build_invoice_line(
     diagnosis: str,
     *,
     amount_override: Any | None = None,
+    description: str | None = None,
 ) -> BillingInvoiceLine:
     amount = Decimal(str(amount_override if amount_override not in (None, "") else item.unit_price)).quantize(Decimal("0.01"))
-    description = item.description or item.name
     return BillingInvoiceLine(
         invoice_id=invoice_id,
         item_code=item.code,
-        description=description,
+        description=description or item.description or item.name,
         diagnosis_text=diagnosis,
         quantity=Decimal("1.00"),
         unit_price=amount,
@@ -629,3 +692,18 @@ def _build_invoice_line(
         tax_rate=item.tax_rate,
         total=amount,
     )
+
+
+def _compose_invoice_line_description(item_name: str, insurance_name: str | None, insurance_number: str | None) -> str:
+    parts = [(item_name or "Consulta").strip()]
+    insurance = (insurance_name or "").strip()
+    affiliate = (insurance_number or "").strip()
+    if insurance:
+        parts.append(insurance)
+    if affiliate:
+        parts.append(f"Afiliado {affiliate}")
+    return " - ".join(part for part in parts if part)
+
+
+def _document_key(value: str) -> str:
+    return "".join(ch for ch in str(value or "") if ch.isalnum()).upper()
