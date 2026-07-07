@@ -52,6 +52,7 @@
           <tr>
             <th class="px-4 py-3 text-left font-medium">Comprobante</th>
             <th class="px-4 py-3 text-center font-medium">Fecha facturacion</th>
+            <th class="px-4 py-3 text-center font-medium">Fecha consulta</th>
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
             <th class="px-4 py-3 text-center font-medium">Importe</th>
             <th class="px-4 py-3 text-center font-medium">Estado</th>
@@ -76,6 +77,9 @@
               </td>
               <td class="px-4 py-3 whitespace-nowrap text-center text-slate-600">
                 {{ (invoice.authorized_at or invoice.created_at)|format_ba('%d/%m/%Y %H:%M:%S') if (invoice.authorized_at or invoice.created_at) else "-" }}
+              </td>
+              <td class="px-4 py-3 whitespace-nowrap text-center text-slate-600">
+                {{ consultation.attended_at|format_ba('%d/%m/%Y %H:%M:%S') if consultation and consultation.attended_at else "-" }}
               </td>
               <td class="px-4 py-3 text-slate-600">
                 {% if consultation %}
