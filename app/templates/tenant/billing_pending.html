@@ -110,27 +110,29 @@
     <div class="table-wrap billing-pending-wrap">
       <table class="data-table billing-pending-table">
         <colgroup>
-          <col class="w-[5%]" />
+          <col class="w-[4%]" />
           <col class="w-[7%]" />
           <col class="w-[12%]" />
-          <col class="w-[17%]" />
-          <col class="w-[12%]" />
-          <col class="w-[17%]" />
+          <col class="w-[15%]" />
+          <col class="w-[11%]" />
+          <col class="w-[16%]" />
           <col class="w-[7%]" />
           <col class="w-[13%]" />
-          <col class="w-[10%]" />
+          <col class="w-[8%]" />
+          <col class="w-[7%]" />
         </colgroup>
         <thead>
           <tr>
-            <th class="text-left font-medium">Fact.</th>
-            <th class="text-left font-medium">Fecha</th>
-            <th class="text-left font-medium">Paciente</th>
-            <th class="text-left font-medium">Mail</th>
-            <th class="text-left font-medium">Obra social</th>
-            <th class="text-left font-medium">Item / importe</th>
-            <th class="text-left font-medium">Enviar</th>
-            <th class="text-left font-medium">Diagnostico</th>
-            <th class="text-left font-medium">Estado</th>
+            <th class="text-left text-[13px] font-medium">Fact.</th>
+            <th class="text-left text-[13px] font-medium">Fecha</th>
+            <th class="text-left text-[13px] font-medium">Paciente</th>
+            <th class="text-left text-[13px] font-medium">Mail</th>
+            <th class="text-left text-[13px] font-medium">Obra social</th>
+            <th class="text-left text-[13px] font-medium">Item / importe</th>
+            <th class="text-left text-[13px] font-medium">Enviar</th>
+            <th class="text-left text-[13px] font-medium">Diagnostico</th>
+            <th class="text-left text-[13px] font-medium">Estado</th>
+            <th class="text-left text-[13px] font-medium">Detalle</th>
           </tr>
         </thead>
         <tbody>
@@ -213,6 +215,99 @@
                   {{ badge("Pendiente", "neutral") }}
                 {% endif %}
               </td>
+              <td>
+                {% if is_billed and invoice %}
+                  <button class="icon-button" type="button" data-invoice-modal-open="invoice-modal-{{ consultation.id }}" title="Ver detalle de factura" aria-label="Ver detalle de factura">
+                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path>
+                      <circle cx="12" cy="12" r="3"></circle>
+                    </svg>
+                  </button>
+                  <div id="invoice-modal-{{ consultation.id }}" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/50 p-4" data-invoice-modal>
+                    <div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white shadow-2xl">
+                      <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                        <div>
+                          <p class="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Factura emitida</p>
+                          <h3 class="mt-1 text-lg font-semibold text-slate-950">
+                            {% if invoice.cbte_nro %}
+                              {{ "%05d"|format(invoice.pto_vta) }}-{{ "%08d"|format(invoice.cbte_nro) }}
+                            {% else %}
+                              {{ "%05d"|format(invoice.pto_vta) }}-sin numero
+                            {% endif %}
+                          </h3>
+                        </div>
+                        <button class="icon-button" type="button" data-invoice-modal-close="invoice-modal-{{ consultation.id }}" title="Cerrar" aria-label="Cerrar detalle">
+                          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M18 6 6 18"></path>
+                            <path d="m6 6 12 12"></path>
+                          </svg>
+                        </button>
+                      </div>
+                      <div class="grid gap-4 p-5 sm:grid-cols-2">
+                        <div>
+                          <p class="text-xs font-medium text-slate-500">Paciente</p>
+                          <p class="mt-1 text-sm font-semibold text-slate-900">{{ consultation.patient_name or "-" }}</p>
+                        </div>
+                        <div>
+                          <p class="text-xs font-medium text-slate-500">Documento</p>
+                          <p class="mt-1 text-sm font-semibold text-slate-900">DNI {{ consultation.patient_document or invoice.doc_nro or "-" }}</p>
+                        </div>
+                        <div>
+                          <p class="text-xs font-medium text-slate-500">Fecha consulta</p>
+                          <p class="mt-1 text-sm font-semibold text-slate-900">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</p>
+                        </div>
+                        <div>
+                          <p class="text-xs font-medium text-slate-500">Fecha facturacion</p>
+                          <p class="mt-1 text-sm font-semibold text-slate-900">{{ (invoice.authorized_at or invoice.created_at)|format_ba('%d/%m/%Y %H:%M:%S') if (invoice.authorized_at or invoice.created_at) else "-" }}</p>
+                        </div>
+                        <div>
+                          <p class="text-xs font-medium text-slate-500">Importe</p>
+                          <p class="mt-1 text-sm font-semibold text-slate-900">
+                            {% if invoice.imp_total is not none %}
+                              {% if invoice.mon_id == "PES" %}$ {{ invoice.imp_total }}{% else %}{{ invoice.imp_total }} {{ invoice.mon_id }}{% endif %}
+                            {% else %}
+                              -
+                            {% endif %}
+                          </p>
+                        </div>
+                        <div>
+                          <p class="text-xs font-medium text-slate-500">CAE</p>
+                          <p class="mt-1 text-sm font-semibold text-slate-900">{{ invoice.cae or "-" }}</p>
+                        </div>
+                        <div>
+                          <p class="text-xs font-medium text-slate-500">Vencimiento CAE</p>
+                          <p class="mt-1 text-sm font-semibold text-slate-900">{{ invoice.cae_fch_vto or "-" }}</p>
+                        </div>
+                        <div>
+                          <p class="text-xs font-medium text-slate-500">Mail</p>
+                          <p class="mt-1 text-sm font-semibold text-slate-900">
+                            {% if invoice.email_sent_at %}
+                              Enviado
+                            {% elif consultation.send_email %}
+                              Solicitado
+                            {% else %}
+                              No enviado
+                            {% endif %}
+                          </p>
+                          <p class="mt-1 break-all text-xs text-slate-500">{{ invoice.email_to or consultation.patient_email or "-" }}</p>
+                        </div>
+                        <div class="sm:col-span-2">
+                          <p class="text-xs font-medium text-slate-500">Diagnostico</p>
+                          <p class="mt-1 whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-900">{{ consultation.diagnosis or "-" }}</p>
+                        </div>
+                      </div>
+                      <div class="flex flex-wrap justify-end gap-2 border-t border-slate-200 px-5 py-4">
+                        <a class="btn btn-secondary" href="/t/billing/invoices/{{ invoice.id }}">Abrir detalle completo</a>
+                        {% if invoice.pdf_generated_at or invoice.document_pdf %}
+                          <a class="btn btn-secondary" href="/t/billing/invoices/{{ invoice.id }}/download-pdf" target="_blank">Descargar PDF</a>
+                        {% endif %}
+                      </div>
+                    </div>
+                  </div>
+                {% else %}
+                  <span class="text-sm text-slate-400">-</span>
+                {% endif %}
+              </td>
             </tr>
           {% endfor %}
         </tbody>
@@ -263,6 +358,40 @@
       };
       selectableRows.forEach((row) => row.addEventListener("change", refreshSelectedCount));
       refreshSelectedCount();
+
+      const openInvoiceModal = (modal) => {
+        if (!modal) return;
+        modal.classList.remove("hidden");
+        modal.classList.add("flex");
+        document.body.classList.add("overflow-hidden");
+      };
+      const closeInvoiceModal = (modal) => {
+        if (!modal) return;
+        modal.classList.add("hidden");
+        modal.classList.remove("flex");
+        if (!document.querySelector("[data-invoice-modal]:not(.hidden)")) {
+          document.body.classList.remove("overflow-hidden");
+        }
+      };
+      document.querySelectorAll("[data-invoice-modal-open]").forEach((button) => {
+        button.addEventListener("click", () => {
+          openInvoiceModal(document.getElementById(button.dataset.invoiceModalOpen));
+        });
+      });
+      document.querySelectorAll("[data-invoice-modal-close]").forEach((button) => {
+        button.addEventListener("click", () => {
+          closeInvoiceModal(document.getElementById(button.dataset.invoiceModalClose));
+        });
+      });
+      document.querySelectorAll("[data-invoice-modal]").forEach((modal) => {
+        modal.addEventListener("click", (event) => {
+          if (event.target === modal) closeInvoiceModal(modal);
+        });
+      });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        document.querySelectorAll("[data-invoice-modal]").forEach(closeInvoiceModal);
+      });
 
       const jobBox = document.querySelector("[data-billing-job]");
       const jobId = jobBox?.dataset.billingJobId;

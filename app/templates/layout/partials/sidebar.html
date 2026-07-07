@@ -34,8 +34,8 @@
     </svg>
   {%- endmacro %}
 
-  {% macro nav_item(href, label, active_prefix, icon_name, tone) -%}
-    {% set is_active = path == active_prefix or path.startswith(active_prefix ~ "/") %}
+  {% macro nav_item(href, label, active_prefix, icon_name, tone, exact=false) -%}
+    {% set is_active = path == active_prefix if exact else (path == active_prefix or path.startswith(active_prefix ~ "/")) %}
     <a href="{{ href }}" class="sidebar-nav-item{% if is_active %} is-active{% endif %}">
       <span class="sidebar-icon {{ tone }}">
         {{ icon(icon_name) }}
@@ -78,7 +78,7 @@
       {{ nav_item("/admin/chat-simulator", "Simulador de chat", "/admin/chat-simulator", "chat", "sidebar-tone-violet") }}
       {{ nav_item("/admin/audit-logs", "Auditoria", "/admin/audit-logs", "audit", "sidebar-tone-slate") }}
       {{ nav_item("/admin/notifications", "Notificaciones", "/admin/notifications", "bell", "sidebar-tone-pink") }}
-      {{ nav_item("/admin/settings/notifications", "Configuracion", "/admin/settings", "settings", "sidebar-tone-rose") }}
+      {{ nav_item("/admin/settings/notifications", "Configuracion", "/admin/settings/notifications", "settings", "sidebar-tone-rose") }}
     {% else %}
       {% set features = tenant_features or {} %}
       {{ section_title("Principal") }}
@@ -98,13 +98,13 @@
         {{ nav_item("/t/billing/pending", "Consultas a facturar", "/t/billing/pending", "invoice", "sidebar-tone-orange") }}
         {{ nav_item("/t/billing/invoices", "Facturas emitidas", "/t/billing/invoices", "invoice", "sidebar-tone-sky") }}
         {{ nav_item("/t/settings/billing/items", "Items facturables", "/t/settings/billing/items", "items", "sidebar-tone-pink") }}
-        {{ nav_item("/t/settings/billing", "Configuracion ARCA", "/t/settings/billing", "settings", "sidebar-tone-teal") }}
+        {{ nav_item("/t/settings/billing", "Configuracion ARCA", "/t/settings/billing", "settings", "sidebar-tone-teal", true) }}
       {% endif %}
 
       {{ section_title("Sistema") }}
       {% if features.get("notifications", true) %}{{ nav_item("/t/notifications", "Notificaciones", "/t/notifications", "bell", "sidebar-tone-pink") }}{% endif %}
       {% if features.get("audit_logs", true) %}{{ nav_item("/t/audit-logs", "Auditoria", "/t/audit-logs", "audit", "sidebar-tone-slate") }}{% endif %}
-      {% if features.get("settings", true) %}{{ nav_item("/t/settings", "Configuracion", "/t/settings", "settings", "sidebar-tone-slate") }}{% endif %}
+      {% if features.get("settings", true) %}{{ nav_item("/t/settings", "Configuracion", "/t/settings", "settings", "sidebar-tone-slate", true) }}{% endif %}
       {% if features.get("settings", true) %}{{ nav_item("/t/settings/patients", "Datos pacientes", "/t/settings/patients", "patients", "sidebar-tone-mint") }}{% endif %}
       {% if features.get("settings_payments", true) %}{{ nav_item("/t/settings/payments", "Pagos", "/t/settings/payments", "payments", "sidebar-tone-mint") }}{% endif %}
       {% if features.get("settings_calendar", true) %}{{ nav_item("/t/settings/calendar", "Calendario", "/t/settings/calendar", "calendar", "sidebar-tone-amber") }}{% endif %}

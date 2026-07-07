@@ -66,6 +66,7 @@ def validate_arca_settings(data: dict[str, str], existing: dict[str, Any] | None
     fiscal_name = data.get("fiscal_name", "").strip()
     fiscal_address = data.get("fiscal_address", "").strip()
     gross_income = data.get("gross_income", "").strip()
+    activity_start_date = data.get("activity_start_date", "").strip()
     tax_condition = data.get("tax_condition", "").strip()
     receiver_tax_condition = data.get("receiver_tax_condition", "").strip()
     activity_code = data.get("activity_code", "").strip()
@@ -113,6 +114,7 @@ def validate_arca_settings(data: dict[str, str], existing: dict[str, Any] | None
         "fiscal_name": fiscal_name,
         "fiscal_address": fiscal_address,
         "gross_income": gross_income,
+        "activity_start_date": activity_start_date,
         "tax_condition": tax_condition,
         "receiver_tax_condition": receiver_tax_condition,
         "activity_code": activity_code,

@@ -499,7 +499,13 @@ def _draw_invoice_page(
     emisor_address = str(fiscal.get("fiscal_address") or fiscal.get("address") or "")
     emisor_iva = str(fiscal.get("fiscal_iva_condition") or fiscal.get("iva_condition") or "Responsable Monotributo")
     ingresos_brutos = str(fiscal.get("gross_income") or fiscal.get("ingresos_brutos") or "EXENTO")
-    inicio_actividades = str(fiscal.get("activity_start_date") or fiscal.get("inicio_actividades") or "")
+    inicio_actividades = str(
+        fiscal.get("activity_start_date")
+        or fiscal.get("activity_start")
+        or fiscal.get("inicio_actividades")
+        or fiscal.get("fecha_inicio_actividades")
+        or ""
+    )
     professional_legend = str(fiscal.get("professional_legend") or fiscal.get("invoice_footer") or fiscal.get("footer") or "")
     receptor_iva = _receiver_tax_condition_label(invoice)
     amount = Decimal(str(invoice.imp_total or "0")).quantize(Decimal("0.01"))
@@ -545,8 +551,11 @@ def _draw_invoice_page(
     pdf.setFont("Helvetica-Bold", 11)
     pdf.drawString(left_content_x, header_text_top, _clip(emisor_name, 36))
     _draw_field(pdf, left_content_x, header_text_top - 21, "Razon Social:", emisor_name, label_w=26 * mm, value_max=120)
-    _draw_field(pdf, left_content_x, header_text_top - 39, "Domicilio Comercial:", emisor_address, label_w=37 * mm, value_max=96)
-    _draw_field(pdf, left_content_x, header_text_top - 57, "Condicion frente al IVA:", emisor_iva, label_w=43 * mm, value_max=82)
+    pdf.setFont("Helvetica-Bold", 8.4)
+    pdf.drawString(left_content_x, header_text_top - 39, "Domicilio Comercial:")
+    pdf.setFont("Helvetica", 8.0)
+    _draw_wrapped(pdf, emisor_address, left_content_x + 6, header_text_top - 51, side_w - 12 * mm, 9, max_lines=2)
+    _draw_field(pdf, left_content_x, header_text_top - 74, "Condicion frente al IVA:", emisor_iva, label_w=43 * mm, value_max=82)
 
     pdf.setFont("Helvetica-Bold", 18)
     pdf.drawString(right_content_x, header_text_top, title)
