@@ -83,31 +83,32 @@ class BillingConsultationCsvImportService:
                             BillingExternalConsultation.external_id == external_id,
                         )
                     )
-                if existing and existing.arca_invoice_id is not None:
-                    skipped_billed += 1
-                    continue
                 row = existing or BillingExternalConsultation(
                     tenant_id=tenant_id,
                     external_provider="csv_attended",
                     external_id=external_id,
                 )
                 row.import_batch_id = batch_id
-                row.attended_at = attended_at
-                row.patient_name = name or None
-                row.patient_external_id = external_patient_id or None
-                row.patient_id = patient.id if patient else None
-                row.patient_document = _patient_document(patient) if patient else None
-                row.patient_email = normalized["patient_email"] or (patient.email if patient else None)
-                row.patient_phone = normalized["patient_phone"] or (patient.telefono if patient else None)
-                row.insurance_name = normalized["insurance_name"] or (patient.obra_social if patient else None)
-                row.professional_name = normalized["professional_name"] or None
-                row.practice_name = normalized["practice_name"] or None
+                row.attended_at = attended_at or row.attended_at
+                row.patient_name = name or row.patient_name or None
+                row.patient_external_id = external_patient_id or row.patient_external_id or None
+                row.patient_id = patient.id if patient else row.patient_id
+                row.patient_document = _patient_document(patient) if patient else row.patient_document
+                row.patient_email = normalized["patient_email"] or (patient.email if patient else None) or row.patient_email
+                row.patient_phone = normalized["patient_phone"] or (patient.telefono if patient else None) or row.patient_phone
+                row.insurance_name = normalized["insurance_name"] or (patient.obra_social if patient else None) or row.insurance_name
+                row.professional_name = normalized["professional_name"] or row.professional_name or None
+                row.practice_name = normalized["practice_name"] or row.practice_name or None
                 row.diagnosis_original = row.diagnosis_original or normalized["diagnosis"] or None
                 row.diagnosis = row.diagnosis or normalized["diagnosis"] or None
                 row.billing_item_id = row.billing_item_id or (default_item.id if default_item else None)
                 row.amount = row.amount or (Decimal(str(default_item.unit_price)) if default_item else None)
                 row.send_email = bool(row.patient_email) if row.send_email is False else row.send_email
-                row.status = "pending" if patient else "missing_patient_match"
+                if existing and existing.arca_invoice_id is not None:
+                    row.status = "billed"
+                    skipped_billed += 1
+                else:
+                    row.status = "pending" if patient else "missing_patient_match"
                 row.raw_payload_json = {"source_filename": filename, "import_batch_id": batch_id, "row_number": index, "row": raw}
                 if patient:
                     matched += 1
@@ -231,7 +232,17 @@ def _parse_date(value: str) -> datetime | None:
     text = (value or "").strip()
     if not text:
         return None
-    for fmt in ("%d/%m/%Y %H:%M", "%d-%m-%Y %H:%M", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"):
+    for fmt in (
+        "%d/%m/%Y %H:%M:%S",
+        "%d-%m-%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d-%m-%Y %H:%M",
+        "%Y-%m-%d %H:%M",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y-%m-%d",
+    ):
         try:
             return datetime.strptime(text, fmt)
         except ValueError:

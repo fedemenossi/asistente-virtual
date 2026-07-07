@@ -109,9 +109,11 @@
         <tbody>
           {% for row in rows %}
             {% set consultation = row[0] %}
-            <tr class="align-top">
+            {% set invoice = row[2] if row|length > 2 else none %}
+            {% set is_billed = consultation.arca_invoice_id is not none %}
+            <tr class="align-top {% if is_billed %}bg-slate-50{% endif %}">
               <td>
-                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" {% if consultation.selected_for_billing %}checked{% endif %} />
+                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" {% if consultation.selected_for_billing and not is_billed %}checked{% endif %} {% if is_billed %}disabled{% endif %} />
               </td>
               <td class="text-slate-600">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</td>
               <td class="text-slate-900">
@@ -121,25 +123,59 @@
               <td class="break-all text-slate-600">{{ consultation.patient_email or "-" }}</td>
               <td class="text-slate-600">{{ consultation.insurance_name or "-" }}</td>
               <td>
-                <select class="select billing-grid-select" form="billing-grid-form" name="item_id_{{ consultation.id }}">
-                  <option value="">Seleccionar</option>
-                  {% for item in items %}
-                    <option value="{{ item.id }}" data-amount="{{ item.unit_price }}" {% if consultation.billing_item_id == item.id %}selected{% endif %}>{{ item.name }}</option>
-                  {% endfor %}
-                </select>
-                <input class="input billing-grid-amount mt-2" form="billing-grid-form" name="amount_{{ consultation.id }}" value="{{ consultation.amount or '' }}" placeholder="Importe" />
+                {% if is_billed %}
+                  <p class="text-sm font-medium text-slate-900">
+                    {% for item in items %}
+                      {% if consultation.billing_item_id == item.id %}{{ item.name }}{% endif %}
+                    {% endfor %}
+                    {% if not consultation.billing_item_id %}-{% endif %}
+                  </p>
+                  <p class="mt-2 text-sm font-semibold text-slate-900">
+                    {% if invoice and invoice.imp_total is not none %}
+                      {% if invoice.mon_id == "PES" %}$ {{ invoice.imp_total }}{% else %}{{ invoice.imp_total }} {{ invoice.mon_id }}{% endif %}
+                    {% elif consultation.amount is not none %}
+                      $ {{ consultation.amount }}
+                    {% else %}
+                      -
+                    {% endif %}
+                  </p>
+                {% else %}
+                  <select class="select billing-grid-select" form="billing-grid-form" name="item_id_{{ consultation.id }}">
+                    <option value="">Seleccionar</option>
+                    {% for item in items %}
+                      <option value="{{ item.id }}" data-amount="{{ item.unit_price }}" {% if consultation.billing_item_id == item.id %}selected{% endif %}>{{ item.name }}</option>
+                    {% endfor %}
+                  </select>
+                  <input class="input billing-grid-amount mt-2" form="billing-grid-form" name="amount_{{ consultation.id }}" value="{{ consultation.amount or '' }}" placeholder="Importe" />
+                {% endif %}
               </td>
               <td>
-                <label class="inline-flex items-center gap-1.5 text-sm text-slate-700">
-                  <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="send_email_{{ consultation.id }}" {% if consultation.send_email %}checked{% endif %} />
-                  Enviar
-                </label>
+                {% if is_billed %}
+                  {% if invoice and invoice.email_sent_at %}
+                    {{ badge("Enviado", "success") }}
+                  {% elif consultation.send_email %}
+                    {{ badge("Solicitado", "warning") }}
+                  {% else %}
+                    {{ badge("No enviado", "neutral") }}
+                  {% endif %}
+                {% else %}
+                  <label class="inline-flex items-center gap-1.5 text-sm text-slate-700">
+                    <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="send_email_{{ consultation.id }}" {% if consultation.send_email %}checked{% endif %} />
+                    Enviar
+                  </label>
+                {% endif %}
               </td>
               <td>
-                <textarea class="textarea billing-grid-diagnosis" form="billing-grid-form" name="diagnosis_{{ consultation.id }}" rows="2">{{ consultation.diagnosis or '' }}</textarea>
+                {% if is_billed %}
+                  <p class="whitespace-pre-wrap text-sm text-slate-700">{{ consultation.diagnosis or "-" }}</p>
+                {% else %}
+                  <textarea class="textarea billing-grid-diagnosis" form="billing-grid-form" name="diagnosis_{{ consultation.id }}" rows="2">{{ consultation.diagnosis or '' }}</textarea>
+                {% endif %}
               </td>
               <td>
-                {% if consultation.status == 'missing_patient_match' %}
+                {% if is_billed %}
+                  {{ badge("Facturado", "success") }}
+                {% elif consultation.status == 'missing_patient_match' %}
                   {{ badge("Sin DNI", "warning") }}
                 {% elif consultation.status == 'error' %}
                   {{ badge("Error", "warning") }}

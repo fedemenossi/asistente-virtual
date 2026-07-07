@@ -685,7 +685,7 @@ def test_billing_arca_feature_registered_for_sync(db_session):
     assert feature.enabled is True
 
 
-def test_billing_pending_imports_attended_consultations_and_skips_invoiced(
+def test_billing_pending_imports_attended_consultations_and_shows_invoiced_locked(
     client,
     db_session,
     monkeypatch,
@@ -791,7 +791,10 @@ def test_billing_pending_imports_attended_consultations_and_skips_invoiced(
     assert "Juan Perez" in listing.text
     assert "juan@example.com" in listing.text
     assert "OSDE" in listing.text
-    assert "Paciente Facturado" not in listing.text
+    assert "Paciente Facturado" in listing.text
+    assert "Facturado" in listing.text
+    assert "$ 100.00" in listing.text
+    assert "Ya facturado" in listing.text
 
     by_dni = client.get("/t/billing/pending?dni=30111222")
     assert "Juan Perez" in by_dni.text
@@ -858,6 +861,62 @@ def test_billing_pending_import_supports_real_attended_csv_format(client, db_ses
     row = asyncio.run(_fetch())
     assert row.patient_external_id == "61868706701"
     assert row.professional_name == "Marìa Laura Langdon"
+
+def test_billing_pending_import_accepts_date_with_seconds(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant CSV Seconds", "whatsapp:+639"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-csv-seconds@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491111111111",
+            nombre="Andrea",
+            apellido="Blumtritt",
+            dni="30123456",
+            tipo_documento="DNI",
+            numero_documento="30123456",
+            document_number_normalized="30123456",
+            email="andrea@example.com",
+            obra_social="OSDE",
+        )
+    )
+    login(client, "tenant-csv-seconds@test.com", "secret-123")
+    page = client.get("/t/billing/pending")
+    csv_content = (
+        '"Fecha","Paciente","Medico","Financiador"\n'
+        '"03/07/2026 21:15:30","Andrea Blumtritt (61868706701)","Maria Laura Langdon","OSDE"\n'
+    ).encode("utf-8-sig")
+
+    response = client.post(
+        "/t/billing/pending/import",
+        data={"csrf_token": _csrf(page.text)},
+        files={"csv_file": ("pacientes_atendidos.csv", csv_content, "text/csv")},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    listing = client.get(response.headers["location"])
+    assert "03/07/2026" in listing.text
+
+    async def _fetch():
+        async with db_session() as session:
+            return await session.scalar(
+                select(BillingExternalConsultation).where(
+                    BillingExternalConsultation.tenant_id == tenant_id,
+                    BillingExternalConsultation.patient_name == "Andrea Blumtritt",
+                )
+            )
+
+    row = asyncio.run(_fetch())
+    assert row.attended_at == datetime(2026, 7, 3, 21, 15, 30)
+
 
 def test_billing_pending_import_accepts_cp1252_attended_csv(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant CSV CP1252", "whatsapp:+638"))
@@ -1547,7 +1606,9 @@ def test_billing_csv_import_crosses_with_local_billed_consultations(
     assert response.status_code in (302, 303)
 
     pending_after = client.get("/t/billing/pending?date_from=2026-07-04&date_to=2026-07-04")
-    assert "Juan Perez" not in pending_after.text
+    assert "Juan Perez" in pending_after.text
+    assert "Facturado" in pending_after.text
+    assert "04/07/2026" in pending_after.text
 
     invoice_list = client.get("/t/billing/invoices")
     assert invoice_list.status_code == 200
