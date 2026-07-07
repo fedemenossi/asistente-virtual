@@ -96,6 +96,7 @@ from app.services.billing_invoice_document_service import (
     BillingInvoiceEmailService,
     extract_invoice_diagnosis,
     extract_patient_email,
+    invoice_document_needs_regeneration,
     invoice_pdf_filename,
 )
 from app.services.billing_service import BillingService
@@ -3033,6 +3034,31 @@ async def billing_arca_invoice_html(
     return Response(document.html, media_type="text/html; charset=utf-8")
 
 
+async def _regenerate_invoice_pdf_if_needed(
+    session: AsyncSession,
+    tenant: Tenant,
+    invoice: ArcaInvoice,
+    *,
+    user_id: int | None,
+    pdf_path: Path | None,
+) -> None:
+    if not invoice_document_needs_regeneration(invoice, pdf_path, fiscal=tenant.arca_settings or {}):
+        return
+    consultation = await session.scalar(
+        select(BillingExternalConsultation).where(
+            BillingExternalConsultation.tenant_id == tenant.id,
+            BillingExternalConsultation.arca_invoice_id == invoice.id,
+        )
+    )
+    await BillingInvoiceDocumentService(session).generate_and_store_document(
+        tenant,
+        invoice,
+        user_id=user_id,
+        consultation=consultation,
+        force=True,
+    )
+
+
 async def billing_arca_invoice_pdf(
     request: Request,
     invoice_id: int,
@@ -3047,6 +3073,16 @@ async def billing_arca_invoice_pdf(
     )
     if invoice is None:
         raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    filename = invoice.document_filename or invoice_pdf_filename(invoice)
+    path = Path(invoice.pdf_path) if invoice.pdf_path else None
+    await _regenerate_invoice_pdf_if_needed(
+        session,
+        tenant,
+        invoice,
+        user_id=user.id,
+        pdf_path=path,
+    )
     filename = invoice.document_filename or invoice_pdf_filename(invoice)
     path = Path(invoice.pdf_path) if invoice.pdf_path else None
     if path and path.exists():
@@ -3065,7 +3101,6 @@ async def billing_arca_generate_pdf(
     request: Request,
     invoice_id: int,
     csrf_token: str = Form(""),
-    force: str = Form(""),
     user: CurrentUser = Depends(require_permission("billing_arca:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
@@ -3086,22 +3121,23 @@ async def billing_arca_generate_pdf(
         )
     )
     try:
+        force_regeneration = True
         await BillingInvoiceDocumentService(session).generate_and_store_document(
             tenant,
             invoice,
             user_id=user.id,
             consultation=consultation,
-            force=force == "1",
+            force=force_regeneration,
         )
         await audit_log(
             session,
             request,
             user,
-            action="arca_invoice_pdf_regenerated" if force == "1" else "arca_invoice_pdf_generated",
+            action="arca_invoice_pdf_regenerated",
             entity="arca_invoice",
             entity_id=invoice.id,
             tenant_id=int(user.tenant_id),
-            metadata={"invoice_id": invoice.id},
+            metadata={"invoice_id": invoice.id, "force": force_regeneration},
         )
     except BillingInvoiceDocumentError as exc:
         add_flash(request, "error", f"No se pudo generar el PDF: {exc}")
@@ -3124,6 +3160,16 @@ async def billing_arca_download_pdf(
     )
     if invoice is None:
         raise HTTPException(status_code=404, detail="Comprobante ARCA no encontrado")
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    filename = invoice.document_filename or invoice_pdf_filename(invoice)
+    path = Path(invoice.pdf_path) if invoice.pdf_path else None
+    await _regenerate_invoice_pdf_if_needed(
+        session,
+        tenant,
+        invoice,
+        user_id=user.id,
+        pdf_path=path,
+    )
     filename = invoice.document_filename or invoice_pdf_filename(invoice)
     path = Path(invoice.pdf_path) if invoice.pdf_path else None
     if path and path.exists():

@@ -27,6 +27,9 @@ class BillingInvoiceDocumentError(RuntimeError):
     pass
 
 
+ACTIVITY_START_MARKER = "Inicio de actividades"
+
+
 @dataclass(frozen=True)
 class BillingInvoiceDocument:
     html: str
@@ -99,6 +102,7 @@ class BillingInvoiceDocumentService:
             not force
             and invoice.document_html
             and invoice.document_pdf
+            and not invoice_document_needs_regeneration(invoice, fiscal=tenant.arca_settings or {})
         ):
             return BillingInvoiceDocument(
                 html=invoice.document_html,
@@ -684,6 +688,35 @@ def invoice_pdf_filename(invoice: ArcaInvoice) -> str:
 
 def invoice_pdf_storage_path(invoice: ArcaInvoice) -> Path:
     return Path.cwd() / "storage" / "invoices" / str(invoice.tenant_id) / str(invoice.id) / invoice_pdf_filename(invoice)
+
+
+def invoice_document_needs_regeneration(
+    invoice: ArcaInvoice,
+    pdf_path: Path | None = None,
+    *,
+    fiscal: dict[str, Any] | None = None,
+) -> bool:
+    expected_activity_start = _format_date_display(_activity_start_date(fiscal or {}))
+    required_markers = [ACTIVITY_START_MARKER]
+    if expected_activity_start != "-":
+        required_markers.append(expected_activity_start)
+
+    def _missing_required_markers(content: bytes | str) -> bool:
+        if isinstance(content, bytes):
+            return any(marker.encode("latin-1") not in content for marker in required_markers)
+        return any(marker not in content for marker in required_markers)
+
+    if pdf_path is not None and pdf_path.exists():
+        try:
+            if _missing_required_markers(pdf_path.read_bytes()):
+                return True
+        except OSError:
+            return True
+    if invoice.document_pdf and _missing_required_markers(bytes(invoice.document_pdf)):
+        return True
+    if invoice.document_html and _missing_required_markers(invoice.document_html):
+        return True
+    return False
 
 
 def build_arca_qr_url(invoice: ArcaInvoice) -> str:

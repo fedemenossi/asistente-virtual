@@ -71,7 +71,7 @@ endobj
 endobj
 10 0 obj
 <<
-/Author (anonymous) /CreationDate (D:20260707004550-03'00') /Creator (anonymous) /Keywords () /ModDate (D:20260707004550-03'00') /Producer (ReportLab PDF Library - \(opensource\)) 
+/Author (anonymous) /CreationDate (D:20260707005711-03'00') /Creator (anonymous) /Keywords () /ModDate (D:20260707005711-03'00') /Producer (ReportLab PDF Library - \(opensource\)) 
   /Subject (unspecified) /Title (factura-arca-3-11-51.pdf) /Trapped /False
 >>
 endobj
@@ -82,7 +82,7 @@ endobj
 endobj
 12 0 obj
 <<
-/Length 6820
+/Length 6756
 >>
 stream
 1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
@@ -105,11 +105,11 @@ BT 1 0 0 1 288.2518 765.5433 Tm (C) Tj T* ET
 BT /F2 7.5 Tf 9 TL ET
 BT 1 0 0 1 280.9653 748.5433 Tm (COD. 011) Tj T* ET
 BT /F2 11 Tf 13.2 TL ET
-BT 1 0 0 1 45.35433 775.7008 Tm (Tenant Generate PDF) Tj T* ET
+BT 1 0 0 1 45.35433 775.7008 Tm (Tenant Stored PDF Route) Tj T* ET
 BT /F2 8.4 Tf 10.08 TL ET
 BT 1 0 0 1 45.35433 754.7008 Tm (Razon Social:) Tj T* ET
 BT /F1 8.4 Tf 10.08 TL ET
-BT 1 0 0 1 119.0551 754.7008 Tm (Tenant Generate PDF) Tj T* ET
+BT 1 0 0 1 119.0551 754.7008 Tm (Tenant Stored PDF Route) Tj T* ET
 BT /F2 8.4 Tf 10.08 TL ET
 BT 1 0 0 1 45.35433 736.7008 Tm (Domicilio Comercial:) Tj T* ET
 BT /F1 8 Tf 9.6 TL ET
@@ -142,7 +142,7 @@ BT 1 0 0 1 419.5276 698.7008 Tm (EXENTO) Tj T* ET
 BT /F2 8.4 Tf 10.08 TL ET
 BT 1 0 0 1 334.4882 680.7008 Tm (Inicio de actividades:) Tj T* ET
 BT /F1 8.4 Tf 10.08 TL ET
-BT 1 0 0 1 442.2047 680.7008 Tm (-) Tj T* ET
+BT 1 0 0 1 442.2047 680.7008 Tm (01/07/2026) Tj T* ET
 n 34.01575 650.9764 527.2441 22.67717 re S
 n 209.7638 673.6535 m 209.7638 650.9764 l S
 n 385.5118 673.6535 m 385.5118 650.9764 l S
@@ -200,13 +200,12 @@ BT 1 0 0 1 465.3482 562.4409 Tm (Imp. Bonif.) Tj T* ET
 BT 1 0 0 1 522.1654 562.4409 Tm (Subtotal) Tj T* ET
 BT /F1 8.2 Tf 9.84 TL ET
 BT 1 0 0 1 48.18898 528.4252 Tm  T* ET
-BT 1 0 0 1 67.3622 528.4252 Tm (Consulta medica - Diagnostico: Diagnostico) Tj T* ET
-BT 1 0 0 1 67.3622 518.4252 Tm (generado bajo demanda) Tj T* ET
+BT 1 0 0 1 67.3622 528.4252 Tm (Consulta medica - Diagnostico: PDF) Tj T* ET
+BT 1 0 0 1 67.3622 518.4252 Tm (persistido) Tj T* ET
 BT /F2 7.5 Tf 9 TL ET
 BT 1 0 0 1 67.3622 500.4252 Tm (Diagnostico:) Tj T* ET
 BT /F1 7.5 Tf 9 TL ET
-BT 1 0 0 1 117.3622 500.4252 Tm (Diagnostico generado bajo) Tj T* ET
-BT 1 0 0 1 117.3622 491.4252 Tm (demanda) Tj T* ET
+BT 1 0 0 1 117.3622 500.4252 Tm (PDF persistido) Tj T* ET
 BT /F1 8.2 Tf 9.84 TL ET
 BT 1 0 0 1 272.0113 528.4252 Tm (1,00) Tj T* ET
 BT 1 0 0 1 300.8425 528.4252 Tm (unidades) Tj T* ET
@@ -256,7 +255,7 @@ endstream
 endobj
 13 0 obj
 <<
-/Length 6821
+/Length 6757
 >>
 stream
 1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
@@ -279,11 +278,11 @@ BT 1 0 0 1 288.2518 765.5433 Tm (C) Tj T* ET
 BT /F2 7.5 Tf 9 TL ET
 BT 1 0 0 1 280.9653 748.5433 Tm (COD. 011) Tj T* ET
 BT /F2 11 Tf 13.2 TL ET
-BT 1 0 0 1 45.35433 775.7008 Tm (Tenant Generate PDF) Tj T* ET
+BT 1 0 0 1 45.35433 775.7008 Tm (Tenant Stored PDF Route) Tj T* ET
 BT /F2 8.4 Tf 10.08 TL ET
 BT 1 0 0 1 45.35433 754.7008 Tm (Razon Social:) Tj T* ET
 BT /F1 8.4 Tf 10.08 TL ET
-BT 1 0 0 1 119.0551 754.7008 Tm (Tenant Generate PDF) Tj T* ET
+BT 1 0 0 1 119.0551 754.7008 Tm (Tenant Stored PDF Route) Tj T* ET
 BT /F2 8.4 Tf 10.08 TL ET
 BT 1 0 0 1 45.35433 736.7008 Tm (Domicilio Comercial:) Tj T* ET
 BT /F1 8 Tf 9.6 TL ET
@@ -316,7 +315,7 @@ BT 1 0 0 1 419.5276 698.7008 Tm (EXENTO) Tj T* ET
 BT /F2 8.4 Tf 10.08 TL ET
 BT 1 0 0 1 334.4882 680.7008 Tm (Inicio de actividades:) Tj T* ET
 BT /F1 8.4 Tf 10.08 TL ET
-BT 1 0 0 1 442.2047 680.7008 Tm (-) Tj T* ET
+BT 1 0 0 1 442.2047 680.7008 Tm (01/07/2026) Tj T* ET
 n 34.01575 650.9764 527.2441 22.67717 re S
 n 209.7638 673.6535 m 209.7638 650.9764 l S
 n 385.5118 673.6535 m 385.5118 650.9764 l S
@@ -374,13 +373,12 @@ BT 1 0 0 1 465.3482 562.4409 Tm (Imp. Bonif.) Tj T* ET
 BT 1 0 0 1 522.1654 562.4409 Tm (Subtotal) Tj T* ET
 BT /F1 8.2 Tf 9.84 TL ET
 BT 1 0 0 1 48.18898 528.4252 Tm  T* ET
-BT 1 0 0 1 67.3622 528.4252 Tm (Consulta medica - Diagnostico: Diagnostico) Tj T* ET
-BT 1 0 0 1 67.3622 518.4252 Tm (generado bajo demanda) Tj T* ET
+BT 1 0 0 1 67.3622 528.4252 Tm (Consulta medica - Diagnostico: PDF) Tj T* ET
+BT 1 0 0 1 67.3622 518.4252 Tm (persistido) Tj T* ET
 BT /F2 7.5 Tf 9 TL ET
 BT 1 0 0 1 67.3622 500.4252 Tm (Diagnostico:) Tj T* ET
 BT /F1 7.5 Tf 9 TL ET
-BT 1 0 0 1 117.3622 500.4252 Tm (Diagnostico generado bajo) Tj T* ET
-BT 1 0 0 1 117.3622 491.4252 Tm (demanda) Tj T* ET
+BT 1 0 0 1 117.3622 500.4252 Tm (PDF persistido) Tj T* ET
 BT /F1 8.2 Tf 9.84 TL ET
 BT 1 0 0 1 272.0113 528.4252 Tm (1,00) Tj T* ET
 BT 1 0 0 1 300.8425 528.4252 Tm (unidades) Tj T* ET
@@ -430,7 +428,7 @@ endstream
 endobj
 14 0 obj
 <<
-/Length 6822
+/Length 6758
 >>
 stream
 1 0 0 1 0 0 cm  BT /F1 12 Tf 14.4 TL ET
@@ -453,11 +451,11 @@ BT 1 0 0 1 288.2518 765.5433 Tm (C) Tj T* ET
 BT /F2 7.5 Tf 9 TL ET
 BT 1 0 0 1 280.9653 748.5433 Tm (COD. 011) Tj T* ET
 BT /F2 11 Tf 13.2 TL ET
-BT 1 0 0 1 45.35433 775.7008 Tm (Tenant Generate PDF) Tj T* ET
+BT 1 0 0 1 45.35433 775.7008 Tm (Tenant Stored PDF Route) Tj T* ET
 BT /F2 8.4 Tf 10.08 TL ET
 BT 1 0 0 1 45.35433 754.7008 Tm (Razon Social:) Tj T* ET
 BT /F1 8.4 Tf 10.08 TL ET
-BT 1 0 0 1 119.0551 754.7008 Tm (Tenant Generate PDF) Tj T* ET
+BT 1 0 0 1 119.0551 754.7008 Tm (Tenant Stored PDF Route) Tj T* ET
 BT /F2 8.4 Tf 10.08 TL ET
 BT 1 0 0 1 45.35433 736.7008 Tm (Domicilio Comercial:) Tj T* ET
 BT /F1 8 Tf 9.6 TL ET
@@ -490,7 +488,7 @@ BT 1 0 0 1 419.5276 698.7008 Tm (EXENTO) Tj T* ET
 BT /F2 8.4 Tf 10.08 TL ET
 BT 1 0 0 1 334.4882 680.7008 Tm (Inicio de actividades:) Tj T* ET
 BT /F1 8.4 Tf 10.08 TL ET
-BT 1 0 0 1 442.2047 680.7008 Tm (-) Tj T* ET
+BT 1 0 0 1 442.2047 680.7008 Tm (01/07/2026) Tj T* ET
 n 34.01575 650.9764 527.2441 22.67717 re S
 n 209.7638 673.6535 m 209.7638 650.9764 l S
 n 385.5118 673.6535 m 385.5118 650.9764 l S
@@ -548,13 +546,12 @@ BT 1 0 0 1 465.3482 562.4409 Tm (Imp. Bonif.) Tj T* ET
 BT 1 0 0 1 522.1654 562.4409 Tm (Subtotal) Tj T* ET
 BT /F1 8.2 Tf 9.84 TL ET
 BT 1 0 0 1 48.18898 528.4252 Tm  T* ET
-BT 1 0 0 1 67.3622 528.4252 Tm (Consulta medica - Diagnostico: Diagnostico) Tj T* ET
-BT 1 0 0 1 67.3622 518.4252 Tm (generado bajo demanda) Tj T* ET
+BT 1 0 0 1 67.3622 528.4252 Tm (Consulta medica - Diagnostico: PDF) Tj T* ET
+BT 1 0 0 1 67.3622 518.4252 Tm (persistido) Tj T* ET
 BT /F2 7.5 Tf 9 TL ET
 BT 1 0 0 1 67.3622 500.4252 Tm (Diagnostico:) Tj T* ET
 BT /F1 7.5 Tf 9 TL ET
-BT 1 0 0 1 117.3622 500.4252 Tm (Diagnostico generado bajo) Tj T* ET
-BT 1 0 0 1 117.3622 491.4252 Tm (demanda) Tj T* ET
+BT 1 0 0 1 117.3622 500.4252 Tm (PDF persistido) Tj T* ET
 BT /F1 8.2 Tf 9.84 TL ET
 BT 1 0 0 1 272.0113 528.4252 Tm (1,00) Tj T* ET
 BT 1 0 0 1 300.8425 528.4252 Tm (unidades) Tj T* ET
@@ -617,12 +614,12 @@ xref
 0000034979 00000 n 
 0000035257 00000 n 
 0000035329 00000 n 
-0000042201 00000 n 
-0000049074 00000 n 
+0000042137 00000 n 
+0000048946 00000 n 
 trailer
 <<
 /ID 
-[<c32de9479d996c2afeaac5631fecf38f><c32de9479d996c2afeaac5631fecf38f>]
+[<434a4f53ecc02ef48bb9d40a2928f858><434a4f53ecc02ef48bb9d40a2928f858>]
 % ReportLab generated PDF document -- digest (opensource)
 
 /Info 10 0 R
@@ -630,5 +627,5 @@ trailer
 /Size 15
 >>
 startxref
-55948
+55756
 %%EOF

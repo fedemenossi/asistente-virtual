@@ -300,7 +300,6 @@
                         </div>
                       </div>
                       <div class="flex flex-wrap justify-center gap-2 border-t border-slate-200 px-5 py-3">
-                        <button class="btn btn-secondary" type="button" data-invoice-modal-close="invoice-modal-{{ consultation.id }}">Cerrar</button>
                         {% if invoice.pdf_generated_at or invoice.document_pdf %}
                           <a class="btn btn-primary" href="/t/billing/invoices/{{ invoice.id }}/download-pdf" target="_blank">Descargar factura</a>
                         {% endif %}

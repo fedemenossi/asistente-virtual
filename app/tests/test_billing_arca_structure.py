@@ -1864,6 +1864,65 @@ def test_billing_invoice_generate_pdf_route_stores_document(client, db_session):
     assert invoice.qr_url and "afip.gob.ar/fe/qr" in invoice.qr_url
 
 
+def test_billing_invoice_generate_pdf_route_always_rebuilds_document(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Force Rebuild PDF", "whatsapp:+68511"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(
+            db_session,
+            tenant_id,
+            diagnosis="Diagnostico regenerado completo",
+            patient_email="paciente@example.com",
+        )
+    )
+    invoice_id = asyncio.run(
+        _emit_authorized_test_invoice(db_session, tenant_id, item_id, consultation_id)
+    )
+
+    async def _seed_stale_document():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            tenant.arca_settings = {
+                **(tenant.arca_settings or {}),
+                "activity_start_date": "2026-07-01",
+            }
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            invoice.document_html = "<html>documento viejo</html>"
+            invoice.document_pdf = b"%PDF-DOCUMENTO-VIEJO"
+            invoice.document_filename = "factura-vieja.pdf"
+            await session.commit()
+
+    asyncio.run(_seed_stale_document())
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-force-rebuild-pdf@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-force-rebuild-pdf@test.com", "secret-123")
+    detail = client.get(f"/t/billing/invoices/{invoice_id}")
+    response = client.post(
+        f"/t/billing/invoices/{invoice_id}/generate-pdf",
+        data={"csrf_token": _csrf(detail.text)},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    async def _fetch():
+        async with db_session() as session:
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            return invoice.document_html, bytes(invoice.document_pdf)
+
+    document_html, document_pdf = asyncio.run(_fetch())
+    assert "documento viejo" not in document_html
+    assert "Diagnostico regenerado completo" in document_html
+    assert document_pdf != b"%PDF-DOCUMENTO-VIEJO"
+    assert b"Inicio de actividades" in document_pdf
+    assert b"01/07/2026" in document_pdf
+
+
 def test_billing_invoice_document_allows_missing_diagnosis(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Document No Diagnosis", "whatsapp:+647"))
     item_id, consultation_id = asyncio.run(
@@ -2125,7 +2184,7 @@ def test_billing_invoice_send_email_route_uses_patient_email(client, db_session,
     assert sent["attachments"][0][1].startswith(b"%PDF")
 
 
-def test_billing_invoice_pdf_route_returns_stored_document(client, db_session):
+def test_billing_invoice_pdf_route_regenerates_stale_stored_document(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Stored PDF Route", "whatsapp:+686"))
     item_id, consultation_id = asyncio.run(
         _create_arca_emission_seed(
@@ -2141,9 +2200,14 @@ def test_billing_invoice_pdf_route_returns_stored_document(client, db_session):
 
     async def _replace_pdf():
         async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            tenant.arca_settings = {
+                **(tenant.arca_settings or {}),
+                "activity_start_date": "2026-07-01",
+            }
             invoice = await session.get(ArcaInvoice, invoice_id)
-            invoice.document_pdf = b"%PDF-STORED"
-            invoice.document_html = "<html>stored</html>"
+            invoice.document_pdf = b"%PDF-STORED Inicio de actividades"
+            invoice.document_html = "<html>Inicio de actividades</html>"
             invoice.document_filename = "factura-almacenada.pdf"
             await session.commit()
 
@@ -2160,6 +2224,9 @@ def test_billing_invoice_pdf_route_returns_stored_document(client, db_session):
     login(client, "tenant-pdf-route@test.com", "secret-123")
     response = client.get(f"/t/billing-arca/{invoice_id}/comprobante.pdf")
     assert response.status_code == 200
-    assert response.content == b"%PDF-STORED"
+    assert response.content.startswith(b"%PDF")
+    assert response.content != b"%PDF-STORED Inicio de actividades"
+    assert b"Inicio de actividades" in response.content
+    assert b"01/07/2026" in response.content
     assert response.headers["content-type"] == "application/pdf"
     assert "factura-almacenada.pdf" in response.headers["content-disposition"]
