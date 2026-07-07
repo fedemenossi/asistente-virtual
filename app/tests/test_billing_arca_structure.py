@@ -241,6 +241,7 @@ def test_billing_arca_settings_save_encrypts_certificate_and_key(client, db_sess
             "gross_income": "12345",
             "tax_condition": "Monotributo",
             "activity_code": "862110",
+            "professional_legend": "Medica especialista en Ginecologia y Obstetricia M.N. 122.674",
             "certificate_pem": certificate,
             "private_key_pem": private_key,
             "key_passphrase": "pass-secret",
@@ -259,6 +260,7 @@ def test_billing_arca_settings_save_encrypts_certificate_and_key(client, db_sess
     assert settings["default_pto_vta"] == 3
     assert settings["has_certificate"] is True
     assert settings["has_private_key"] is True
+    assert settings["professional_legend"] == "Medica especialista en Ginecologia y Obstetricia M.N. 122.674"
     assert certificate not in settings["certificate_encrypted"]
     assert private_key not in settings["private_key_encrypted"]
     assert decrypt_secret(settings["certificate_encrypted"]) == certificate
@@ -1878,6 +1880,35 @@ def test_billing_invoice_document_includes_activity_start_date(db_session):
     assert "Inicio de actividades: 01/07/2026" in document.html
     assert b"Inicio de actividades" in document.pdf
     assert b"01/07/2026" in document.pdf
+
+
+def test_billing_invoice_document_includes_configured_professional_legend(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Professional Legend", "whatsapp:+68502"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(
+            db_session,
+            tenant_id,
+            diagnosis="Diagnostico con leyenda profesional",
+            patient_email="paciente@example.com",
+        )
+    )
+    invoice_id = asyncio.run(
+        _emit_authorized_test_invoice(db_session, tenant_id, item_id, consultation_id)
+    )
+    legend = "Medica especialista en Ginecologia y Obstetricia M.N. 122.674"
+
+    async def _build():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            tenant.arca_settings = {
+                **(tenant.arca_settings or {}),
+                "professional_legend": legend,
+            }
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            return await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
+
+    document = asyncio.run(_build())
+    assert legend.encode("latin-1") in document.pdf
 
 
 def test_billing_invoice_generate_pdf_route_stores_document(client, db_session):

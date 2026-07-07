@@ -70,6 +70,7 @@ def validate_arca_settings(data: dict[str, str], existing: dict[str, Any] | None
     tax_condition = data.get("tax_condition", "").strip()
     receiver_tax_condition = data.get("receiver_tax_condition", "").strip()
     activity_code = data.get("activity_code", "").strip()
+    professional_legend = data.get("professional_legend", "").strip()
     email_subject_template = data.get("email_subject_template", "").strip()
     email_body_template = data.get("email_body_template", "").strip()
 
@@ -118,6 +119,7 @@ def validate_arca_settings(data: dict[str, str], existing: dict[str, Any] | None
         "tax_condition": tax_condition,
         "receiver_tax_condition": receiver_tax_condition,
         "activity_code": activity_code,
+        "professional_legend": professional_legend,
         "email_invoice_enabled_default": data.get("email_invoice_enabled_default") == "on",
         "email_subject_template": email_subject_template,
         "email_body_template": email_body_template,

@@ -507,7 +507,7 @@ def _draw_invoice_page(
     ingresos_brutos = str(fiscal.get("gross_income") or fiscal.get("ingresos_brutos") or "EXENTO")
     inicio_actividades = _activity_start_date(fiscal)
     inicio_actividades_display = _format_date_display(inicio_actividades) if inicio_actividades else "No informado"
-    professional_legend = str(fiscal.get("professional_legend") or fiscal.get("invoice_footer") or fiscal.get("footer") or "")
+    professional_legend = str(fiscal.get("professional_legend") or fiscal.get("invoice_footer") or fiscal.get("footer") or "").strip()
     receptor_iva = _receiver_tax_condition_label(invoice)
     amount = Decimal(str(invoice.imp_total or "0")).quantize(Decimal("0.01"))
 
@@ -572,6 +572,9 @@ def _draw_invoice_page(
     period_h = 8 * mm
     period_top = header_bottom
     period_bottom = period_top - period_h
+    pdf.setFillColor(colors.HexColor("#eeeeee"))
+    pdf.rect(left, period_bottom, right - left, period_h, stroke=0, fill=1)
+    pdf.setFillColor(colors.black)
     pdf.rect(left, period_bottom, right - left, period_h, stroke=1, fill=0)
     period_cols = [left, left + (right - left) / 3, left + 2 * (right - left) / 3, right]
     pdf.line(period_cols[1], period_top, period_cols[1], period_bottom)
@@ -584,6 +587,9 @@ def _draw_invoice_page(
     customer_h = 24 * mm
     customer_top = period_bottom
     customer_bottom = customer_top - customer_h
+    pdf.setFillColor(colors.HexColor("#f2f2f2"))
+    pdf.rect(left, customer_top - 8 * mm, right - left, 8 * mm, stroke=0, fill=1)
+    pdf.setFillColor(colors.black)
     pdf.rect(left, customer_bottom, right - left, customer_h, stroke=1, fill=0)
     _draw_field(pdf, left + 8, customer_top - 16, f"{_doc_label(invoice.doc_tipo)}:", str(patient_document or "-"), label_w=18 * mm, value_max=72)
     _draw_field(pdf, left + 74 * mm, customer_top - 16, "Apellido y Nombre / Razon Social:", patient_name or "-", label_w=58 * mm, value_max=118)
@@ -643,18 +649,23 @@ def _draw_invoice_page(
     totals_w = 72 * mm
     totals_left = right - totals_w
     pdf.setLineWidth(0.6)
+    pdf.setFillColor(colors.HexColor("#f2f2f2"))
+    pdf.rect(totals_left, totals_top - 14, totals_w, 14, stroke=0, fill=1)
+    pdf.setFillColor(colors.black)
     pdf.rect(totals_left, totals_top - totals_h, totals_w, totals_h, stroke=1, fill=0)
-    pdf.setFont("Helvetica-Bold", 9)
     _draw_total_row(pdf, totals_left, right, totals_top - 17, "Subtotal:", _money_ar(invoice.imp_neto or amount))
     _draw_total_row(pdf, totals_left, right, totals_top - 38, "Importe Otros Tributos:", _money_ar(invoice.imp_trib))
-    pdf.setFont("Helvetica-Bold", 11)
-    _draw_total_row(pdf, totals_left, right, totals_top - 64, "Importe Total:", _money_ar(amount))
+    _draw_total_row(pdf, totals_left, right, totals_top - 64, "Importe Total:", _money_ar(amount), total=True)
 
     if professional_legend:
         legend_top = totals_top - totals_h - 11 * mm
-        pdf.rect(left, legend_top - 10 * mm, right - left, 10 * mm, stroke=1, fill=0)
-        pdf.setFont("Helvetica-Oblique", 9)
-        pdf.drawCentredString(center, legend_top - 6 * mm, _clip(f'"{professional_legend}"', 90))
+        legend_h = 11 * mm
+        pdf.setFillColor(colors.HexColor("#f7f7f7"))
+        pdf.rect(left, legend_top - legend_h, right - left, legend_h, stroke=0, fill=1)
+        pdf.setFillColor(colors.black)
+        pdf.rect(left, legend_top - legend_h, right - left, legend_h, stroke=1, fill=0)
+        pdf.setFont("Helvetica", 9)
+        _draw_centered_wrapped(pdf, professional_legend, left + 6, right - 6, legend_top - 12, 10, max_lines=2)
 
     footer_y = 31 * mm
     qr_size = 26 * mm
@@ -843,8 +854,10 @@ def _money_ar(value: Any) -> str:
     return formatted.replace(",", "_").replace(".", ",").replace("_", ".")
 
 
-def _draw_total_row(pdf: Any, left: float, right: float, y: float, label: str, amount: str) -> None:
+def _draw_total_row(pdf: Any, left: float, right: float, y: float, label: str, amount: str, *, total: bool = False) -> None:
+    pdf.setFont("Helvetica-Bold", 10 if total else 9)
     pdf.drawRightString(right - 72, y, label)
+    pdf.setFont("Helvetica", 10 if total else 9)
     pdf.drawString(right - 62, y, "$")
     pdf.drawRightString(right - 12, y, amount)
 

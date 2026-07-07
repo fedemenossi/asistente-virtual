@@ -112,6 +112,11 @@
           <label class="text-xs text-slate-500">Actividad</label>
           <input class="input" name="activity_code" value="{{ settings.get('activity_code', '') }}" />
         </div>
+        <div class="md:col-span-2">
+          <label class="text-xs text-slate-500">Leyenda profesional en factura</label>
+          <textarea class="textarea" name="professional_legend" rows="2" placeholder="Medica especialista en Ginecologia y Obstetricia M.N. 122.674">{{ settings.get('professional_legend', '') }}</textarea>
+          <p class="mt-1 text-xs text-slate-500">Se imprime centrada en un recuadro debajo de los totales.</p>
+        </div>
       </div>
     </div>
 
