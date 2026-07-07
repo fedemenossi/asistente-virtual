@@ -124,7 +124,7 @@
                 <select class="select billing-grid-select" form="billing-grid-form" name="item_id_{{ consultation.id }}">
                   <option value="">Seleccionar</option>
                   {% for item in items %}
-                    <option value="{{ item.id }}" {% if consultation.billing_item_id == item.id %}selected{% endif %}>{{ item.name }}</option>
+                    <option value="{{ item.id }}" data-amount="{{ item.unit_price }}" {% if consultation.billing_item_id == item.id %}selected{% endif %}>{{ item.name }}</option>
                   {% endfor %}
                 </select>
                 <input class="input billing-grid-amount mt-2" form="billing-grid-form" name="amount_{{ consultation.id }}" value="{{ consultation.amount or '' }}" placeholder="Importe" />
@@ -178,6 +178,16 @@
           window.setTimeout(() => form.submit(), 150);
         });
       }
+
+      document.querySelectorAll(".billing-grid-select").forEach((select) => {
+        select.addEventListener("change", () => {
+          const row = select.closest("tr");
+          const amountInput = row?.querySelector(".billing-grid-amount");
+          const selectedOption = select.selectedOptions?.[0];
+          if (!amountInput || !selectedOption) return;
+          amountInput.value = selectedOption.dataset.amount || "";
+        });
+      });
 
       const jobBox = document.querySelector("[data-billing-job]");
       const jobId = jobBox?.dataset.billingJobId;

@@ -110,7 +110,6 @@
               <td class="px-4 py-3">
                 {% if invoice.pdf_generated_at or invoice.document_pdf %}
                   {{ badge("Generado", "success") }}
-                  <p class="mt-1 text-xs text-slate-500">{{ invoice.pdf_generated_at or invoice.document_generated_at or "-" }}</p>
                 {% else %}
                   {{ badge("Sin PDF", "neutral") }}
                 {% endif %}
