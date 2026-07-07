@@ -506,6 +506,7 @@ def _draw_invoice_page(
     emisor_iva = str(fiscal.get("fiscal_iva_condition") or fiscal.get("iva_condition") or "Responsable Monotributo")
     ingresos_brutos = str(fiscal.get("gross_income") or fiscal.get("ingresos_brutos") or "EXENTO")
     inicio_actividades = _activity_start_date(fiscal)
+    inicio_actividades_display = _format_date_display(inicio_actividades) if inicio_actividades else "No informado"
     professional_legend = str(fiscal.get("professional_legend") or fiscal.get("invoice_footer") or fiscal.get("footer") or "")
     receptor_iva = _receiver_tax_condition_label(invoice)
     amount = Decimal(str(invoice.imp_total or "0")).quantize(Decimal("0.01"))
@@ -523,7 +524,7 @@ def _draw_invoice_page(
         pdf.setFillColor(colors.black)
 
     header_top = top - 18
-    header_h = 43 * mm
+    header_h = 47 * mm
     side_w = (right - left) / 2
     divider_x = center
     header_bottom = header_top - header_h
@@ -556,6 +557,7 @@ def _draw_invoice_page(
     pdf.setFont("Helvetica", 8.0)
     _draw_wrapped(pdf, emisor_address, left_content_x + 6, header_text_top - 51, side_w - 12 * mm, 9, max_lines=2)
     _draw_field(pdf, left_content_x, header_text_top - 74, "Condicion frente al IVA:", emisor_iva, label_w=43 * mm, value_max=82)
+    _draw_field(pdf, left_content_x, header_text_top - 92, "Inicio de actividades:", inicio_actividades_display, label_w=38 * mm, value_max=64)
 
     pdf.setFont("Helvetica-Bold", 18)
     pdf.drawString(right_content_x, header_text_top, title)
@@ -565,7 +567,7 @@ def _draw_invoice_page(
     _draw_field(pdf, right_content_x, row_y - 18, "Fecha de Emision:", _format_date_display(invoice.cbte_fch), label_w=34 * mm, value_max=66)
     _draw_field(pdf, right_content_x, row_y - 36, "CUIT:", str(invoice.represented_cuit or "-"), label_w=12 * mm, value_max=76)
     _draw_field(pdf, right_content_x, row_y - 54, "Ingresos Brutos:", ingresos_brutos, label_w=30 * mm, value_max=72)
-    _draw_field(pdf, right_content_x, row_y - 72, "Inicio de actividades:", _format_date_display(inicio_actividades), label_w=38 * mm, value_max=68)
+    _draw_field(pdf, right_content_x, row_y - 72, "Inicio de actividades:", inicio_actividades_display, label_w=38 * mm, value_max=68)
 
     period_h = 8 * mm
     period_top = header_bottom
