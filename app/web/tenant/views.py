@@ -3580,7 +3580,7 @@ async def billing_pending_consultations(
         stmt = stmt.where(BillingExternalConsultation.external_staff_id.ilike(f"%{staff_id}%"))
     if status:
         stmt = stmt.where(BillingExternalConsultation.status == status)
-    if not batch_id and (raw_date_from or raw_date_to or not (q or dni or obra_social or staff_id or status)):
+    if raw_date_from or raw_date_to:
         stmt = stmt.where(
             or_(
                 BillingExternalConsultation.attended_at.is_(None),
@@ -3696,7 +3696,7 @@ async def billing_pending_import(
             f"Pacientes encontrados: {result.matched_patients}. Sin match: {result.missing_patient_match}."
         ),
     )
-    return RedirectResponse(f"/t/billing/pending?batch_id={batch_id}", status_code=303)
+    return RedirectResponse("/t/billing/pending", status_code=303)
 
 
 async def _load_pending_consultations(
@@ -3763,6 +3763,8 @@ def _validate_preview_consultations(consultations: list[BillingExternalConsultat
     for row in consultations:
         if row.arca_invoice_id is not None:
             errors.append(f"La consulta #{row.id} ya esta facturada.")
+        if row.status == "excluded":
+            errors.append(f"La consulta #{row.id} esta marcada como no facturar.")
         if not (row.patient_document or "").strip():
             errors.append(f"La consulta #{row.id} no tiene DNI/documento. Revisá el match del paciente.")
         if not row.billing_item_id:
@@ -3925,6 +3927,41 @@ async def billing_invoice_emit_batch(
     job = start_billing_emission_job(int(user.tenant_id), ids)
     add_flash(request, "success", "Facturacion iniciada. Podes seguir el avance en esta pantalla.")
     return RedirectResponse(f"/t/billing/pending?job_id={job.id}", status_code=303)
+
+
+async def billing_pending_exclude_selected(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    form = await request.form()
+    validate_csrf(request, str(form.get("csrf_token") or ""))
+    ids = _selected_ids_from_form(form)
+    if not ids:
+        add_flash(request, "error", "Selecciona al menos una consulta.")
+        return RedirectResponse(_pending_back_url(form), status_code=303)
+    consultations = await _load_pending_consultations(session, int(user.tenant_id), ids)
+    updated = 0
+    async with session.begin_nested():
+        for consultation in consultations:
+            if consultation.arca_invoice_id is not None:
+                continue
+            consultation.status = "excluded"
+            consultation.selected_for_billing = False
+            consultation.send_email = False
+            updated += 1
+        await audit_log(
+            session,
+            request,
+            user,
+            action="billing_consultations_excluded",
+            entity="billing_external_consultations",
+            entity_id=None,
+            tenant_id=int(user.tenant_id),
+            metadata={"selected": len(ids), "updated": updated},
+        )
+    add_flash(request, "success", f"Consultas marcadas como no facturar: {updated}.")
+    return RedirectResponse(_pending_back_url(form), status_code=303)
 
 
 async def billing_invoice_emit_one(

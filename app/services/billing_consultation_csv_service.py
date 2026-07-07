@@ -70,20 +70,12 @@ class BillingConsultationCsvImportService:
                 if patient is None:
                     patient = _find_patient_by_loose_name(patients, name)
                 external_id = _external_id(filename, index, raw)
-                existing = await self._session.scalar(
-                    select(BillingExternalConsultation).where(
-                        BillingExternalConsultation.tenant_id == tenant_id,
-                        BillingExternalConsultation.external_provider == "csv_attended",
-                        BillingExternalConsultation.external_id == external_id,
-                    )
+                existing = await self._find_existing_consultation(
+                    tenant_id,
+                    external_id=external_id,
+                    attended_at=attended_at,
+                    patient_name=name,
                 )
-                if existing is None:
-                    existing = await self._session.scalar(
-                        select(BillingExternalConsultation).where(
-                            BillingExternalConsultation.tenant_id == tenant_id,
-                            BillingExternalConsultation.external_id == external_id,
-                        )
-                    )
                 row = existing or BillingExternalConsultation(
                     tenant_id=tenant_id,
                     external_provider="csv_attended",
@@ -108,6 +100,10 @@ class BillingConsultationCsvImportService:
                 if existing and existing.arca_invoice_id is not None:
                     row.status = "billed"
                     skipped_billed += 1
+                elif existing and existing.status == "excluded":
+                    row.status = "excluded"
+                    row.selected_for_billing = False
+                    row.send_email = False
                 else:
                     row.status = "pending" if patient else "missing_patient_match"
                 row.raw_payload_json = {"source_filename": filename, "import_batch_id": batch_id, "row_number": index, "row": raw}
@@ -149,6 +145,45 @@ class BillingConsultationCsvImportService:
             .where(ArcaBillableItem.tenant_id == tenant_id, ArcaBillableItem.active.is_(True))
             .order_by(ArcaBillableItem.id.asc())
         )
+
+    async def _find_existing_consultation(
+        self,
+        tenant_id: int,
+        *,
+        external_id: str,
+        attended_at: datetime | None,
+        patient_name: str,
+    ) -> BillingExternalConsultation | None:
+        existing = await self._session.scalar(
+            select(BillingExternalConsultation).where(
+                BillingExternalConsultation.tenant_id == tenant_id,
+                BillingExternalConsultation.external_provider == "csv_attended",
+                BillingExternalConsultation.external_id == external_id,
+            )
+        )
+        if existing is not None:
+            return existing
+        existing = await self._session.scalar(
+            select(BillingExternalConsultation).where(
+                BillingExternalConsultation.tenant_id == tenant_id,
+                BillingExternalConsultation.external_id == external_id,
+            )
+        )
+        if existing is not None:
+            return existing
+        if attended_at is None or not patient_name:
+            return None
+        result = await self._session.execute(
+            select(BillingExternalConsultation).where(
+                BillingExternalConsultation.tenant_id == tenant_id,
+                BillingExternalConsultation.attended_at == attended_at,
+            )
+        )
+        name_key = _name_key(patient_name)
+        for row in result.scalars().all():
+            if _name_key(row.patient_name) == name_key:
+                return row
+        return None
 
     async def _patients_by_name(self, tenant_id: int) -> dict[str, Paciente]:
         result = await self._session.execute(

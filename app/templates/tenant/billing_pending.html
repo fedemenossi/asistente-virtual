@@ -66,21 +66,21 @@
   {% if rows %}
     <section class="surface mb-4">
       <form method="get" action="/t/billing/pending" class="toolbar">
-        <input type="hidden" name="date_from" value="{{ date_from }}" />
-        <input type="hidden" name="date_to" value="{{ date_to }}" />
         <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
         <input type="hidden" name="dni" value="{{ dni or '' }}" />
         <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
         <input type="hidden" name="staff_id" value="{{ staff_id or '' }}" />
-        <input type="hidden" name="batch_id" value="{{ batch_id or '' }}" />
         <div class="searchbox min-w-0 flex-1">
           <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
           <input name="q" value="{{ q or '' }}" placeholder="Nombre, DNI, email, obra social o diagnostico" />
         </div>
+        <input class="input w-40" type="date" name="date_from" value="{{ date_from if request.query_params.get('date_from') else '' }}" aria-label="Fecha desde" />
+        <input class="input w-40" type="date" name="date_to" value="{{ date_to if request.query_params.get('date_to') else '' }}" aria-label="Fecha hasta" />
         <select class="select" name="status">
           <option value="">Estado</option>
           <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pendiente</option>
           <option value="billed" {% if status == 'billed' %}selected{% endif %}>Facturado</option>
+          <option value="excluded" {% if status == 'excluded' %}selected{% endif %}>No facturar</option>
           <option value="missing_patient_match" {% if status == 'missing_patient_match' %}selected{% endif %}>Sin DNI</option>
           <option value="error" {% if status == 'error' %}selected{% endif %}>Error</option>
         </select>
@@ -93,8 +93,8 @@
     </section>
     <form id="billing-grid-form" method="post" action="/t/billing/emit">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <input type="hidden" name="date_from" value="{{ date_from }}" />
-      <input type="hidden" name="date_to" value="{{ date_to }}" />
+      <input type="hidden" name="date_from" value="{{ date_from if request.query_params.get('date_from') else '' }}" />
+      <input type="hidden" name="date_to" value="{{ date_to if request.query_params.get('date_to') else '' }}" />
       <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
       <input type="hidden" name="q" value="{{ q or '' }}" />
       <input type="hidden" name="dni" value="{{ dni or '' }}" />
@@ -103,7 +103,8 @@
       <input type="hidden" name="status" value="{{ status or '' }}" />
       <input type="hidden" name="batch_id" value="{{ batch_id or '' }}" />
     </form>
-    <div class="mb-3 flex justify-end">
+    <div class="mb-3 flex flex-wrap justify-end gap-2">
+      <button class="btn btn-secondary" type="submit" form="billing-grid-form" formaction="/t/billing/pending/no-facturar">No facturar</button>
       <button class="btn btn-primary" type="submit" form="billing-grid-form">Facturar seleccionadas</button>
     </div>
     <section class="surface">
@@ -140,9 +141,10 @@
             {% set consultation = row[0] %}
             {% set invoice = row[2] if row|length > 2 else none %}
             {% set is_billed = consultation.arca_invoice_id is not none %}
-            <tr class="align-top {% if is_billed %}bg-rose-50/70{% endif %}">
+            {% set is_excluded = consultation.status == 'excluded' %}
+            <tr class="align-top {% if is_billed %}bg-rose-50/70{% elif is_excluded %}bg-slate-50{% endif %}">
               <td>
-                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" data-billing-select-row {% if consultation.selected_for_billing and not is_billed %}checked{% endif %} {% if is_billed %}disabled{% endif %} />
+                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" data-billing-select-row {% if consultation.selected_for_billing and not is_billed and not is_excluded %}checked{% endif %} {% if is_billed or is_excluded %}disabled{% endif %} />
               </td>
               <td class="text-slate-600">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</td>
               <td class="text-slate-900">
@@ -152,7 +154,7 @@
               <td class="break-all text-slate-600">{{ consultation.patient_email or "-" }}</td>
               <td class="text-slate-600">{{ consultation.insurance_name or "-" }}</td>
               <td>
-                {% if is_billed %}
+                {% if is_billed or is_excluded %}
                   <p class="text-sm font-medium text-slate-900">
                     {% for item in items %}
                       {% if consultation.billing_item_id == item.id %}{{ item.name }}{% endif %}
@@ -188,6 +190,8 @@
                   {% else %}
                     {{ badge("No enviado", "neutral") }}
                   {% endif %}
+                {% elif is_excluded %}
+                  {{ badge("No enviar", "neutral") }}
                 {% else %}
                   <label class="inline-flex items-center gap-1.5 text-sm text-slate-700">
                     <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="send_email_{{ consultation.id }}" {% if consultation.send_email %}checked{% endif %} />
@@ -196,7 +200,7 @@
                 {% endif %}
               </td>
               <td>
-                {% if is_billed %}
+                {% if is_billed or is_excluded %}
                   <div class="min-h-[4.5rem] rounded-lg border border-rose-100 bg-white/60 px-3 py-2 text-sm text-slate-700">
                     <p class="whitespace-pre-wrap">{{ consultation.diagnosis or "-" }}</p>
                   </div>
@@ -207,6 +211,8 @@
               <td>
                 {% if is_billed %}
                   {{ badge("Facturado", "success") }}
+                {% elif is_excluded %}
+                  {{ badge("No facturar", "neutral") }}
                 {% elif consultation.status == 'missing_patient_match' %}
                   {{ badge("Sin DNI", "warning") }}
                 {% elif consultation.status == 'error' %}
