@@ -1217,6 +1217,116 @@ def test_billing_pending_can_mark_selected_as_no_facturar(client, db_session):
     assert "Andrea Blumtritt" in listing.text
 
 
+def test_billing_pending_can_delete_selected_unbilled_consultations(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Delete Pending", "whatsapp:+6373"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-delete-pending@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    async def _seed():
+        async with db_session() as session:
+            async with session.begin():
+                row = BillingExternalConsultation(
+                    tenant_id=tenant_id,
+                    external_provider="csv_attended",
+                    external_id="delete-pending-1",
+                    attended_at=datetime(2026, 6, 17, 3, 0),
+                    patient_name="Andrea Blumtritt",
+                    patient_document="30123456",
+                    patient_email="andrea@example.com",
+                    status="excluded",
+                )
+                session.add(row)
+                await session.flush()
+                return row.id
+
+    row_id = asyncio.run(_seed())
+    login(client, "tenant-delete-pending@test.com", "secret-123")
+    page = client.get("/t/billing/pending?status=excluded")
+    assert "Andrea Blumtritt" in page.text
+    response = client.post(
+        "/t/billing/pending/delete",
+        data={"csrf_token": _csrf(page.text), "consultation_ids": str(row_id), "status": "excluded"},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    async def _fetch():
+        async with db_session() as session:
+            return await session.get(BillingExternalConsultation, row_id)
+
+    assert asyncio.run(_fetch()) is None
+    listing = client.get("/t/billing/pending")
+    assert "Andrea Blumtritt" not in listing.text
+
+
+def test_billing_pending_delete_keeps_billed_consultations(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Delete Billed", "whatsapp:+6374"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-delete-billed@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    async def _seed():
+        async with db_session() as session:
+            async with session.begin():
+                row = BillingExternalConsultation(
+                    tenant_id=tenant_id,
+                    external_provider="csv_attended",
+                    external_id="delete-billed-1",
+                    attended_at=datetime(2026, 6, 17, 3, 0),
+                    patient_name="Juan Perez",
+                    patient_document="30111222",
+                    status="billed",
+                )
+                session.add(row)
+                await session.flush()
+                invoice = ArcaInvoice(
+                    tenant_id=tenant_id,
+                    external_consultation_id=row.id,
+                    represented_cuit="27285069012",
+                    environment="homo",
+                    pto_vta=6,
+                    cbte_tipo=11,
+                    cbte_nro=99,
+                    status=ArcaInvoiceStatus.AUTHORIZED,
+                    mon_id="PES",
+                )
+                session.add(invoice)
+                await session.flush()
+                row.arca_invoice_id = invoice.id
+                return row.id
+
+    row_id = asyncio.run(_seed())
+    login(client, "tenant-delete-billed@test.com", "secret-123")
+    page = client.get("/t/billing/pending?status=billed")
+    response = client.post(
+        "/t/billing/pending/delete",
+        data={"csrf_token": _csrf(page.text), "consultation_ids": str(row_id), "status": "billed"},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    async def _fetch():
+        async with db_session() as session:
+            return await session.get(BillingExternalConsultation, row_id)
+
+    assert asyncio.run(_fetch()) is not None
+    listing = client.get("/t/billing/pending?status=billed")
+    assert "Juan Perez" in listing.text
+
+
 def test_billing_pending_import_requires_csv_file(
     client,
     db_session,

@@ -360,6 +360,12 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
+    "/billing/pending/delete",
+    views.billing_pending_delete_selected,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing/emit/{consultation_id}",
     views.billing_invoice_emit_one,
     methods=["POST"],

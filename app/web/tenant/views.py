@@ -3964,6 +3964,44 @@ async def billing_pending_exclude_selected(
     return RedirectResponse(_pending_back_url(form), status_code=303)
 
 
+async def billing_pending_delete_selected(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    form = await request.form()
+    validate_csrf(request, str(form.get("csrf_token") or ""))
+    ids = _selected_ids_from_form(form)
+    if not ids:
+        add_flash(request, "error", "Selecciona al menos una consulta.")
+        return RedirectResponse(_pending_back_url(form), status_code=303)
+    consultations = await _load_pending_consultations(session, int(user.tenant_id), ids)
+    deleted = 0
+    blocked = 0
+    async with session.begin_nested():
+        for consultation in consultations:
+            if consultation.arca_invoice_id is not None:
+                blocked += 1
+                continue
+            await session.delete(consultation)
+            deleted += 1
+        await audit_log(
+            session,
+            request,
+            user,
+            action="billing_consultations_deleted",
+            entity="billing_external_consultations",
+            entity_id=None,
+            tenant_id=int(user.tenant_id),
+            metadata={"selected": len(ids), "deleted": deleted, "blocked_billed": blocked},
+        )
+    if deleted:
+        add_flash(request, "success", f"Consultas eliminadas: {deleted}. Ya pueden volver a importarse desde CSV.")
+    if blocked:
+        add_flash(request, "warning", f"No se eliminaron {blocked} consultas porque ya tienen factura asociada.")
+    return RedirectResponse(_pending_back_url(form), status_code=303)
+
+
 async def billing_invoice_emit_one(
     request: Request,
     consultation_id: int,

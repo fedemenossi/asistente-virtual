@@ -65,7 +65,7 @@
 
   {% if rows %}
     <section class="surface mb-4">
-      <form method="get" action="/t/billing/pending" class="toolbar">
+      <form method="get" action="/t/billing/pending" class="toolbar flex-nowrap">
         <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
         <input type="hidden" name="dni" value="{{ dni or '' }}" />
         <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
@@ -74,9 +74,9 @@
           <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
           <input name="q" value="{{ q or '' }}" placeholder="Nombre, DNI, email, obra social o diagnostico" />
         </div>
-        <input class="input w-40" type="date" name="date_from" value="{{ date_from if request.query_params.get('date_from') else '' }}" aria-label="Fecha desde" />
-        <input class="input w-40" type="date" name="date_to" value="{{ date_to if request.query_params.get('date_to') else '' }}" aria-label="Fecha hasta" />
-        <select class="select" name="status">
+        <input class="input" style="width: 9rem; max-width: 9rem; flex: 0 0 9rem;" type="date" name="date_from" value="{{ date_from if request.query_params.get('date_from') else '' }}" aria-label="Fecha desde" />
+        <input class="input" style="width: 9rem; max-width: 9rem; flex: 0 0 9rem;" type="date" name="date_to" value="{{ date_to if request.query_params.get('date_to') else '' }}" aria-label="Fecha hasta" />
+        <select class="select" style="width: 9.5rem; max-width: 9.5rem; flex: 0 0 9.5rem;" name="status">
           <option value="">Estado</option>
           <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pendiente</option>
           <option value="billed" {% if status == 'billed' %}selected{% endif %}>Facturado</option>
@@ -104,6 +104,7 @@
       <input type="hidden" name="batch_id" value="{{ batch_id or '' }}" />
     </form>
     <div class="mb-3 flex flex-wrap justify-end gap-2">
+      <button class="btn btn-danger" type="submit" form="billing-grid-form" formaction="/t/billing/pending/delete" data-confirm="Eliminar las consultas seleccionadas? Las facturadas no se borraran.">Eliminar seleccionadas</button>
       <button class="btn btn-secondary" type="submit" form="billing-grid-form" formaction="/t/billing/pending/no-facturar">No facturar</button>
       <button class="btn btn-primary" type="submit" form="billing-grid-form">Facturar seleccionadas</button>
     </div>
@@ -144,7 +145,7 @@
             {% set is_excluded = consultation.status == 'excluded' %}
             <tr class="align-top {% if is_billed %}bg-rose-50/70{% elif is_excluded %}bg-slate-50{% endif %}">
               <td>
-                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" data-billing-select-row {% if consultation.selected_for_billing and not is_billed and not is_excluded %}checked{% endif %} {% if is_billed or is_excluded %}disabled{% endif %} />
+                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" data-billing-select-row {% if consultation.selected_for_billing and not is_billed and not is_excluded %}checked{% endif %} {% if is_billed %}disabled{% endif %} />
               </td>
               <td class="text-slate-600">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</td>
               <td class="text-slate-900">
@@ -366,6 +367,15 @@
       };
       selectableRows.forEach((row) => row.addEventListener("change", refreshSelectedCount));
       refreshSelectedCount();
+
+      document.querySelectorAll("[data-confirm]").forEach((button) => {
+        button.addEventListener("click", (event) => {
+          const message = button.getAttribute("data-confirm");
+          if (message && !window.confirm(message)) {
+            event.preventDefault();
+          }
+        });
+      });
 
       const openInvoiceModal = (modal) => {
         if (!modal) return;
