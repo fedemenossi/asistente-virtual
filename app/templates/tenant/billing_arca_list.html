@@ -51,9 +51,8 @@
         <thead>
           <tr>
             <th class="px-4 py-3 text-left font-medium">Comprobante</th>
-            <th class="px-4 py-3 text-left font-medium">Consulta</th>
+            <th class="px-4 py-3 text-left font-medium">Fecha facturacion</th>
             <th class="px-4 py-3 text-left font-medium">Paciente</th>
-            <th class="px-4 py-3 text-left font-medium">Ambiente</th>
             <th class="px-4 py-3 text-left font-medium">Importe</th>
             <th class="px-4 py-3 text-left font-medium">Estado</th>
             <th class="px-4 py-3 text-left font-medium">PDF</th>
@@ -68,17 +67,15 @@
             {% set status = invoice.status.value if invoice.status.value is defined else invoice.status %}
             <tr>
               <td class="px-4 py-3 text-slate-900">
-                {{ invoice.pto_vta }}-{{ invoice.cbte_tipo }}-{{ invoice.cbte_nro or "sin numero" }}
+                {% if invoice.cbte_nro %}
+                  {{ "%05d"|format(invoice.pto_vta) }}-{{ "%08d"|format(invoice.cbte_nro) }}
+                {% else %}
+                  {{ "%05d"|format(invoice.pto_vta) }}-sin numero
+                {% endif %}
                 <p class="text-xs text-slate-500">CAE {{ invoice.cae or "-" }}</p>
               </td>
-              <td class="px-4 py-3 text-slate-600">
-                {% if consultation %}
-                  <p class="font-medium text-slate-900">#{{ consultation.id }}</p>
-                  <p class="max-w-48 truncate text-xs text-slate-500" title="{{ consultation.external_id }}">{{ consultation.external_provider }}: {{ consultation.external_id }}</p>
-                  <p class="text-xs text-slate-500">Facturada: {{ consultation.billed_at or "-" }}</p>
-                {% else %}
-                  -
-                {% endif %}
+              <td class="px-4 py-3 whitespace-nowrap text-slate-600">
+                {{ (invoice.authorized_at or invoice.created_at)|format_ba('%d/%m/%Y %H:%M:%S') if (invoice.authorized_at or invoice.created_at) else "-" }}
               </td>
               <td class="px-4 py-3 text-slate-600">
                 {% if consultation %}
@@ -88,8 +85,17 @@
                   -
                 {% endif %}
               </td>
-              <td class="px-4 py-3 text-slate-600">{{ invoice.environment }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ invoice.imp_total or "-" }} {{ invoice.mon_id }}</td>
+              <td class="px-4 py-3 text-slate-600">
+                {% if invoice.imp_total is not none %}
+                  {% if invoice.mon_id == "PES" %}
+                    $ {{ invoice.imp_total }}
+                  {% else %}
+                    {{ invoice.imp_total }} {{ invoice.mon_id }}
+                  {% endif %}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
               <td class="px-4 py-3">
                 {% if status == 'authorized' %}
                   {{ badge("Autorizado", "success") }}

@@ -527,8 +527,9 @@ def test_billing_arca_list_is_scoped_to_current_tenant(client, db_session):
 
     response = client.get("/t/billing-arca")
     assert response.status_code == 200
-    assert "101" in response.text
-    assert "202" not in response.text
+    assert "00001-00000101" in response.text
+    assert "00001-00000202" not in response.text
+    assert "Fecha facturacion" in response.text
 
     own_detail = client.get(f"/t/billing-arca/{invoice_a}")
     assert own_detail.status_code == 200
@@ -1550,7 +1551,8 @@ def test_billing_csv_import_crosses_with_local_billed_consultations(
 
     invoice_list = client.get("/t/billing/invoices")
     assert invoice_list.status_code == 200
-    assert external_id in invoice_list.text
+    assert "Fecha facturacion" in invoice_list.text
+    assert external_id not in invoice_list.text
     assert "No enviado" in invoice_list.text
 
     async def _verify_single_billed_link():
