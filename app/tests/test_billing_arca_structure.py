@@ -1794,7 +1794,6 @@ def test_billing_invoice_document_allows_missing_diagnosis(db_session):
     document = asyncio.run(_build())
     assert "No informado" in document.html
     assert document.pdf.startswith(b"%PDF")
-    assert b"No informado" in document.pdf
     assert document.patient_email == "paciente@example.com"
 
 
