@@ -915,7 +915,67 @@ def test_billing_pending_import_accepts_date_with_seconds(client, db_session):
             )
 
     row = asyncio.run(_fetch())
-    assert row.attended_at == datetime(2026, 7, 3, 21, 15, 30)
+    assert row.attended_at == datetime(2026, 7, 4, 0, 15, 30)
+
+
+def test_billing_pending_import_date_only_keeps_local_ba_day(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant CSV Date Only BA", "whatsapp:+6391"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-csv-date-only-ba@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491111111111",
+            nombre="Andrea",
+            apellido="Blumtritt",
+            dni="30123456",
+            tipo_documento="DNI",
+            numero_documento="30123456",
+            document_number_normalized="30123456",
+            email="andrea@example.com",
+            obra_social="OSDE",
+        )
+    )
+    login(client, "tenant-csv-date-only-ba@test.com", "secret-123")
+    page = client.get("/t/billing/pending")
+    csv_content = (
+        '"Fecha","Paciente","Medico","Financiador"\n'
+        '"17/06/2026","Andrea Blumtritt (61868706701)","Maria Laura Langdon","OSDE"\n'
+    ).encode("utf-8-sig")
+
+    response = client.post(
+        "/t/billing/pending/import",
+        data={"csrf_token": _csrf(page.text)},
+        files={"csv_file": ("pacientes_atendidos.csv", csv_content, "text/csv")},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    listing = client.get(response.headers["location"])
+    assert "17/06/2026" in listing.text
+    assert "16/06/2026" not in listing.text
+
+    filtered = client.get("/t/billing/pending?date_from=2026-06-17&date_to=2026-06-17")
+    assert "Andrea Blumtritt" in filtered.text
+
+    async def _fetch():
+        async with db_session() as session:
+            return await session.scalar(
+                select(BillingExternalConsultation).where(
+                    BillingExternalConsultation.tenant_id == tenant_id,
+                    BillingExternalConsultation.patient_name == "Andrea Blumtritt",
+                )
+            )
+
+    row = asyncio.run(_fetch())
+    assert row.attended_at == datetime(2026, 6, 17, 3, 0)
 
 
 def test_billing_pending_import_accepts_cp1252_attended_csv(client, db_session):

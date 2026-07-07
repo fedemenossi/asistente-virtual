@@ -5,7 +5,7 @@ import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.arca_billable_item import ArcaBillableItem
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.paciente import Paciente
+from app.core.timezone import get_ba_tz
 
 
 @dataclass(frozen=True)
@@ -244,7 +245,8 @@ def _parse_date(value: str) -> datetime | None:
         "%Y-%m-%d",
     ):
         try:
-            return datetime.strptime(text, fmt)
+            parsed = datetime.strptime(text, fmt)
+            return parsed.replace(tzinfo=get_ba_tz()).astimezone(timezone.utc).replace(tzinfo=None)
         except ValueError:
             continue
     return None
