@@ -549,7 +549,7 @@ def _draw_invoice_page(
     right_content_x = divider_x + (13 * mm)
     header_text_top = header_top - 7 * mm
 
-    pdf.setFont("Helvetica-Bold", 11)
+    pdf.setFont("Helvetica-Bold", 13)
     pdf.drawString(left_content_x, header_text_top, _clip(emisor_name, 36))
     _draw_field(pdf, left_content_x, header_text_top - 21, "Razon Social:", emisor_name, label_w=26 * mm, value_max=120)
     pdf.setFont("Helvetica-Bold", 8.4)
@@ -873,8 +873,9 @@ def _draw_field(
 ) -> None:
     pdf.setFont("Helvetica-Bold", 8.4)
     pdf.drawString(x, y, label)
+    value_x = x + min(label_w, pdf.stringWidth(str(label), "Helvetica-Bold", 8.4) + 5)
     pdf.setFont("Helvetica", 8.4)
-    pdf.drawString(x + label_w, y, _clip(value, value_max))
+    pdf.drawString(value_x, y, _clip(value, value_max))
 
 
 def _draw_centered_wrapped(
