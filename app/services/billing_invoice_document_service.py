@@ -547,9 +547,9 @@ def _draw_invoice_page(
     right_pad = 4 * mm
     left_content_x = left + left_pad
     right_content_x = divider_x + (13 * mm)
-    header_text_top = header_top - 7 * mm
+    header_text_top = header_top - 10 * mm
 
-    pdf.setFont("Helvetica-Bold", 13)
+    pdf.setFont("Helvetica-Bold", 15)
     pdf.drawString(left_content_x, header_text_top, _clip(emisor_name, 36))
     _draw_field(pdf, left_content_x, header_text_top - 21, "Razon Social:", emisor_name, label_w=26 * mm, value_max=120)
     pdf.setFont("Helvetica-Bold", 8.4)
