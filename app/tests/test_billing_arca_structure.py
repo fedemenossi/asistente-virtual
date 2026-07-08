@@ -14,6 +14,7 @@ from app.integrations.arca.wsaa_client import AccessTicket
 from app.integrations.arca.wsfe_client import WsfeError, WsfeResult
 from app.models.arca_billable_item import ArcaBillableItem
 from app.models.arca_invoice import ArcaInvoice, ArcaInvoiceStatus
+from app.models.billing_diagnostic import BillingDiagnostic
 from app.models.billing_email_log import BillingEmailLog
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_invoice_line import BillingInvoiceLine
@@ -664,6 +665,105 @@ def test_billing_arca_billable_items_crud_and_tenant_scope(client, db_session):
     code, name, active = asyncio.run(_active())
     assert code == "CONSULTA-3"
     assert name == "Consulta settings"
+    assert active is False
+
+
+def test_billing_diagnostics_crud_and_tenant_scope(client, db_session):
+    tenant_a = asyncio.run(create_tenant(db_session, "Tenant Diagnostics A", "whatsapp:+6181"))
+    tenant_b = asyncio.run(create_tenant(db_session, "Tenant Diagnostics B", "whatsapp:+6182"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-diagnostics-a@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_a,
+        )
+    )
+    login(client, "tenant-diagnostics-a@test.com", "secret-123")
+
+    page = client.get("/t/settings/billing/diagnostics/new")
+    assert page.status_code == 200
+    create_response = client.post(
+        "/t/settings/billing/diagnostics/new",
+        data={
+            "csrf_token": _csrf(page.text),
+            "code": "CONTROL",
+            "name": "Control ginecologico",
+            "description": "Control anual",
+            "active": "on",
+            "default_diagnostic": "on",
+        },
+        follow_redirects=False,
+    )
+    assert create_response.status_code in (302, 303)
+
+    async def _fetch_diagnostic():
+        async with db_session() as session:
+            diagnostic = await session.scalar(
+                select(BillingDiagnostic).where(
+                    BillingDiagnostic.tenant_id == tenant_a,
+                    BillingDiagnostic.code == "CONTROL",
+                )
+            )
+            other = BillingDiagnostic(
+                tenant_id=tenant_b,
+                code="OTRO",
+                name="Otro tenant",
+                active=True,
+            )
+            session.add(other)
+            await session.commit()
+            return diagnostic.id
+
+    diagnostic_id = asyncio.run(_fetch_diagnostic())
+    listing = client.get("/t/settings/billing/diagnostics")
+    assert "CONTROL" in listing.text
+    assert "Control ginecologico" in listing.text
+    assert "OTRO" not in listing.text
+
+    duplicate = client.post(
+        "/t/settings/billing/diagnostics/new",
+        data={
+            "csrf_token": _csrf(client.get("/t/settings/billing/diagnostics/new").text),
+            "code": "CONTROL",
+            "name": "Duplicado",
+            "active": "on",
+        },
+    )
+    assert duplicate.status_code == 200
+    assert "Ya existe un diagnostico con ese codigo" in duplicate.text
+
+    edit_page = client.get(f"/t/settings/billing/diagnostics/{diagnostic_id}/edit")
+    edit_response = client.post(
+        f"/t/settings/billing/diagnostics/{diagnostic_id}/edit",
+        data={
+            "csrf_token": _csrf(edit_page.text),
+            "code": "CONTROL-2",
+            "name": "Control actualizado",
+            "description": "",
+            "active": "on",
+        },
+        follow_redirects=False,
+    )
+    assert edit_response.status_code in (302, 303)
+
+    delete_page = client.get(f"/t/settings/billing/diagnostics/{diagnostic_id}/edit")
+    delete_response = client.post(
+        f"/t/settings/billing/diagnostics/{diagnostic_id}/delete",
+        data={"csrf_token": _csrf(delete_page.text)},
+        follow_redirects=False,
+    )
+    assert delete_response.status_code in (302, 303)
+
+    async def _active():
+        async with db_session() as session:
+            diagnostic = await session.get(BillingDiagnostic, diagnostic_id)
+            return diagnostic.code, diagnostic.name, diagnostic.active
+
+    code, name, active = asyncio.run(_active())
+    assert code == "CONTROL-2"
+    assert name == "Control actualizado"
     assert active is False
 
 
@@ -1325,6 +1425,73 @@ def test_billing_pending_delete_keeps_billed_consultations(client, db_session):
     assert asyncio.run(_fetch()) is not None
     listing = client.get("/t/billing/pending?status=billed")
     assert "Juan Perez" in listing.text
+
+
+def test_billing_pending_grid_saves_catalog_diagnostic(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Grid Diagnostic", "whatsapp:+6375"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(db_session, tenant_id, diagnosis=None)
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-grid-diagnostic@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    async def _seed_diagnostic():
+        async with db_session() as session:
+            async with session.begin():
+                diagnostic = BillingDiagnostic(
+                    tenant_id=tenant_id,
+                    code="CONTROL",
+                    name="Control ginecologico",
+                    active=True,
+                )
+                session.add(diagnostic)
+                await session.flush()
+                return diagnostic.id
+
+    diagnostic_id = asyncio.run(_seed_diagnostic())
+
+    class FakeJob:
+        id = "fake-diagnostic-job"
+
+    monkeypatch.setattr(
+        "app.web.tenant.views.start_billing_emission_job",
+        lambda tenant_id_arg, ids: FakeJob(),
+    )
+    login(client, "tenant-grid-diagnostic@test.com", "secret-123")
+    page = client.get("/t/billing/pending")
+    assert "Control ginecologico" in page.text
+    response = client.post(
+        "/t/billing/emit",
+        data={
+            "csrf_token": _csrf(page.text),
+            "consultation_ids": str(consultation_id),
+            f"item_id_{consultation_id}": str(item_id),
+            f"amount_{consultation_id}": "1500.00",
+            f"diagnostic_id_{consultation_id}": str(diagnostic_id),
+            "date_from": "",
+            "date_to": "",
+            "consultorio_id": "",
+            "q": "",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    async def _fetch():
+        async with db_session() as session:
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            return consultation.billing_diagnostic_id, consultation.diagnosis
+
+    saved_diagnostic_id, diagnosis = asyncio.run(_fetch())
+    assert saved_diagnostic_id == diagnostic_id
+    assert diagnosis == "Control ginecologico"
 
 
 def test_billing_pending_import_requires_csv_file(

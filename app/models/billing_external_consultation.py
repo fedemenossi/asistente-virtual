@@ -25,6 +25,7 @@ class BillingExternalConsultation(Base, TimestampMixin):
     patient_id: Mapped[int | None] = mapped_column(ForeignKey("pacientes.id"), nullable=True, index=True)
     arca_invoice_id: Mapped[int | None] = mapped_column(ForeignKey("billing_invoices.id"), nullable=True, index=True)
     billing_item_id: Mapped[int | None] = mapped_column(ForeignKey("billing_items.id"), nullable=True)
+    billing_diagnostic_id: Mapped[int | None] = mapped_column(ForeignKey("billing_diagnostics.id"), nullable=True)
     external_provider: Mapped[str] = mapped_column(String(50), nullable=False, default="consultorio_movil")
     external_id: Mapped[str] = mapped_column(String(120), nullable=False)
     import_batch_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

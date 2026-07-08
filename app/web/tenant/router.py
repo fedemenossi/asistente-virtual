@@ -328,6 +328,45 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
+    "/settings/billing/diagnostics",
+    views.billing_diagnostics_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing/diagnostics/new",
+    views.billing_diagnostic_new_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing/diagnostics/new",
+    views.billing_diagnostic_new_post,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing/diagnostics/{diagnostic_id}/edit",
+    views.billing_diagnostic_edit_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing/diagnostics/{diagnostic_id}/edit",
+    views.billing_diagnostic_edit_post,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/settings/billing/diagnostics/{diagnostic_id}/delete",
+    views.billing_diagnostic_delete,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing/pending",
     views.billing_pending_consultations,
     methods=["GET"],

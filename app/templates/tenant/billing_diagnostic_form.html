@@ -1,0 +1,58 @@
+{% extends "layout/base.html" %}
+
+{% set is_edit = diagnostic is defined and diagnostic %}
+{% set title = "Editar diagnostico" if is_edit else "Nuevo diagnostico" %}
+{% set breadcrumb = "Tenant / Facturacion ARCA / Diagnosticos" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">Catalogo local de diagnosticos medicos</p>
+    <h1 class="text-2xl font-semibold text-slate-900">{{ title }}</h1>
+  </div>
+
+  <form method="post" class="card p-6 space-y-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    {% if errors %}
+      <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        Revisa los campos marcados.
+      </div>
+    {% endif %}
+    <div class="grid gap-4 md:grid-cols-2">
+      <div>
+        <label class="text-xs text-slate-500">Codigo</label>
+        <input class="input" name="code" value="{{ form_data.get('code') if form_data else (diagnostic.code if diagnostic else '') }}" />
+        {% if errors.code %}<p class="mt-1 text-xs text-rose-600">{{ errors.code }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">Nombre</label>
+        <input class="input" name="name" value="{{ form_data.get('name') if form_data else (diagnostic.name if diagnostic else '') }}" />
+        {% if errors.name %}<p class="mt-1 text-xs text-rose-600">{{ errors.name }}</p>{% endif %}
+      </div>
+      <div class="flex items-center gap-3 pt-6">
+        {% set is_active = form_data.get('active') if form_data else (diagnostic.active if diagnostic else true) %}
+        <input class="h-4 w-4" type="checkbox" name="active" id="active" {% if is_active %}checked{% endif %} />
+        <label class="text-sm text-slate-700" for="active">Activo</label>
+      </div>
+      <div class="flex items-center gap-3 pt-6">
+        {% set is_default = form_data.get('default_diagnostic') if form_data else (diagnostic.default_diagnostic if diagnostic else false) %}
+        <input class="h-4 w-4" type="checkbox" name="default_diagnostic" id="default_diagnostic" {% if is_default %}checked{% endif %} />
+        <label class="text-sm text-slate-700" for="default_diagnostic">Diagnostico por defecto</label>
+      </div>
+      <div class="md:col-span-2">
+        <label class="text-xs text-slate-500">Descripcion</label>
+        <textarea class="textarea" name="description" rows="3">{{ form_data.get('description') if form_data else (diagnostic.description if diagnostic else '') }}</textarea>
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-3">
+      <button class="btn btn-primary" type="submit">Guardar</button>
+      <a class="btn btn-secondary" href="/t/settings/billing/diagnostics">Volver</a>
+    </div>
+  </form>
+
+  {% if is_edit and diagnostic.active %}
+    <form method="post" action="/t/settings/billing/diagnostics/{{ diagnostic.id }}/delete" class="mt-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button class="btn btn-secondary" type="submit">Desactivar diagnostico</button>
+    </form>
+  {% endif %}
+{% endblock %}

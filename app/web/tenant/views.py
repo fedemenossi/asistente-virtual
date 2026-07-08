@@ -34,6 +34,7 @@ from app.models.arca_invoice import ArcaInvoice
 from app.models.arca_billable_item import ArcaBillableItem
 from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_email_log import BillingEmailLog
+from app.models.billing_diagnostic import BillingDiagnostic
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_setting import BillingSetting
 from app.models.consultorio import Consultorio, TipoConsultorio
@@ -2785,6 +2786,60 @@ async def _validate_billing_item(
     return errors
 
 
+def _billing_diagnostic_form_context(
+    diagnostic: BillingDiagnostic | None = None,
+    *,
+    errors: dict[str, str] | None = None,
+    form_data: dict | None = None,
+) -> dict:
+    return {
+        "diagnostic": diagnostic,
+        "errors": errors or {},
+        "form_data": form_data or {},
+    }
+
+
+def _billing_diagnostic_form_data(
+    code: str,
+    name: str,
+    description: str,
+    active: str | None,
+    default_diagnostic: str | None,
+) -> dict:
+    return {
+        "code": code.strip(),
+        "name": name.strip(),
+        "description": description.strip(),
+        "active": bool(active),
+        "default_diagnostic": bool(default_diagnostic),
+    }
+
+
+async def _validate_billing_diagnostic(
+    session: AsyncSession,
+    tenant_id: int,
+    data: dict,
+    *,
+    diagnostic_id: int | None = None,
+) -> dict[str, str]:
+    errors: dict[str, str] = {}
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,50}", data["code"]):
+        errors["code"] = "Usa hasta 50 caracteres alfanumericos, punto, guion o guion bajo."
+    if not data["name"]:
+        errors["name"] = "El nombre es obligatorio."
+    if data["code"]:
+        stmt = select(BillingDiagnostic.id).where(
+            BillingDiagnostic.tenant_id == tenant_id,
+            BillingDiagnostic.code == data["code"],
+        )
+        if diagnostic_id is not None:
+            stmt = stmt.where(BillingDiagnostic.id != diagnostic_id)
+        exists = await session.scalar(stmt)
+        if exists is not None:
+            errors["code"] = "Ya existe un diagnostico con ese codigo."
+    return errors
+
+
 async def audit_logs(
     request: Request,
     user: CurrentUser = Depends(require_permission("tenant:read")),
@@ -3511,6 +3566,201 @@ async def billing_arca_item_delete(
     return RedirectResponse("/t/billing-arca/items", status_code=303)
 
 
+async def billing_diagnostics_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    result = await session.execute(
+        select(BillingDiagnostic)
+        .where(BillingDiagnostic.tenant_id == user.tenant_id)
+        .order_by(BillingDiagnostic.active.desc(), BillingDiagnostic.name.asc())
+    )
+    diagnostics = list(result.scalars().all())
+    return _template(
+        request,
+        "tenant/billing_diagnostics_list.html",
+        {"diagnostics": diagnostics},
+    )
+
+
+async def billing_diagnostic_new_get(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+) -> Response:
+    return _template(
+        request,
+        "tenant/billing_diagnostic_form.html",
+        _billing_diagnostic_form_context(),
+    )
+
+
+async def billing_diagnostic_new_post(
+    request: Request,
+    code: str = Form(""),
+    name: str = Form(""),
+    description: str = Form(""),
+    active: str | None = Form(None),
+    default_diagnostic: str | None = Form(None),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    data = _billing_diagnostic_form_data(code, name, description, active, default_diagnostic)
+    errors = await _validate_billing_diagnostic(session, int(user.tenant_id), data)
+    if errors:
+        return _template(
+            request,
+            "tenant/billing_diagnostic_form.html",
+            _billing_diagnostic_form_context(errors=errors, form_data=data),
+        )
+    async with session.begin_nested():
+        diagnostic = BillingDiagnostic(
+            tenant_id=int(user.tenant_id),
+            code=data["code"],
+            name=data["name"],
+            description=data["description"] or None,
+            active=bool(data["active"]),
+            default_diagnostic=bool(data["default_diagnostic"]),
+        )
+        session.add(diagnostic)
+        await session.flush()
+        if diagnostic.default_diagnostic:
+            await session.execute(
+                BillingDiagnostic.__table__.update()
+                .where(
+                    BillingDiagnostic.tenant_id == user.tenant_id,
+                    BillingDiagnostic.id != diagnostic.id,
+                )
+                .values(default_diagnostic=False)
+            )
+        await audit_log(
+            session,
+            request,
+            user,
+            action="create",
+            entity="billing_diagnostic",
+            entity_id=diagnostic.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"code": diagnostic.code},
+        )
+    add_flash(request, "success", "Diagnostico medico creado")
+    return RedirectResponse("/t/settings/billing/diagnostics", status_code=303)
+
+
+async def billing_diagnostic_edit_get(
+    request: Request,
+    diagnostic_id: int,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    diagnostic = await session.scalar(
+        select(BillingDiagnostic).where(
+            BillingDiagnostic.id == diagnostic_id,
+            BillingDiagnostic.tenant_id == user.tenant_id,
+        )
+    )
+    if diagnostic is None:
+        raise HTTPException(status_code=404, detail="Diagnostico medico no encontrado")
+    return _template(
+        request,
+        "tenant/billing_diagnostic_form.html",
+        _billing_diagnostic_form_context(diagnostic=diagnostic),
+    )
+
+
+async def billing_diagnostic_edit_post(
+    request: Request,
+    diagnostic_id: int,
+    code: str = Form(""),
+    name: str = Form(""),
+    description: str = Form(""),
+    active: str | None = Form(None),
+    default_diagnostic: str | None = Form(None),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    diagnostic = await session.scalar(
+        select(BillingDiagnostic).where(
+            BillingDiagnostic.id == diagnostic_id,
+            BillingDiagnostic.tenant_id == user.tenant_id,
+        )
+    )
+    if diagnostic is None:
+        raise HTTPException(status_code=404, detail="Diagnostico medico no encontrado")
+    data = _billing_diagnostic_form_data(code, name, description, active, default_diagnostic)
+    errors = await _validate_billing_diagnostic(session, int(user.tenant_id), data, diagnostic_id=diagnostic.id)
+    if errors:
+        return _template(
+            request,
+            "tenant/billing_diagnostic_form.html",
+            _billing_diagnostic_form_context(diagnostic=diagnostic, errors=errors, form_data=data),
+        )
+    async with session.begin_nested():
+        diagnostic.code = data["code"]
+        diagnostic.name = data["name"]
+        diagnostic.description = data["description"] or None
+        diagnostic.active = bool(data["active"])
+        diagnostic.default_diagnostic = bool(data["default_diagnostic"])
+        if diagnostic.default_diagnostic:
+            await session.execute(
+                BillingDiagnostic.__table__.update()
+                .where(
+                    BillingDiagnostic.tenant_id == user.tenant_id,
+                    BillingDiagnostic.id != diagnostic.id,
+                )
+                .values(default_diagnostic=False)
+            )
+        await audit_log(
+            session,
+            request,
+            user,
+            action="update",
+            entity="billing_diagnostic",
+            entity_id=diagnostic.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"code": diagnostic.code},
+        )
+    add_flash(request, "success", "Diagnostico medico actualizado")
+    return RedirectResponse("/t/settings/billing/diagnostics", status_code=303)
+
+
+async def billing_diagnostic_delete(
+    request: Request,
+    diagnostic_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    diagnostic = await session.scalar(
+        select(BillingDiagnostic).where(
+            BillingDiagnostic.id == diagnostic_id,
+            BillingDiagnostic.tenant_id == user.tenant_id,
+        )
+    )
+    if diagnostic is None:
+        raise HTTPException(status_code=404, detail="Diagnostico medico no encontrado")
+    async with session.begin_nested():
+        diagnostic.active = False
+        diagnostic.default_diagnostic = False
+        await audit_log(
+            session,
+            request,
+            user,
+            action="deactivate",
+            entity="billing_diagnostic",
+            entity_id=diagnostic.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"code": diagnostic.code},
+        )
+    add_flash(request, "success", "Diagnostico medico desactivado")
+    return RedirectResponse("/t/settings/billing/diagnostics", status_code=303)
+
+
 async def _billing_consultorios(session: AsyncSession, tenant_id: int) -> list[Consultorio]:
     result = await session.execute(
         select(Consultorio)
@@ -3595,6 +3845,7 @@ async def billing_pending_consultations(
     rows = list(result.all())
     consultorios = await _billing_consultorios(session, int(user.tenant_id))
     items = await _active_billing_items(session, int(user.tenant_id))
+    diagnostics = await _active_billing_diagnostics(session, int(user.tenant_id))
     job = get_billing_emission_job(job_id, int(user.tenant_id)) if job_id else get_latest_billing_emission_job(int(user.tenant_id))
     logger.info(
         "billing_pending_filter",
@@ -3628,6 +3879,7 @@ async def billing_pending_consultations(
             "status": status,
             "batch_id": batch_id,
             "items": items,
+            "diagnostics": diagnostics,
             "job": job.public_dict() if job else None,
         },
     )
@@ -3730,6 +3982,15 @@ async def _active_billing_items(session: AsyncSession, tenant_id: int) -> list[A
     return list(result.scalars().all())
 
 
+async def _active_billing_diagnostics(session: AsyncSession, tenant_id: int) -> list[BillingDiagnostic]:
+    result = await session.execute(
+        select(BillingDiagnostic)
+        .where(BillingDiagnostic.tenant_id == tenant_id, BillingDiagnostic.active.is_(True))
+        .order_by(BillingDiagnostic.default_diagnostic.desc(), BillingDiagnostic.name.asc())
+    )
+    return list(result.scalars().all())
+
+
 def _selected_ids_from_form(form) -> list[int]:
     values = form.getlist("consultation_ids")
     ids: list[int] = []
@@ -3792,11 +4053,27 @@ async def _save_billing_grid_settings(
     form,
 ) -> list[BillingExternalConsultation]:
     consultations = await _load_pending_consultations(session, tenant_id, consultation_ids)
+    diagnostics = {
+        diagnostic.id: diagnostic
+        for diagnostic in await _active_billing_diagnostics(session, tenant_id)
+    }
     for consultation in consultations:
         row_id = consultation.id
         consultation.selected_for_billing = True
         consultation.send_email = str(form.get(f"send_email_{row_id}") or "") == "on"
-        consultation.diagnosis = str(form.get(f"diagnosis_{row_id}") or consultation.diagnosis or "").strip() or None
+        diagnostic_value = str(form.get(f"diagnostic_id_{row_id}") or "").strip()
+        custom_diagnosis = str(form.get(f"diagnosis_custom_{row_id}") or "").strip()
+        try:
+            diagnostic_id = int(diagnostic_value)
+        except (TypeError, ValueError):
+            diagnostic_id = 0
+        diagnostic = diagnostics.get(diagnostic_id)
+        if diagnostic is not None:
+            consultation.billing_diagnostic_id = diagnostic.id
+            consultation.diagnosis = diagnostic.name.strip() or None
+        else:
+            consultation.billing_diagnostic_id = None
+            consultation.diagnosis = custom_diagnosis or consultation.diagnosis or None
         try:
             item_id = int(form.get(f"item_id_{row_id}") or consultation.billing_item_id or 0)
         except (TypeError, ValueError):
