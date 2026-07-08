@@ -227,13 +227,15 @@
                     <p class="whitespace-pre-wrap">{{ consultation.diagnosis or "-" }}</p>
                   </div>
                 {% else %}
+                  {% set default_diagnostic = (diagnostics|selectattr('default_diagnostic')|list|first) %}
+                  {% set selected_diagnostic_id = consultation.billing_diagnostic_id or (default_diagnostic.id if default_diagnostic and not consultation.diagnosis else none) %}
                   <select class="select billing-grid-diagnostic-select" form="billing-grid-form" name="diagnostic_id_{{ consultation.id }}">
-                    <option value="" {% if not consultation.billing_diagnostic_id %}selected{% endif %}>Personalizado</option>
+                    <option value="" {% if not selected_diagnostic_id %}selected{% endif %}>Personalizado</option>
                     {% for diagnostic in diagnostics %}
-                      <option value="{{ diagnostic.id }}" {% if consultation.billing_diagnostic_id == diagnostic.id %}selected{% endif %}>{{ diagnostic.name }}</option>
+                      <option value="{{ diagnostic.id }}" {% if selected_diagnostic_id == diagnostic.id %}selected{% endif %}>{{ diagnostic.name }}</option>
                     {% endfor %}
                   </select>
-                  <textarea class="textarea billing-grid-diagnosis mt-2" form="billing-grid-form" name="diagnosis_custom_{{ consultation.id }}" rows="2" placeholder="Texto personalizado" {% if consultation.billing_diagnostic_id %}disabled{% endif %}>{{ consultation.diagnosis or '' }}</textarea>
+                  <textarea class="textarea billing-grid-diagnosis mt-2" form="billing-grid-form" name="diagnosis_custom_{{ consultation.id }}" rows="2" placeholder="Texto personalizado" {% if selected_diagnostic_id %}disabled{% endif %}>{{ consultation.diagnosis or '' }}</textarea>
                 {% endif %}
               </td>
               <td>
