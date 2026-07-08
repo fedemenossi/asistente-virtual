@@ -128,7 +128,7 @@
                   <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2" title="{{ day.full_label }}: {{ day.count }} consultas">
                     <p class="text-xs font-bold text-slate-900">{{ day.count }}</p>
                     <div class="flex h-44 w-full items-end justify-center rounded-t-lg bg-white/70 px-1">
-                      <div class="w-full max-w-10 rounded-t-lg {% if day.count > 0 %}bg-gradient-to-t from-[#5B6CFF] to-[#20C7B7]{% else %}bg-slate-200{% endif %}" style="height: {{ day.bar_pct if day.count > 0 else 4 }}%"></div>
+                      <div class="w-4 rounded-t-full {% if day.count > 0 %}bg-sky-300{% else %}bg-slate-200{% endif %}" style="height: {{ day.bar_pct if day.count > 0 else 4 }}%"></div>
                     </div>
                     <p class="whitespace-nowrap text-[11px] font-semibold text-slate-500">{{ day.label }}</p>
                   </div>
