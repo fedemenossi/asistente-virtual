@@ -1475,6 +1475,7 @@ def test_billing_pending_grid_saves_catalog_diagnostic(client, db_session, monke
             f"item_id_{consultation_id}": str(item_id),
             f"amount_{consultation_id}": "1500.00",
             f"diagnostic_id_{consultation_id}": str(diagnostic_id),
+            f"sale_condition_{consultation_id}": "Transferencia",
             "date_from": "",
             "date_to": "",
             "consultorio_id": "",
@@ -1487,11 +1488,12 @@ def test_billing_pending_grid_saves_catalog_diagnostic(client, db_session, monke
     async def _fetch():
         async with db_session() as session:
             consultation = await session.get(BillingExternalConsultation, consultation_id)
-            return consultation.billing_diagnostic_id, consultation.diagnosis
+            return consultation.billing_diagnostic_id, consultation.diagnosis, consultation.sale_condition
 
-    saved_diagnostic_id, diagnosis = asyncio.run(_fetch())
+    saved_diagnostic_id, diagnosis, sale_condition = asyncio.run(_fetch())
     assert saved_diagnostic_id == diagnostic_id
     assert diagnosis == "Control ginecologico"
+    assert sale_condition == "Transferencia"
 
 
 def test_billing_pending_import_requires_csv_file(
@@ -1693,6 +1695,8 @@ def test_arca_service_emits_invoice_with_diagnosis(db_session):
             tenant = await session.get(Tenant, tenant_id)
             item = await session.get(ArcaBillableItem, item_id)
             consultation = await session.get(BillingExternalConsultation, consultation_id)
+            consultation.sale_condition = "Transferencia"
+            await session.flush()
             service = ArcaService(
                 session,
                 wsaa_factory=_FakeWsaaForEmission,
@@ -1732,6 +1736,7 @@ def test_arca_service_emits_invoice_with_diagnosis(db_session):
     assert invoice.request_json["metadata"]["description"] == "Consulta medica - OSDE - Afiliado 123456789"
     assert invoice.request_json["metadata"]["insurance_name"] == "OSDE"
     assert invoice.request_json["metadata"]["insurance_number"] == "123456789"
+    assert invoice.request_json["metadata"]["sale_condition"] == "Transferencia"
     assert invoice.request_json["metadata"]["receiver_tax_condition_id"] == 5
     assert invoice.diagnosis_original_snapshot == "Bronquitis aguda"
     assert invoice.diagnosis_final_snapshot == "Bronquitis aguda"
@@ -2229,10 +2234,13 @@ def test_billing_invoice_document_html_and_pdf_include_diagnosis(db_session):
         async with db_session() as session:
             tenant = await session.get(Tenant, tenant_id)
             invoice = await session.get(ArcaInvoice, invoice_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            consultation.sale_condition = "Otros medios"
             return await BillingInvoiceDocumentService(session).build_document(tenant, invoice)
 
     document = asyncio.run(_build())
     assert "Diagnostico visible obligatorio" in document.html
+    assert "Condicion de venta: Otros medios" in document.html
     assert document.pdf.startswith(b"%PDF")
     assert b"Diagnostico" in document.pdf
     assert document.patient_email == "paciente@example.com"

@@ -360,6 +360,7 @@ class ArcaService:
         today = datetime.now().date()
         service_date = (consultation.attended_at or datetime.now()).date()
         diagnosis = (consultation.diagnosis or "").strip()
+        sale_condition = _sale_condition(consultation.sale_condition)
         arca_cfg = tenant.arca_settings or {}
         receiver_tax_condition_id = _receiver_tax_condition_id(arca_cfg.get("receiver_tax_condition"))
         detail = {
@@ -401,6 +402,7 @@ class ArcaService:
                 "description": line_description,
                 "insurance_name": insurance_name,
                 "insurance_number": insurance_number,
+                "sale_condition": sale_condition,
                 "receiver_tax_condition_id": receiver_tax_condition_id,
             },
         }
@@ -707,3 +709,8 @@ def _compose_invoice_line_description(item_name: str, insurance_name: str | None
 
 def _document_key(value: str) -> str:
     return "".join(ch for ch in str(value or "") if ch.isalnum()).upper()
+
+
+def _sale_condition(value: str | None) -> str:
+    text = str(value or "").strip()
+    return text if text in {"Contado", "Transferencia", "Otros medios"} else "Contado"

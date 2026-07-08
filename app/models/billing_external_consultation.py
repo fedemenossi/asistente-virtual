@@ -42,6 +42,7 @@ class BillingExternalConsultation(Base, TimestampMixin):
     diagnosis_original: Mapped[str | None] = mapped_column(Text, nullable=True)
     diagnosis: Mapped[str | None] = mapped_column(Text, nullable=True)
     amount: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    sale_condition: Mapped[str | None] = mapped_column(String(40), nullable=True)
     selected_for_billing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     send_email: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")

@@ -255,6 +255,19 @@ def extract_patient_email(consultation: BillingExternalConsultation | None) -> s
     return None
 
 
+def extract_sale_condition(
+    invoice: ArcaInvoice,
+    consultation: BillingExternalConsultation | None = None,
+) -> str:
+    if consultation and consultation.sale_condition:
+        return _normalize_sale_condition(consultation.sale_condition)
+    request = invoice.request_json or {}
+    metadata = request.get("metadata") if isinstance(request, dict) else {}
+    if isinstance(metadata, dict):
+        return _normalize_sale_condition(metadata.get("sale_condition"))
+    return "Contado"
+
+
 def build_invoice_html(
     tenant: Tenant,
     invoice: ArcaInvoice,
@@ -272,6 +285,7 @@ def build_invoice_html(
     )
     patient_name = consultation.patient_name if consultation else "-"
     patient_document = consultation.patient_document if consultation else invoice.doc_nro
+    sale_condition = extract_sale_condition(invoice, consultation)
     fiscal = tenant.arca_settings or {}
     inicio_actividades = _activity_start_date(fiscal)
     qr_url = invoice.qr_url or build_arca_qr_url(invoice)
@@ -319,6 +333,7 @@ def build_invoice_html(
     <p class="label">Paciente</p>
     <p>{html.escape(str(patient_name or "-"))}</p>
     <p>Documento: {html.escape(str(patient_document or "-"))}</p>
+    <p>Condicion de venta: {html.escape(sale_condition)}</p>
   </div>
   <table>
     <thead><tr><th>Descripcion</th><th>Diagnostico</th><th>Importe</th></tr></thead>
@@ -501,6 +516,7 @@ def _draw_invoice_page(
     patient_name = consultation.patient_name if consultation else "-"
     patient_document = consultation.patient_document if consultation else invoice.doc_nro
     description = _invoice_description(invoice)
+    sale_condition = extract_sale_condition(invoice, consultation)
     emisor_name = str(fiscal.get("fiscal_name") or tenant.nombre or "-")
     emisor_address = str(fiscal.get("fiscal_address") or fiscal.get("address") or "")
     emisor_iva = str(fiscal.get("fiscal_iva_condition") or fiscal.get("iva_condition") or "Responsable Monotributo")
@@ -594,7 +610,7 @@ def _draw_invoice_page(
     _draw_field(pdf, left + 74 * mm, customer_top - 16, "Apellido y Nombre / Razon Social:", patient_name or "-", label_w=58 * mm, value_max=118)
     _draw_field(pdf, left + 8, customer_top - 35, "Condicion frente al IVA:", receptor_iva, label_w=42 * mm, value_max=85)
     _draw_field(pdf, left + 95 * mm, customer_top - 35, "Domicilio:", "-", label_w=18 * mm, value_max=88)
-    _draw_field(pdf, left + 8, customer_top - 54, "Condicion de venta:", "Contado", label_w=34 * mm, value_max=80)
+    _draw_field(pdf, left + 8, customer_top - 54, "Condicion de venta:", sale_condition, label_w=34 * mm, value_max=80)
     if _consumer_final_legend(invoice, receptor_iva):
         pdf.setFont("Helvetica-Bold", 8)
         pdf.drawRightString(right - 8, customer_top - 54, "A CONSUMIDOR FINAL")
@@ -845,6 +861,11 @@ def _invoice_description(invoice: ArcaInvoice) -> str:
         or metadata.get("descripcion")
         or "Consulta"
     )
+
+
+def _normalize_sale_condition(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text in {"Contado", "Transferencia", "Otros medios"} else "Contado"
 
 
 def _money_ar(value: Any) -> str:

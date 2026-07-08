@@ -121,6 +121,8 @@ from app.services.arca_service import (
 
 logger = logging.getLogger(__name__)
 
+SALE_CONDITION_OPTIONS = ("Contado", "Transferencia", "Otros medios")
+
 
 def _template(request: Request, name: str, context: dict) -> Response:
     base = base_context(request)
@@ -3881,6 +3883,7 @@ async def billing_pending_consultations(
             "batch_id": batch_id,
             "items": items,
             "diagnostics": diagnostics,
+            "sale_condition_options": SALE_CONDITION_OPTIONS,
             "job": job.public_dict() if job else None,
         },
     )
@@ -4062,6 +4065,8 @@ async def _save_billing_grid_settings(
         row_id = consultation.id
         consultation.selected_for_billing = True
         consultation.send_email = str(form.get(f"send_email_{row_id}") or "") == "on"
+        sale_condition = str(form.get(f"sale_condition_{row_id}") or consultation.sale_condition or "Contado").strip()
+        consultation.sale_condition = sale_condition if sale_condition in SALE_CONDITION_OPTIONS else "Contado"
         diagnostic_value = str(form.get(f"diagnostic_id_{row_id}") or "").strip()
         custom_diagnosis = str(form.get(f"diagnosis_custom_{row_id}") or "").strip()
         try:

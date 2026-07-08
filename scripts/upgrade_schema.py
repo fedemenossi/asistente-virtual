@@ -147,6 +147,7 @@ EXTRA_COLUMNS = {
         "professional_name": "VARCHAR(200) NULL",
         "diagnosis_original": "TEXT NULL",
         "amount": "DECIMAL(12,2) NULL",
+        "sale_condition": "VARCHAR(40) NULL",
         "selected_for_billing": "BOOLEAN NOT NULL DEFAULT FALSE",
         "send_email": "BOOLEAN NOT NULL DEFAULT FALSE",
         "status": "VARCHAR(30) NOT NULL DEFAULT 'pending'",

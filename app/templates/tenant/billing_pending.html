@@ -118,13 +118,14 @@
           <col class="w-[4%]" />
           <col class="w-[7%]" />
           <col class="w-[12%]" />
-          <col class="w-[15%]" />
-          <col class="w-[11%]" />
-          <col class="w-[16%]" />
-          <col class="w-[7%]" />
           <col class="w-[13%]" />
-          <col class="w-[8%]" />
+          <col class="w-[10%]" />
+          <col class="w-[16%]" />
+          <col class="w-[9%]" />
           <col class="w-[7%]" />
+          <col class="w-[10%]" />
+          <col class="w-[8%]" />
+          <col class="w-[4%]" />
         </colgroup>
         <thead>
           <tr>
@@ -134,6 +135,7 @@
             <th class="text-left text-[13px] font-medium">Mail</th>
             <th class="text-left text-[13px] font-medium">Obra social</th>
             <th class="text-left text-[13px] font-medium">Item / importe</th>
+            <th class="text-left text-[13px] font-medium">Cond. venta</th>
             <th class="text-left text-[13px] font-medium">Enviar</th>
             <th class="text-left text-[13px] font-medium">Diagnostico</th>
             <th class="text-left text-[13px] font-medium">Estado</th>
@@ -160,6 +162,18 @@
               <td class="text-slate-900">
                 <p class="font-medium">{{ consultation.insurance_name or (patient.obra_social if patient else none) or "-" }}</p>
                 <p class="text-xs text-slate-500">Afiliado {{ patient.insurance_number if patient and patient.insurance_number else "-" }}</p>
+              </td>
+              <td>
+                {% if is_billed or is_excluded %}
+                  <p class="text-sm font-medium text-slate-900">{{ consultation.sale_condition or "Contado" }}</p>
+                {% else %}
+                  {% set selected_sale_condition = consultation.sale_condition or "Contado" %}
+                  <select class="select" form="billing-grid-form" name="sale_condition_{{ consultation.id }}">
+                    {% for option in sale_condition_options %}
+                      <option value="{{ option }}" {% if selected_sale_condition == option %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                  </select>
+                {% endif %}
               </td>
               <td>
                 {% if is_billed or is_excluded %}
