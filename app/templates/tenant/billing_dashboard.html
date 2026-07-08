@@ -117,14 +117,24 @@
           <h2 class="text-xl font-semibold text-slate-900">Pacientes atendidos por dia</h2>
         </div>
         {% if daily_rows %}
-          <div class="flex h-56 items-end gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-5">
-            {% for day in daily_rows %}
-              <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
-                <div class="w-full rounded-t-lg bg-[#5B6CFF]" style="height: {{ day.bar_pct }}%"></div>
-                <p class="text-[11px] font-semibold text-slate-500">{{ day.label }}</p>
-                <p class="text-xs font-bold text-slate-900">{{ day.count }}</p>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div class="relative h-64">
+              <div class="absolute inset-x-0 top-0 border-t border-dashed border-slate-200"></div>
+              <div class="absolute inset-x-0 top-1/4 border-t border-dashed border-slate-200"></div>
+              <div class="absolute inset-x-0 top-1/2 border-t border-dashed border-slate-200"></div>
+              <div class="absolute inset-x-0 top-3/4 border-t border-dashed border-slate-200"></div>
+              <div class="relative z-10 flex h-full items-end gap-2 pt-3">
+                {% for day in daily_rows %}
+                  <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2" title="{{ day.full_label }}: {{ day.count }} consultas">
+                    <p class="text-xs font-bold text-slate-900">{{ day.count }}</p>
+                    <div class="flex h-44 w-full items-end justify-center rounded-t-lg bg-white/70 px-1">
+                      <div class="w-full max-w-10 rounded-t-lg {% if day.count > 0 %}bg-gradient-to-t from-[#5B6CFF] to-[#20C7B7]{% else %}bg-slate-200{% endif %}" style="height: {{ day.bar_pct if day.count > 0 else 4 }}%"></div>
+                    </div>
+                    <p class="whitespace-nowrap text-[11px] font-semibold text-slate-500">{{ day.label }}</p>
+                  </div>
+                {% endfor %}
               </div>
-            {% endfor %}
+            </div>
           </div>
         {% else %}
           <p class="text-sm text-slate-600">No hay fechas de consulta cargadas.</p>

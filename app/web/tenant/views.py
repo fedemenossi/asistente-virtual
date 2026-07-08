@@ -3960,13 +3960,25 @@ async def billing_dashboard(
         )
 
     daily_rows = []
-    for day in sorted(daily_counts.values(), key=lambda item: str(item["sort"]))[-14:]:
-        count = int(day["count"])
+    if daily_counts:
+        daily_keys = sorted(daily_counts)
+        last_day = date.fromisoformat(daily_keys[-1])
+        first_day = last_day - timedelta(days=13)
+        daily_series = [
+            first_day + timedelta(days=offset)
+            for offset in range(14)
+        ]
+    else:
+        daily_series = []
+    for day_date in daily_series:
+        day_key = day_date.strftime("%Y-%m-%d")
+        count = int(daily_counts.get(day_key, {}).get("count", 0))
         daily_rows.append(
             {
-                "label": day["label"],
+                "label": day_date.strftime("%d/%m"),
+                "full_label": day_date.strftime("%d/%m/%Y"),
                 "count": count,
-                "bar_pct": 0 if max_daily_count <= 0 else max(6, int((count / max_daily_count) * 100)),
+                "bar_pct": 0 if count <= 0 or max_daily_count <= 0 else max(8, int((count / max_daily_count) * 100)),
             }
         )
 
