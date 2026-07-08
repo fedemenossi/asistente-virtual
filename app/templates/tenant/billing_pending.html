@@ -165,18 +165,6 @@
               </td>
               <td>
                 {% if is_billed or is_excluded %}
-                  <p class="text-sm font-medium text-slate-900">{{ consultation.sale_condition or "Contado" }}</p>
-                {% else %}
-                  {% set selected_sale_condition = consultation.sale_condition or "Contado" %}
-                  <select class="select" form="billing-grid-form" name="sale_condition_{{ consultation.id }}">
-                    {% for option in sale_condition_options %}
-                      <option value="{{ option }}" {% if selected_sale_condition == option %}selected{% endif %}>{{ option }}</option>
-                    {% endfor %}
-                  </select>
-                {% endif %}
-              </td>
-              <td>
-                {% if is_billed or is_excluded %}
                   <p class="text-sm font-medium text-slate-900">
                     {% for item in items %}
                       {% if consultation.billing_item_id == item.id %}{{ item.name }}{% endif %}
@@ -201,6 +189,18 @@
                     {% endfor %}
                   </select>
                   <input class="input billing-grid-amount mt-2" form="billing-grid-form" name="amount_{{ consultation.id }}" value="{{ consultation.amount or '' }}" placeholder="Importe" />
+                {% endif %}
+              </td>
+              <td>
+                {% if is_billed or is_excluded %}
+                  <p class="text-sm font-medium text-slate-900">{{ consultation.sale_condition or "Contado" }}</p>
+                {% else %}
+                  {% set selected_sale_condition = consultation.sale_condition or "Contado" %}
+                  <select class="select" form="billing-grid-form" name="sale_condition_{{ consultation.id }}">
+                    {% for option in sale_condition_options %}
+                      <option value="{{ option }}" {% if selected_sale_condition == option %}selected{% endif %}>{{ option }}</option>
+                    {% endfor %}
+                  </select>
                 {% endif %}
               </td>
               <td>
