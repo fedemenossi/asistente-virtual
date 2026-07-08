@@ -3806,7 +3806,8 @@ def _money_value(value: object) -> Decimal:
 
 
 def _money_label(value: Decimal) -> str:
-    return f"$ {value.quantize(Decimal('0.01'))}"
+    amount = int(value.quantize(Decimal("1")))
+    return f"$ {amount:,}".replace(",", ".")
 
 
 def _normalize_sale_conditions(values: object, fallback: str | None = None) -> str:
