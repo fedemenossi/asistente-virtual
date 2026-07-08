@@ -197,6 +197,13 @@ router.add_api_route(
     dependencies=[Depends(require_feature("payments"))],
 )
 router.add_api_route(
+    "/billing/dashboard",
+    views.billing_dashboard,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing-arca",
     views.billing_arca_list,
     methods=["GET"],

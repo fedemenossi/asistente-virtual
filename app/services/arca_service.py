@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -712,5 +713,7 @@ def _document_key(value: str) -> str:
 
 
 def _sale_condition(value: str | None) -> str:
-    text = str(value or "").strip()
-    return text if text in {"Contado", "Transferencia", "Otros medios"} else "Contado"
+    allowed = ("Contado", "Transferencia", "Otros medios")
+    raw_values = [part.strip() for part in re.split(r"[/,+]", str(value or "")) if part.strip()]
+    selected = [option for option in allowed if option in raw_values]
+    return " / ".join(selected) if selected else "Contado"

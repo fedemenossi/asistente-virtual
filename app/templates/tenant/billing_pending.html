@@ -40,11 +40,12 @@
   </div>
 
   {% if job %}
-    <section class="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 p-4" data-billing-job data-billing-job-id="{{ job.id }}">
+    {% set job_active = job.status in ["queued", "running"] %}
+    <section class="mb-5 rounded-lg border p-4 {% if job_active %}border-emerald-200 bg-emerald-50{% else %}border-slate-200 bg-white{% endif %}" data-billing-job data-billing-job-id="{{ job.id }}" data-billing-job-active="{{ 'true' if job_active else 'false' }}">
       <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <p class="text-sm font-semibold text-emerald-950">Facturacion en proceso</p>
-          <p class="text-xs text-emerald-700">
+          <p class="text-sm font-semibold {% if job_active %}text-emerald-950{% else %}text-slate-950{% endif %}" data-job-title>{{ "Facturacion en proceso" if job_active else "Ultima facturacion" }}</p>
+          <p class="text-xs {% if job_active %}text-emerald-700{% else %}text-slate-600{% endif %}">
             Estado <span data-job-status>{{ job.status }}</span>.
             Procesadas <span data-job-processed>{{ job.processed }}</span>/<span data-job-total>{{ job.total }}</span>.
             Emitidas <span data-job-success>{{ job.success }}</span>.
@@ -52,14 +53,38 @@
             Mails <span data-job-emailed>{{ job.emailed }}</span>.
           </p>
         </div>
-        <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-emerald-700" data-job-percent>{{ job.percent }}%</span>
+        <div class="flex items-center gap-2">
+          <button class="btn btn-secondary min-h-0 px-3 py-1 text-xs" type="button" data-job-toggle>{{ "Ver menos" if job_active else "Ver resumen" }}</button>
+          <button class="btn btn-secondary min-h-0 px-3 py-1 text-xs {% if job_active %}hidden{% endif %}" type="button" data-job-dismiss aria-label="Ocultar resumen">X</button>
+          <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold {% if job_active %}text-emerald-700{% else %}text-slate-600{% endif %}" data-job-percent>{{ job.percent }}%</span>
+        </div>
       </div>
-      <div class="mt-3 h-2 overflow-hidden rounded-full bg-emerald-100">
-        <div class="h-full rounded-full bg-emerald-500 transition-all duration-500" style="width: {{ job.percent }}%" data-job-bar></div>
+      <div class="{% if not job_active %}hidden {% endif %}" data-job-details>
+        <div class="mt-3 h-2 overflow-hidden rounded-full {% if job_active %}bg-emerald-100{% else %}bg-slate-100{% endif %}">
+          <div class="h-full rounded-full {% if job_active %}bg-emerald-500{% else %}bg-slate-500{% endif %} transition-all duration-500" style="width: {{ job.percent }}%" data-job-bar></div>
+        </div>
+        <div class="mt-3 grid gap-3 md:grid-cols-4">
+          <div class="rounded-lg border border-slate-200 bg-white/70 p-3">
+            <p class="text-xs font-semibold text-slate-500">Procesadas</p>
+            <p class="text-lg font-bold text-slate-950"><span data-job-processed-detail>{{ job.processed }}</span>/<span data-job-total-detail>{{ job.total }}</span></p>
+          </div>
+          <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+            <p class="text-xs font-semibold text-emerald-700">Emitidas</p>
+            <p class="text-lg font-bold text-emerald-950" data-job-success-detail>{{ job.success }}</p>
+          </div>
+          <div class="rounded-lg border border-rose-200 bg-rose-50 p-3">
+            <p class="text-xs font-semibold text-rose-700">Errores</p>
+            <p class="text-lg font-bold text-rose-950" data-job-failed-detail>{{ job.failed }}</p>
+          </div>
+          <div class="rounded-lg border border-sky-200 bg-sky-50 p-3">
+            <p class="text-xs font-semibold text-sky-700">Mails</p>
+            <p class="text-lg font-bold text-sky-950" data-job-emailed-detail>{{ job.emailed }}</p>
+          </div>
+        </div>
+        <p class="{% if not job.error_message %}hidden {% endif %}mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700" data-job-error>
+          {% if job.error_message %}Ultimo error: {{ job.error_message }}{% endif %}
+        </p>
       </div>
-      <p class="{% if not job.error_message %}hidden {% endif %}mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700" data-job-error>
-        {% if job.error_message %}Ultimo error: {{ job.error_message }}{% endif %}
-      </p>
     </section>
   {% endif %}
 
@@ -115,29 +140,29 @@
     <div class="table-wrap billing-pending-wrap">
       <table class="data-table billing-pending-table">
         <colgroup>
-          <col class="w-[3%]" />
-          <col class="w-[6%]" />
+          <col class="w-[2.5%]" />
+          <col class="w-[5.5%]" />
           <col class="w-[12%]" />
-          <col class="w-[11%]" />
+          <col class="w-[13%]" />
           <col class="w-[10%]" />
-          <col class="w-[23%]" />
+          <col class="w-[22%]" />
           <col class="w-[8%]" />
-          <col class="w-[6%]" />
           <col class="w-[9%]" />
+          <col class="w-[6%]" />
           <col class="w-[8%]" />
           <col class="w-[4%]" />
         </colgroup>
         <thead>
           <tr>
-            <th class="text-left text-[13px] font-medium">Facturar</th>
-            <th class="text-left text-[13px] font-medium">Fecha</th>
+            <th class="px-1 text-left text-[13px] font-medium">Facturar</th>
+            <th class="px-1 text-left text-[13px] font-medium">Fecha</th>
             <th class="text-left text-[13px] font-medium">Paciente</th>
             <th class="text-left text-[13px] font-medium">Mail</th>
             <th class="text-left text-[13px] font-medium">Obra social</th>
             <th class="text-left text-[13px] font-medium">Item / importe</th>
             <th class="text-left text-[13px] font-medium">Cond. venta</th>
-            <th class="text-left text-[13px] font-medium">Enviar</th>
             <th class="text-left text-[13px] font-medium">Diagnostico</th>
+            <th class="text-left text-[13px] font-medium">Enviar</th>
             <th class="text-left text-[13px] font-medium">Estado</th>
             <th class="text-left text-[13px] font-medium">Detalle</th>
           </tr>
@@ -150,10 +175,10 @@
             {% set is_billed = consultation.arca_invoice_id is not none %}
             {% set is_excluded = consultation.status == 'excluded' %}
             <tr class="align-top {% if is_billed %}bg-rose-50/70{% elif is_excluded %}bg-slate-50{% endif %}">
-              <td>
+              <td class="px-1">
                 <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" data-billing-select-row {% if consultation.selected_for_billing and not is_billed and not is_excluded %}checked{% endif %} {% if is_billed %}disabled{% endif %} />
               </td>
-              <td class="text-slate-600">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</td>
+              <td class="px-1 text-slate-600">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</td>
               <td class="text-slate-900">
                 <p class="font-medium">{{ consultation.patient_name or "-" }}</p>
                 <p class="text-xs text-slate-500">DNI {{ consultation.patient_document or "-" }}</p>
@@ -196,11 +221,32 @@
                   <p class="text-sm font-medium text-slate-900">{{ consultation.sale_condition or "Contado" }}</p>
                 {% else %}
                   {% set selected_sale_condition = consultation.sale_condition or "Contado" %}
-                  <select class="select" form="billing-grid-form" name="sale_condition_{{ consultation.id }}">
+                  {% set selected_sale_conditions = selected_sale_condition.replace(" / ", "/").split("/") %}
+                  <div class="billing-sale-condition-list">
                     {% for option in sale_condition_options %}
-                      <option value="{{ option }}" {% if selected_sale_condition == option %}selected{% endif %}>{{ option }}</option>
+                      <label class="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+                        <input class="h-3.5 w-3.5 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="sale_condition_{{ consultation.id }}" value="{{ option }}" {% if option in selected_sale_conditions %}checked{% endif %} />
+                        <span>{{ option }}</span>
+                      </label>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+              </td>
+              <td>
+                {% if is_billed or is_excluded %}
+                  <div class="min-h-[4.5rem] rounded-lg border border-rose-100 bg-white/60 px-3 py-2 text-sm text-slate-700">
+                    <p class="whitespace-pre-wrap">{{ consultation.diagnosis or "-" }}</p>
+                  </div>
+                {% else %}
+                  {% set default_diagnostic = (diagnostics|selectattr('default_diagnostic')|list|first) %}
+                  {% set selected_diagnostic_id = consultation.billing_diagnostic_id or (default_diagnostic.id if default_diagnostic and not consultation.diagnosis else none) %}
+                  <select class="select billing-grid-diagnostic-select" form="billing-grid-form" name="diagnostic_id_{{ consultation.id }}">
+                    <option value="" {% if not selected_diagnostic_id %}selected{% endif %}>Personalizado</option>
+                    {% for diagnostic in diagnostics %}
+                      <option value="{{ diagnostic.id }}" {% if selected_diagnostic_id == diagnostic.id %}selected{% endif %}>{{ diagnostic.name }}</option>
                     {% endfor %}
                   </select>
+                  <input class="input billing-grid-diagnosis mt-2" form="billing-grid-form" name="diagnosis_custom_{{ consultation.id }}" value="{{ consultation.diagnosis or '' }}" placeholder="Texto personalizado" {% if selected_diagnostic_id %}disabled{% endif %} />
                 {% endif %}
               </td>
               <td>
@@ -219,23 +265,6 @@
                     <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="send_email_{{ consultation.id }}" {% if consultation.send_email %}checked{% endif %} />
                     Enviar
                   </label>
-                {% endif %}
-              </td>
-              <td>
-                {% if is_billed or is_excluded %}
-                  <div class="min-h-[4.5rem] rounded-lg border border-rose-100 bg-white/60 px-3 py-2 text-sm text-slate-700">
-                    <p class="whitespace-pre-wrap">{{ consultation.diagnosis or "-" }}</p>
-                  </div>
-                {% else %}
-                  {% set default_diagnostic = (diagnostics|selectattr('default_diagnostic')|list|first) %}
-                  {% set selected_diagnostic_id = consultation.billing_diagnostic_id or (default_diagnostic.id if default_diagnostic and not consultation.diagnosis else none) %}
-                  <select class="select billing-grid-diagnostic-select" form="billing-grid-form" name="diagnostic_id_{{ consultation.id }}">
-                    <option value="" {% if not selected_diagnostic_id %}selected{% endif %}>Personalizado</option>
-                    {% for diagnostic in diagnostics %}
-                      <option value="{{ diagnostic.id }}" {% if selected_diagnostic_id == diagnostic.id %}selected{% endif %}>{{ diagnostic.name }}</option>
-                    {% endfor %}
-                  </select>
-                  <textarea class="textarea billing-grid-diagnosis mt-2" form="billing-grid-form" name="diagnosis_custom_{{ consultation.id }}" rows="2" placeholder="Texto personalizado" {% if selected_diagnostic_id %}disabled{% endif %}>{{ consultation.diagnosis or '' }}</textarea>
                 {% endif %}
               </td>
               <td>
@@ -476,6 +505,40 @@
       const jobBox = document.querySelector("[data-billing-job]");
       const jobId = jobBox?.dataset.billingJobId;
       if (!jobId) return;
+      const hiddenKey = `billing-job-hidden:${jobId}`;
+      if (window.localStorage.getItem(hiddenKey) === "1") {
+        jobBox.classList.add("hidden");
+        return;
+      }
+      const details = jobBox.querySelector("[data-job-details]");
+      const toggle = jobBox.querySelector("[data-job-toggle]");
+      const dismiss = jobBox.querySelector("[data-job-dismiss]");
+      const setJobFinishedStyle = () => {
+        jobBox.dataset.billingJobActive = "false";
+        jobBox.classList.remove("border-emerald-200", "bg-emerald-50");
+        jobBox.classList.add("border-slate-200", "bg-white");
+        const title = jobBox.querySelector("[data-job-title]");
+        if (title) {
+          title.textContent = "Ultima facturacion";
+          title.classList.remove("text-emerald-950");
+          title.classList.add("text-slate-950");
+        }
+        const bar = jobBox.querySelector("[data-job-bar]");
+        if (bar) {
+          bar.classList.remove("bg-emerald-500");
+          bar.classList.add("bg-slate-500");
+        }
+        dismiss?.classList.remove("hidden");
+      };
+      toggle?.addEventListener("click", () => {
+        if (!details) return;
+        details.classList.toggle("hidden");
+        toggle.textContent = details.classList.contains("hidden") ? "Ver resumen" : "Ver menos";
+      });
+      dismiss?.addEventListener("click", () => {
+        window.localStorage.setItem(hiddenKey, "1");
+        jobBox.classList.add("hidden");
+      });
       const setText = (selector, value) => {
         const node = document.querySelector(selector);
         if (node) node.textContent = value;
@@ -490,6 +553,11 @@
         setText("[data-job-success]", job.success);
         setText("[data-job-failed]", job.failed);
         setText("[data-job-emailed]", job.emailed);
+        setText("[data-job-processed-detail]", job.processed);
+        setText("[data-job-total-detail]", job.total);
+        setText("[data-job-success-detail]", job.success);
+        setText("[data-job-failed-detail]", job.failed);
+        setText("[data-job-emailed-detail]", job.emailed);
         setText("[data-job-percent]", `${job.percent}%`);
         const bar = document.querySelector("[data-job-bar]");
         if (bar) bar.style.width = `${job.percent}%`;
@@ -505,10 +573,14 @@
         }
         if (["queued", "running"].includes(job.status)) {
           window.setTimeout(refresh, 1200);
+        } else {
+          setJobFinishedStyle();
         }
       };
       if (["queued", "running"].includes(document.querySelector("[data-job-status]")?.textContent || "")) {
         window.setTimeout(refresh, 800);
+      } else {
+        setJobFinishedStyle();
       }
     })();
   </script>

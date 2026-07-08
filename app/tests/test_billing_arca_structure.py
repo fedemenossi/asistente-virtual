@@ -1496,6 +1496,55 @@ def test_billing_pending_grid_saves_catalog_diagnostic(client, db_session, monke
     assert sale_condition == "Transferencia"
 
 
+def test_billing_pending_grid_saves_mixed_sale_condition(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Mixed Sale Condition", "whatsapp:+6376"))
+    item_id, consultation_id = asyncio.run(
+        _create_arca_emission_seed(db_session, tenant_id, diagnosis="Control")
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-grid-mixed-sale@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    class FakeJob:
+        id = "fake-mixed-sale-job"
+
+    monkeypatch.setattr(
+        "app.web.tenant.views.start_billing_emission_job",
+        lambda tenant_id_arg, ids: FakeJob(),
+    )
+    login(client, "tenant-grid-mixed-sale@test.com", "secret-123")
+    page = client.get("/t/billing/pending")
+    response = client.post(
+        "/t/billing/emit",
+        data={
+            "csrf_token": _csrf(page.text),
+            "consultation_ids": str(consultation_id),
+            f"item_id_{consultation_id}": str(item_id),
+            f"amount_{consultation_id}": "1500.00",
+            f"sale_condition_{consultation_id}": ["Contado", "Transferencia"],
+            "date_from": "",
+            "date_to": "",
+            "consultorio_id": "",
+            "q": "",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    async def _fetch():
+        async with db_session() as session:
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            return consultation.sale_condition
+
+    assert asyncio.run(_fetch()) == "Contado / Transferencia"
+
+
 def test_billing_pending_import_requires_csv_file(
     client,
     db_session,

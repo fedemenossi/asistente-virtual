@@ -1,0 +1,183 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/card.html" import card %}
+{% from "layout/partials/components/badge.html" import badge %}
+
+{% set title = "Dashboard facturacion" %}
+{% set breadcrumb = "Tenant / Facturacion" %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <p class="page-subtitle">Resumen de consultas importadas y comprobantes ARCA</p>
+      <h1 class="page-title">Dashboard de facturacion</h1>
+    </div>
+    <form method="get" action="/t/billing/dashboard" class="toolbar">
+      <select class="select min-w-56" name="group_by">
+        <option value="month" {% if group_by == "month" %}selected{% endif %}>Agrupar por mes</option>
+        <option value="year" {% if group_by == "year" %}selected{% endif %}>Agrupar por anio</option>
+        <option value="none" {% if group_by == "none" %}selected{% endif %}>Sin agrupar</option>
+      </select>
+      <button class="btn btn-primary" type="submit">Aplicar</button>
+    </form>
+  </div>
+
+  <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    <div class="stat-card stat-card-pastel pastel-mint">
+      <p class="text-sm font-bold text-emerald-700">Ingreso total computado</p>
+      <p class="mt-2 text-xs font-semibold text-emerald-800">Facturadas + No facturadas</p>
+      <div class="mt-4 text-3xl font-extrabold text-slate-950">{{ kpis.revenue_total }}</div>
+    </div>
+    <div class="stat-card stat-card-pastel pastel-sky">
+      <p class="text-sm font-bold text-sky-700">Ingreso facturado</p>
+      <p class="mt-2 text-xs font-semibold text-sky-800">Solo consultas con comprobante</p>
+      <div class="mt-4 text-3xl font-extrabold text-slate-950">{{ kpis.revenue_billed }}</div>
+    </div>
+    <div class="stat-card stat-card-pastel pastel-lavender">
+      <p class="text-sm font-bold text-violet-700">Consultas listadas</p>
+      <p class="mt-2 text-xs font-semibold text-violet-800">Todos los estados</p>
+      <div class="mt-4 text-3xl font-extrabold text-slate-950">{{ kpis.total_consultations }}</div>
+    </div>
+    <div class="stat-card stat-card-pastel pastel-peach">
+      <p class="text-sm font-bold text-orange-700">Pacientes atendidos</p>
+      <p class="mt-2 text-xs font-semibold text-orange-800">Unicos por documento/nombre</p>
+      <div class="mt-4 text-3xl font-extrabold text-slate-950">{{ kpis.unique_patients }}</div>
+    </div>
+  </div>
+
+  <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+    {% for item in status_cards %}
+      <div class="surface p-5">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <p class="text-sm font-bold text-slate-700">{{ item.label }}</p>
+            <p class="mt-1 text-xs font-semibold text-slate-500">{{ item.pct }}% del total</p>
+          </div>
+          {% if item.key == "billed" %}
+            {{ badge("ARCA", "success") }}
+          {% elif item.key == "excluded" %}
+            {{ badge("No factura", "neutral") }}
+          {% elif item.key == "missing_patient_match" %}
+            {{ badge("Revisar", "warning") }}
+          {% else %}
+            {{ badge("Pendiente", "info") }}
+          {% endif %}
+        </div>
+        <p class="mt-4 text-3xl font-extrabold text-slate-950">{{ item.count }}</p>
+        <div class="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+          <div class="h-full rounded-full {% if item.key == 'billed' %}bg-emerald-500{% elif item.key == 'excluded' %}bg-slate-400{% elif item.key == 'missing_patient_match' %}bg-amber-400{% else %}bg-sky-500{% endif %}" style="width: {{ item.pct }}%"></div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <div class="mt-6 grid gap-6 xl:grid-cols-[1.3fr,0.7fr]">
+    <div class="space-y-6">
+      <section class="surface p-5">
+        <div class="mb-5 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p class="text-sm text-slate-600">Evolucion economica</p>
+            <h2 class="text-xl font-semibold text-slate-900">Ingresos por periodo</h2>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            {{ badge("Total: " ~ kpis.revenue_total, "success") }}
+            {{ badge("Facturado: " ~ kpis.revenue_billed, "info") }}
+          </div>
+        </div>
+
+        {% if bucket_rows %}
+          <div class="space-y-3">
+            {% for row in bucket_rows %}
+              <div class="rounded-lg border border-slate-200 bg-white p-4">
+                <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p class="text-sm font-bold text-slate-900">{{ row.label }}</p>
+                    <p class="text-xs font-semibold text-slate-500">
+                      {{ row.total }} consultas - {{ row.billed }} facturadas - {{ row.excluded }} no facturadas - {{ row.pending }} pendientes
+                    </p>
+                  </div>
+                  <div class="text-left md:text-right">
+                    <p class="text-sm font-bold text-slate-950">{{ row.revenue_total_label }}</p>
+                    <p class="text-xs font-semibold text-slate-500">Facturado {{ row.revenue_billed_label }}</p>
+                  </div>
+                </div>
+                <div class="mt-3 h-3 overflow-hidden rounded-full bg-slate-100">
+                  <div class="h-full rounded-full bg-gradient-to-r from-[#5B6CFF] via-[#A78BFA] to-[#20C7B7]" style="width: {{ row.bar_pct }}%"></div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-slate-600">Todavia no hay consultas importadas para mostrar.</p>
+        {% endif %}
+      </section>
+
+      <section class="surface p-5">
+        <div class="mb-5">
+          <p class="text-sm text-slate-600">Volumen operativo</p>
+          <h2 class="text-xl font-semibold text-slate-900">Pacientes atendidos por dia</h2>
+        </div>
+        {% if daily_rows %}
+          <div class="flex h-56 items-end gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-5">
+            {% for day in daily_rows %}
+              <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                <div class="w-full rounded-t-lg bg-[#5B6CFF]" style="height: {{ day.bar_pct }}%"></div>
+                <p class="text-[11px] font-semibold text-slate-500">{{ day.label }}</p>
+                <p class="text-xs font-bold text-slate-900">{{ day.count }}</p>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-slate-600">No hay fechas de consulta cargadas.</p>
+        {% endif %}
+      </section>
+    </div>
+
+    <div class="space-y-6">
+      <section class="surface p-5">
+        <div class="mb-4">
+          <p class="text-sm text-slate-600">Cobertura y entrega</p>
+          <h2 class="text-xl font-semibold text-slate-900">Indicadores</h2>
+        </div>
+        <div class="space-y-3">
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Ticket promedio facturado</p>
+            <p class="mt-2 text-2xl font-extrabold text-slate-950">{{ kpis.average_billed }}</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Facturas enviadas por mail</p>
+            <p class="mt-2 text-2xl font-extrabold text-slate-950">{{ kpis.emails_sent }}</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p class="text-xs font-bold uppercase tracking-wide text-slate-500">PDF generados</p>
+            <p class="mt-2 text-2xl font-extrabold text-slate-950">{{ kpis.pdf_generated }}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="surface p-5">
+        <div class="mb-5">
+          <p class="text-sm text-slate-600">Distribucion</p>
+          <h2 class="text-xl font-semibold text-slate-900">Consultas por obra social</h2>
+        </div>
+        {% if top_insurances %}
+          <div class="mx-auto h-44 w-44 rounded-full shadow-sm" style="{{ pie_style }}"></div>
+          <div class="mt-5 space-y-3">
+            {% for item in top_insurances %}
+              <div>
+                <div class="flex items-center justify-between gap-3">
+                  <p class="truncate text-sm font-semibold text-slate-800">{{ item.label }}</p>
+                  <p class="text-sm font-bold text-slate-950">{{ item.count }}</p>
+                </div>
+                <div class="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
+                  <div class="h-full rounded-full bg-[#20C7B7]" style="width: {{ item.pct }}%"></div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-slate-600">No hay obras sociales para graficar.</p>
+        {% endif %}
+      </section>
+    </div>
+  </div>
+{% endblock %}

@@ -122,6 +122,7 @@ from app.services.arca_service import (
 logger = logging.getLogger(__name__)
 
 SALE_CONDITION_OPTIONS = ("Contado", "Transferencia", "Otros medios")
+BILLING_DASHBOARD_GROUP_OPTIONS = {"month", "year", "none"}
 
 
 def _template(request: Request, name: str, context: dict) -> Response:
@@ -3775,6 +3776,233 @@ async def _billing_consultorios(session: AsyncSession, tenant_id: int) -> list[C
     return list(result.scalars().all())
 
 
+def _billing_consultation_state(row: BillingExternalConsultation) -> str:
+    if row.arca_invoice_id is not None:
+        return "billed"
+    if row.status == "excluded":
+        return "excluded"
+    if row.status == "missing_patient_match":
+        return "missing_patient_match"
+    return "pending"
+
+
+def _billing_state_label(value: str) -> str:
+    labels = {
+        "billed": "Facturadas",
+        "excluded": "No facturadas",
+        "pending": "Pendientes",
+        "missing_patient_match": "Sin paciente",
+    }
+    return labels.get(value, value.replace("_", " ").title())
+
+
+def _money_value(value: object) -> Decimal:
+    if value is None:
+        return Decimal("0")
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def _money_label(value: Decimal) -> str:
+    return f"$ {value.quantize(Decimal('0.01'))}"
+
+
+def _normalize_sale_conditions(values: object, fallback: str | None = None) -> str:
+    if isinstance(values, str):
+        raw_values = [part.strip() for part in re.split(r"[/,+]", values) if part.strip()]
+    else:
+        try:
+            raw_values = [str(value or "").strip() for value in values]  # type: ignore[arg-type]
+        except TypeError:
+            raw_values = []
+    selected: list[str] = []
+    for option in SALE_CONDITION_OPTIONS:
+        if option in raw_values and option not in selected:
+            selected.append(option)
+    if selected:
+        return " / ".join(selected)
+    if fallback:
+        return _normalize_sale_conditions(fallback)
+    return "Contado"
+
+
+def _billing_bucket_key(value: datetime | None, group_by: str) -> tuple[str, str]:
+    if group_by == "year":
+        if value is None:
+            return ("Sin fecha", "Sin fecha")
+        return (value.strftime("%Y"), value.strftime("%Y"))
+    if group_by == "month":
+        if value is None:
+            return ("Sin fecha", "Sin fecha")
+        return (value.strftime("%Y-%m"), value.strftime("%m/%Y"))
+    return ("all", "Total")
+
+
+def _pct(value: int, total: int) -> int:
+    if total <= 0:
+        return 0
+    return int(round((value / total) * 100))
+
+
+async def billing_dashboard(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    group_by = request.query_params.get("group_by", "month").strip() or "month"
+    if group_by not in BILLING_DASHBOARD_GROUP_OPTIONS:
+        group_by = "month"
+
+    result = await session.execute(
+        select(BillingExternalConsultation, ArcaInvoice)
+        .outerjoin(ArcaInvoice, ArcaInvoice.id == BillingExternalConsultation.arca_invoice_id)
+        .where(BillingExternalConsultation.tenant_id == user.tenant_id)
+        .order_by(BillingExternalConsultation.attended_at.asc(), BillingExternalConsultation.created_at.asc())
+    )
+    rows = list(result.all())
+
+    total_consultations = len(rows)
+    status_counts = {"billed": 0, "excluded": 0, "pending": 0, "missing_patient_match": 0}
+    revenue_total = Decimal("0")
+    revenue_billed = Decimal("0")
+    billed_amounts: list[Decimal] = []
+    unique_patients: set[str] = set()
+    insurance_counts: dict[str, int] = {}
+    buckets: dict[str, dict[str, object]] = {}
+    daily_counts: dict[str, dict[str, object]] = {}
+    emails_sent = 0
+    pdf_generated = 0
+
+    for consultation, invoice in rows:
+        state = _billing_consultation_state(consultation)
+        status_counts[state] = status_counts.get(state, 0) + 1
+
+        patient_key = (consultation.patient_document or consultation.patient_name or "").strip().lower()
+        if patient_key:
+            unique_patients.add(patient_key)
+
+        insurance_name = (consultation.insurance_name or "Particular").strip() or "Particular"
+        insurance_counts[insurance_name] = insurance_counts.get(insurance_name, 0) + 1
+
+        amount = _money_value(invoice.imp_total if invoice and invoice.imp_total is not None else consultation.amount)
+        if state in {"billed", "excluded"}:
+            revenue_total += amount
+        if state == "billed":
+            revenue_billed += amount
+            billed_amounts.append(amount)
+            if invoice and invoice.email_sent_at:
+                emails_sent += 1
+            if invoice and (invoice.document_pdf or invoice.pdf_path or invoice.pdf_generated_at):
+                pdf_generated += 1
+
+        bucket_date = consultation.attended_at or consultation.created_at
+        bucket_key, bucket_label = _billing_bucket_key(bucket_date, group_by)
+        bucket = buckets.setdefault(
+            bucket_key,
+            {
+                "label": bucket_label,
+                "sort": bucket_key,
+                "total": 0,
+                "billed": 0,
+                "excluded": 0,
+                "pending": 0,
+                "missing_patient_match": 0,
+                "revenue_total": Decimal("0"),
+                "revenue_billed": Decimal("0"),
+            },
+        )
+        bucket["total"] = int(bucket["total"]) + 1
+        bucket[state] = int(bucket.get(state, 0)) + 1
+        if state in {"billed", "excluded"}:
+            bucket["revenue_total"] = bucket["revenue_total"] + amount  # type: ignore[operator]
+        if state == "billed":
+            bucket["revenue_billed"] = bucket["revenue_billed"] + amount  # type: ignore[operator]
+
+        if bucket_date is not None:
+            day_key = bucket_date.strftime("%Y-%m-%d")
+            day = daily_counts.setdefault(day_key, {"label": bucket_date.strftime("%d/%m"), "sort": day_key, "count": 0})
+            day["count"] = int(day["count"]) + 1
+
+    average_billed = (revenue_billed / len(billed_amounts)) if billed_amounts else Decimal("0")
+    max_bucket_revenue = max([_money_value(bucket["revenue_total"]) for bucket in buckets.values()] or [Decimal("0")])
+    max_daily_count = max([int(day["count"]) for day in daily_counts.values()] or [0])
+    top_insurances_raw = sorted(insurance_counts.items(), key=lambda item: item[1], reverse=True)[:6]
+    top_insurances = [
+        {
+            "label": name,
+            "count": count,
+            "pct": _pct(count, total_consultations),
+        }
+        for name, count in top_insurances_raw
+    ]
+    pie_segments: list[str] = []
+    cursor = 0
+    pie_colors = ["#5B6CFF", "#20C7B7", "#A78BFA", "#F59E0B", "#F472B6", "#94A3B8"]
+    for index, item in enumerate(top_insurances):
+        angle = 0 if total_consultations == 0 else round((item["count"] / total_consultations) * 360)
+        next_cursor = cursor + angle
+        pie_segments.append(f"{pie_colors[index % len(pie_colors)]} {cursor}deg {next_cursor}deg")
+        cursor = next_cursor
+    pie_style = f"background: conic-gradient({', '.join(pie_segments) if pie_segments else '#E5E7EB 0deg 360deg'});"
+
+    bucket_rows = []
+    for bucket in sorted(buckets.values(), key=lambda item: str(item["sort"]), reverse=True):
+        total_revenue = _money_value(bucket["revenue_total"])
+        bucket_rows.append(
+            {
+                **bucket,
+                "revenue_total_label": _money_label(total_revenue),
+                "revenue_billed_label": _money_label(_money_value(bucket["revenue_billed"])),
+                "bar_pct": 0 if max_bucket_revenue <= 0 else int((total_revenue / max_bucket_revenue) * 100),
+            }
+        )
+
+    daily_rows = []
+    for day in sorted(daily_counts.values(), key=lambda item: str(item["sort"]))[-14:]:
+        count = int(day["count"])
+        daily_rows.append(
+            {
+                "label": day["label"],
+                "count": count,
+                "bar_pct": 0 if max_daily_count <= 0 else max(6, int((count / max_daily_count) * 100)),
+            }
+        )
+
+    status_cards = [
+        {
+            "key": key,
+            "label": _billing_state_label(key),
+            "count": status_counts.get(key, 0),
+            "pct": _pct(status_counts.get(key, 0), total_consultations),
+        }
+        for key in ("billed", "pending", "excluded", "missing_patient_match")
+    ]
+
+    return _template(
+        request,
+        "tenant/billing_dashboard.html",
+        {
+            "group_by": group_by,
+            "kpis": {
+                "revenue_total": _money_label(revenue_total),
+                "revenue_billed": _money_label(revenue_billed),
+                "total_consultations": total_consultations,
+                "unique_patients": len(unique_patients),
+                "average_billed": _money_label(average_billed),
+                "emails_sent": emails_sent,
+                "pdf_generated": pdf_generated,
+            },
+            "status_cards": status_cards,
+            "bucket_rows": bucket_rows,
+            "daily_rows": daily_rows,
+            "top_insurances": top_insurances,
+            "pie_style": pie_style,
+        },
+    )
+
+
 async def billing_pending_consultations(
     request: Request,
     user: CurrentUser = Depends(require_permission("billing_arca:read")),
@@ -4065,8 +4293,9 @@ async def _save_billing_grid_settings(
         row_id = consultation.id
         consultation.selected_for_billing = True
         consultation.send_email = str(form.get(f"send_email_{row_id}") or "") == "on"
-        sale_condition = str(form.get(f"sale_condition_{row_id}") or consultation.sale_condition or "Contado").strip()
-        consultation.sale_condition = sale_condition if sale_condition in SALE_CONDITION_OPTIONS else "Contado"
+        sale_condition_key = f"sale_condition_{row_id}"
+        sale_condition_values = form.getlist(sale_condition_key) if hasattr(form, "getlist") else form.get(sale_condition_key)
+        consultation.sale_condition = _normalize_sale_conditions(sale_condition_values, consultation.sale_condition)
         diagnostic_value = str(form.get(f"diagnostic_id_{row_id}") or "").strip()
         custom_diagnosis = str(form.get(f"diagnosis_custom_{row_id}") or "").strip()
         try:

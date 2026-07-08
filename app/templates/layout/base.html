@@ -22,7 +22,7 @@
       {% set current_section = "turnos" %}
     {% elif path.startswith('/t/payments') or path.startswith('/admin/payments') %}
       {% set current_section = "pagos" %}
-    {% elif path.startswith('/t/billing-arca') or path.startswith('/t/billing/pending') %}
+    {% elif path.startswith('/t/billing-arca') or path.startswith('/t/billing') %}
       {% set current_section = "pagos" %}
     {% elif path.startswith('/t/settings') or path.startswith('/admin/settings') %}
       {% set current_section = "settings" %}

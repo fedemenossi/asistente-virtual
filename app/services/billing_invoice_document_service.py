@@ -864,8 +864,10 @@ def _invoice_description(invoice: ArcaInvoice) -> str:
 
 
 def _normalize_sale_condition(value: Any) -> str:
-    text = str(value or "").strip()
-    return text if text in {"Contado", "Transferencia", "Otros medios"} else "Contado"
+    allowed = ("Contado", "Transferencia", "Otros medios")
+    raw_values = [part.strip() for part in re.split(r"[/,+]", str(value or "")) if part.strip()]
+    selected = [option for option in allowed if option in raw_values]
+    return " / ".join(selected) if selected else "Contado"
 
 
 def _money_ar(value: Any) -> str:
