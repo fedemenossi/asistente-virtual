@@ -3793,12 +3793,13 @@ async def billing_pending_consultations(
     date_from, date_to, start, end, _, _ = _selected_date_range(date_from, date_to)
 
     stmt = (
-        select(BillingExternalConsultation, Consultorio, ArcaInvoice)
+        select(BillingExternalConsultation, Consultorio, ArcaInvoice, Paciente)
         .outerjoin(Consultorio, BillingExternalConsultation.consultorio_id == Consultorio.id)
         .outerjoin(
             ArcaInvoice,
             ArcaInvoice.id == BillingExternalConsultation.arca_invoice_id,
         )
+        .outerjoin(Paciente, BillingExternalConsultation.patient_id == Paciente.id)
         .where(
             BillingExternalConsultation.tenant_id == user.tenant_id,
         )

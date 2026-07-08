@@ -103,10 +103,13 @@
       <input type="hidden" name="status" value="{{ status or '' }}" />
       <input type="hidden" name="batch_id" value="{{ batch_id or '' }}" />
     </form>
-    <div class="mb-3 flex flex-wrap justify-end gap-2">
-      <button class="btn btn-danger" type="submit" form="billing-grid-form" formaction="/t/billing/pending/delete" data-confirm="Eliminar las consultas seleccionadas? Las facturadas no se borraran.">Eliminar seleccionadas</button>
-      <button class="btn btn-secondary" type="submit" form="billing-grid-form" formaction="/t/billing/pending/no-facturar">No facturar</button>
-      <button class="btn btn-primary" type="submit" form="billing-grid-form">Facturar seleccionadas</button>
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <button class="btn btn-secondary" type="button" data-billing-select-all>Seleccionar todos los resultados</button>
+      <div class="flex flex-wrap justify-end gap-2">
+        <button class="btn btn-danger" type="submit" form="billing-grid-form" formaction="/t/billing/pending/delete" data-confirm="Eliminar las consultas seleccionadas? Las facturadas no se borraran.">Eliminar seleccionadas</button>
+        <button class="btn btn-secondary" type="submit" form="billing-grid-form" formaction="/t/billing/pending/no-facturar">No facturar</button>
+        <button class="btn btn-primary" type="submit" form="billing-grid-form">Facturar seleccionadas</button>
+      </div>
     </div>
     <section class="surface">
     <div class="table-wrap billing-pending-wrap">
@@ -125,9 +128,7 @@
         </colgroup>
         <thead>
           <tr>
-            <th class="text-left text-[13px] font-medium">
-              <input class="h-4 w-4 rounded border-slate-300" type="checkbox" data-billing-select-all title="Seleccionar todas" aria-label="Seleccionar todas las consultas disponibles" />
-            </th>
+            <th class="text-left text-[13px] font-medium">Facturar</th>
             <th class="text-left text-[13px] font-medium">Fecha</th>
             <th class="text-left text-[13px] font-medium">Paciente</th>
             <th class="text-left text-[13px] font-medium">Mail</th>
@@ -143,6 +144,7 @@
           {% for row in rows %}
             {% set consultation = row[0] %}
             {% set invoice = row[2] if row|length > 2 else none %}
+            {% set patient = row[3] if row|length > 3 else none %}
             {% set is_billed = consultation.arca_invoice_id is not none %}
             {% set is_excluded = consultation.status == 'excluded' %}
             <tr class="align-top {% if is_billed %}bg-rose-50/70{% elif is_excluded %}bg-slate-50{% endif %}">
@@ -155,7 +157,10 @@
                 <p class="text-xs text-slate-500">DNI {{ consultation.patient_document or "-" }}</p>
               </td>
               <td class="break-all text-slate-600">{{ consultation.patient_email or "-" }}</td>
-              <td class="text-slate-600">{{ consultation.insurance_name or "-" }}</td>
+              <td class="text-slate-900">
+                <p class="font-medium">{{ consultation.insurance_name or (patient.obra_social if patient else none) or "-" }}</p>
+                <p class="text-xs text-slate-500">Afiliado {{ patient.insurance_number if patient and patient.insurance_number else "-" }}</p>
+              </td>
               <td>
                 {% if is_billed or is_excluded %}
                   <p class="text-sm font-medium text-slate-900">
@@ -392,15 +397,18 @@
         const checked = rows.filter((row) => row.checked).length;
         if (selectedCount) selectedCount.textContent = String(checked);
         if (selectAll) {
-          selectAll.checked = rows.length > 0 && checked === rows.length;
-          selectAll.indeterminate = checked > 0 && checked < rows.length;
           selectAll.disabled = rows.length === 0;
+          selectAll.textContent = rows.length > 0 && checked === rows.length
+            ? "Deseleccionar todos los resultados"
+            : "Seleccionar todos los resultados";
         }
       };
       selectableRows.forEach((row) => row.addEventListener("change", refreshSelectedCount));
-      selectAll?.addEventListener("change", () => {
+      selectAll?.addEventListener("click", () => {
+        const rows = enabledRows();
+        const allChecked = rows.length > 0 && rows.every((row) => row.checked);
         enabledRows().forEach((row) => {
-          row.checked = Boolean(selectAll.checked);
+          row.checked = !allChecked;
         });
         refreshSelectedCount();
       });
