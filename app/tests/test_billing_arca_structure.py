@@ -1317,6 +1317,64 @@ def test_billing_pending_can_mark_selected_as_no_facturar(client, db_session):
     assert "Andrea Blumtritt" in listing.text
 
 
+def test_billing_emit_keeps_excluded_consultation_without_email(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Excluded No Email", "whatsapp:+6377"))
+    item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-excluded-no-email@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    async def _mark_excluded():
+        async with db_session() as session:
+            async with session.begin():
+                row = await session.get(BillingExternalConsultation, consultation_id)
+                row.status = "excluded"
+                row.selected_for_billing = False
+                row.send_email = False
+
+    asyncio.run(_mark_excluded())
+    job_started = False
+
+    def _start_job(*args, **kwargs):
+        nonlocal job_started
+        job_started = True
+        raise AssertionError("No debe iniciar job para una consulta marcada como no facturar")
+
+    monkeypatch.setattr("app.web.tenant.views.start_billing_emission_job", _start_job)
+    login(client, "tenant-excluded-no-email@test.com", "secret-123")
+    page = client.get("/t/billing/pending?status=excluded")
+    response = client.post(
+        "/t/billing/emit",
+        data={
+            "csrf_token": _csrf(page.text),
+            "consultation_ids": str(consultation_id),
+            f"item_id_{consultation_id}": str(item_id),
+            f"amount_{consultation_id}": "1500.00",
+            f"send_email_{consultation_id}": "on",
+            "status": "excluded",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    assert job_started is False
+
+    async def _fetch():
+        async with db_session() as session:
+            row = await session.get(BillingExternalConsultation, consultation_id)
+            return row.status, row.selected_for_billing, row.send_email
+
+    status, selected_for_billing, send_email = asyncio.run(_fetch())
+    assert status == "excluded"
+    assert selected_for_billing is False
+    assert send_email is False
+
+
 def test_billing_pending_can_delete_selected_unbilled_consultations(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Delete Pending", "whatsapp:+6373"))
     asyncio.run(

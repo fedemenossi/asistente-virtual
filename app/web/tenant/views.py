@@ -4304,6 +4304,10 @@ async def _save_billing_grid_settings(
     }
     for consultation in consultations:
         row_id = consultation.id
+        if consultation.arca_invoice_id is not None or consultation.status == "excluded":
+            consultation.selected_for_billing = False
+            consultation.send_email = False
+            continue
         consultation.selected_for_billing = True
         consultation.send_email = str(form.get(f"send_email_{row_id}") or "") == "on"
         sale_condition_key = f"sale_condition_{row_id}"

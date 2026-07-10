@@ -154,17 +154,17 @@
         </colgroup>
         <thead>
           <tr>
-            <th class="px-1 text-left text-xs font-medium">Seleccionar</th>
+            <th class="px-1 text-left text-xs font-medium">SEL</th>
             <th class="px-1 text-left text-[13px] font-medium">Fecha</th>
             <th class="text-left text-[13px] font-medium">Paciente</th>
             <th class="text-left text-[13px] font-medium">Mail</th>
-            <th class="text-left text-[13px] font-medium">Obra social</th>
-            <th class="text-left text-[13px] font-medium">Item / importe</th>
+            <th class="text-left text-[13px] font-medium">Obra soc.</th>
+            <th class="text-left text-[13px] font-medium">Item / imp.</th>
             <th class="text-left text-[13px] font-medium">Cond. venta</th>
-            <th class="text-left text-[13px] font-medium">Diagnostico</th>
+            <th class="text-left text-[13px] font-medium">Diag.</th>
             <th class="text-left text-[13px] font-medium">Enviar</th>
             <th class="text-left text-[13px] font-medium">Estado</th>
-            <th class="text-left text-[13px] font-medium">Detalle</th>
+            <th class="text-left text-[13px] font-medium">Det.</th>
           </tr>
         </thead>
         <tbody>
@@ -174,9 +174,9 @@
             {% set patient = row[3] if row|length > 3 else none %}
             {% set is_billed = consultation.arca_invoice_id is not none %}
             {% set is_excluded = consultation.status == 'excluded' %}
-            <tr class="align-top {% if is_billed %}bg-rose-50/70{% elif is_excluded %}bg-slate-50{% endif %}">
+            <tr class="align-top billing-row {% if is_billed %}billing-row-billed{% elif is_excluded %}billing-row-excluded{% elif consultation.status == 'missing_patient_match' %}billing-row-warning{% elif consultation.status == 'error' %}billing-row-error{% else %}billing-row-pending{% endif %}">
               <td class="px-1">
-                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" data-billing-select-row {% if consultation.selected_for_billing and not is_billed and not is_excluded %}checked{% endif %} {% if is_billed %}disabled{% endif %} />
+                <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" data-billing-select-row {% if consultation.selected_for_billing and not is_billed and not is_excluded %}checked{% endif %} {% if is_billed or is_excluded %}disabled{% endif %} />
               </td>
               <td class="px-1 text-slate-600">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</td>
               <td class="text-slate-900">

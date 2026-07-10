@@ -718,6 +718,44 @@
   .billing-pending-table th {
     font-size: 11px;
     line-height: 1.25;
+    white-space: nowrap;
+  }
+  .billing-pending-table .billing-row td {
+    transition: background-color 0.15s ease;
+  }
+  .billing-pending-table .billing-row-pending td {
+    background: #ffffff;
+  }
+  .billing-pending-table .billing-row-pending:hover td {
+    background: #f8fbff;
+  }
+  .billing-pending-table .billing-row-billed td {
+    background: #ecfdf5;
+  }
+  .billing-pending-table .billing-row-billed:hover td {
+    background: #dff8ec;
+  }
+  .billing-pending-table .billing-row-excluded td {
+    background: #fff1f5;
+  }
+  .billing-pending-table .billing-row-excluded:hover td {
+    background: #ffe7ef;
+  }
+  .billing-pending-table .billing-row-warning td {
+    background: #fffbeb;
+  }
+  .billing-pending-table .billing-row-warning:hover td {
+    background: #fef3c7;
+  }
+  .billing-pending-table .billing-row-error td {
+    background: #fff7ed;
+  }
+  .billing-pending-table .billing-row-error:hover td {
+    background: #ffedd5;
+  }
+  .billing-pending-table input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
   }
   .billing-grid-select,
   .billing-grid-amount,

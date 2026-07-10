@@ -106,6 +106,10 @@ async def _run_billing_emission_job(job_id: str, consultation_ids: list[int]) ->
                         )
                         if consultation is None:
                             raise ArcaEmissionError("Consulta no encontrada")
+                        if consultation.status == "excluded":
+                            consultation.selected_for_billing = False
+                            consultation.send_email = False
+                            raise ArcaEmissionError("La consulta esta marcada como no facturar")
                         item = await session.scalar(
                             select(ArcaBillableItem).where(
                                 ArcaBillableItem.id == consultation.billing_item_id,
