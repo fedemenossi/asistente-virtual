@@ -88,34 +88,37 @@
     </section>
   {% endif %}
 
-  {% if rows %}
-    <section class="surface mb-4">
-      <form method="get" action="/t/billing/pending" class="toolbar flex-nowrap">
-        <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
-        <input type="hidden" name="dni" value="{{ dni or '' }}" />
-        <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
-        <input type="hidden" name="staff_id" value="{{ staff_id or '' }}" />
-        <div class="searchbox min-w-0 flex-1">
-          <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
-          <input name="q" value="{{ q or '' }}" placeholder="Nombre, DNI, email, obra social o diagnostico" />
-        </div>
-        <input class="input" style="width: 9rem; max-width: 9rem; flex: 0 0 9rem;" type="date" name="date_from" value="{{ date_from if request.query_params.get('date_from') else '' }}" aria-label="Fecha desde" />
-        <input class="input" style="width: 9rem; max-width: 9rem; flex: 0 0 9rem;" type="date" name="date_to" value="{{ date_to if request.query_params.get('date_to') else '' }}" aria-label="Fecha hasta" />
-        <select class="select" style="width: 9.5rem; max-width: 9.5rem; flex: 0 0 9.5rem;" name="status">
-          <option value="">Estado</option>
-          <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pendiente</option>
-          <option value="billed" {% if status == 'billed' %}selected{% endif %}>Facturado</option>
-          <option value="excluded" {% if status == 'excluded' %}selected{% endif %}>No facturar</option>
-          <option value="missing_patient_match" {% if status == 'missing_patient_match' %}selected{% endif %}>Sin DNI</option>
-          <option value="error" {% if status == 'error' %}selected{% endif %}>Error</option>
-        </select>
-        <button class="btn btn-secondary" type="submit">Filtrar</button>
-      </form>
-      <div class="mt-4 flex flex-wrap gap-2 text-sm">
-        <span class="status-badge bg-slate-100 text-slate-700">Consultas listadas: {{ rows|length }}</span>
-        <span class="status-badge bg-indigo-50 text-indigo-700">Seleccionadas: <span data-billing-selected-count>0</span></span>
+  <section class="surface mb-4">
+    <form method="get" action="/t/billing/pending" class="toolbar flex-nowrap">
+      <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
+      <input type="hidden" name="dni" value="{{ dni or '' }}" />
+      <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
+      <input type="hidden" name="staff_id" value="{{ staff_id or '' }}" />
+      <div class="searchbox min-w-0 flex-1">
+        <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.35-4.35"></path></svg>
+        <input name="q" value="{{ q or '' }}" placeholder="Nombre, DNI, email, obra social o diagnostico" />
       </div>
-    </section>
+      <input class="input" style="width: 9rem; max-width: 9rem; flex: 0 0 9rem;" type="date" name="date_from" value="{{ date_from if request.query_params.get('date_from') else '' }}" aria-label="Fecha desde" />
+      <input class="input" style="width: 9rem; max-width: 9rem; flex: 0 0 9rem;" type="date" name="date_to" value="{{ date_to if request.query_params.get('date_to') else '' }}" aria-label="Fecha hasta" />
+      <select class="select" style="width: 9.5rem; max-width: 9.5rem; flex: 0 0 9.5rem;" name="status">
+        <option value="">Estado</option>
+        <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pendiente</option>
+        <option value="billed" {% if status == 'billed' %}selected{% endif %}>Facturado</option>
+        <option value="excluded" {% if status == 'excluded' %}selected{% endif %}>No facturar</option>
+        <option value="missing_patient_match" {% if status == 'missing_patient_match' %}selected{% endif %}>Sin DNI</option>
+        <option value="error" {% if status == 'error' %}selected{% endif %}>Error</option>
+      </select>
+      <button class="btn btn-secondary" type="submit">Filtrar</button>
+    </form>
+    <div class="mt-4 flex flex-wrap gap-2 text-sm">
+      <span class="status-badge bg-slate-100 text-slate-700">Consultas listadas: {{ rows|length }}</span>
+      {% if rows %}
+        <span class="status-badge bg-indigo-50 text-indigo-700">Seleccionadas: <span data-billing-selected-count>0</span></span>
+      {% endif %}
+    </div>
+  </section>
+
+  {% if rows %}
     <form id="billing-grid-form" method="post" action="/t/billing/emit">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="date_from" value="{{ date_from if request.query_params.get('date_from') else '' }}" />
