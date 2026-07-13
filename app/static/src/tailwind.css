@@ -720,6 +720,16 @@
     line-height: 1.25;
     white-space: nowrap;
   }
+  .billing-pending-table .billing-date-cell,
+  .billing-pending-table .billing-email-cell {
+    overflow-wrap: normal;
+    word-break: normal;
+    white-space: nowrap;
+  }
+  .billing-pending-table .billing-email-cell {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .billing-pending-table .billing-row td {
     transition: background-color 0.15s ease;
   }

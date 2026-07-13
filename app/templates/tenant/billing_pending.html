@@ -156,16 +156,16 @@
     <div class="table-wrap billing-pending-wrap">
       <table class="data-table billing-pending-table">
         <colgroup>
-          <col class="w-[5.5%]" />
-          <col class="w-[5.5%]" />
+          <col class="w-[4.5%]" />
+          <col class="w-[7%]" />
           <col class="w-[12%]" />
-          <col class="w-[13%]" />
+          <col class="w-[16%]" />
           <col class="w-[10%]" />
-          <col class="w-[19%]" />
+          <col class="w-[17%]" />
+          <col class="w-[7%]" />
           <col class="w-[8%]" />
+          <col class="w-[5.5%]" />
           <col class="w-[9%]" />
-          <col class="w-[6%]" />
-          <col class="w-[8%]" />
           <col class="w-[4%]" />
         </colgroup>
         <thead>
@@ -194,12 +194,12 @@
               <td class="px-1">
                 <input class="h-4 w-4 rounded border-slate-300" form="billing-grid-form" type="checkbox" name="consultation_ids" value="{{ consultation.id }}" data-billing-select-row {% if consultation.selected_for_billing and not is_billed and not is_excluded %}checked{% endif %} {% if is_billed or is_excluded %}disabled{% endif %} />
               </td>
-              <td class="px-1 text-slate-600">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</td>
+              <td class="billing-date-cell px-1 text-slate-600">{{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</td>
               <td class="text-slate-900">
                 <p class="font-medium">{{ consultation.patient_name or "-" }}</p>
                 <p class="text-xs text-slate-500">DNI {{ consultation.patient_document or "-" }}</p>
               </td>
-              <td class="break-all text-slate-600">{{ consultation.patient_email or "-" }}</td>
+              <td class="billing-email-cell text-slate-600" title="{{ consultation.patient_email or '-' }}">{{ consultation.patient_email or "-" }}</td>
               <td class="text-slate-900">
                 <p class="font-medium">{{ consultation.insurance_name or (patient.obra_social if patient else none) or "-" }}</p>
                 <p class="text-xs text-slate-500">Afiliado {{ patient.insurance_number if patient and patient.insurance_number else "-" }}</p>
