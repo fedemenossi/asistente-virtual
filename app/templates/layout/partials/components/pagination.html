@@ -9,6 +9,7 @@
       <span class="pagination-item pagination-item-disabled" aria-hidden="true">&lsaquo;</span>
     {% endif %}
     <span class="pagination-item pagination-item-active">{{ page }}</span>
+    <span class="pagination-summary">de {{ total_pages }}</span>
     {% if page < total_pages %}
       <a class="pagination-item" href="{{ base_url }}?page={{ page + 1 }}{{ qs }}" aria-label="Pagina siguiente">
         <span aria-hidden="true">&rsaquo;</span>
