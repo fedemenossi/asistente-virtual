@@ -893,10 +893,13 @@ def test_billing_pending_imports_attended_consultations_and_shows_invoiced_locke
     assert "Juan Perez" in listing.text
     assert "juan@example.com" in listing.text
     assert "OSDE" in listing.text
-    assert "Paciente Facturado" in listing.text
-    assert "Facturado" in listing.text
-    assert "$ 100.00" in listing.text
-    assert "Ya facturado" in listing.text
+    assert "Paciente Facturado" not in listing.text
+
+    finalized = client.get("/t/billing/finalized?status=billed")
+    assert "Paciente Facturado" in finalized.text
+    assert "Facturado" in finalized.text
+    assert "$ 100.00" in finalized.text
+    assert "Ya facturado" in finalized.text
 
     by_dni = client.get("/t/billing/pending?dni=30111222")
     assert "Juan Perez" in by_dni.text
@@ -1312,7 +1315,7 @@ def test_billing_pending_can_mark_selected_as_no_facturar(client, db_session):
     assert row.status == "excluded"
     assert row.send_email is False
     assert row.selected_for_billing is False
-    listing = client.get("/t/billing/pending?status=excluded")
+    listing = client.get("/t/billing/finalized?status=excluded")
     assert "No facturar" in listing.text
     assert "Andrea Blumtritt" in listing.text
 
@@ -1398,7 +1401,7 @@ def test_billing_pending_can_delete_selected_unbilled_consultations(client, db_s
                     patient_name="Andrea Blumtritt",
                     patient_document="30123456",
                     patient_email="andrea@example.com",
-                    status="excluded",
+                    status="pending",
                 )
                 session.add(row)
                 await session.flush()
@@ -1406,11 +1409,11 @@ def test_billing_pending_can_delete_selected_unbilled_consultations(client, db_s
 
     row_id = asyncio.run(_seed())
     login(client, "tenant-delete-pending@test.com", "secret-123")
-    page = client.get("/t/billing/pending?status=excluded")
+    page = client.get("/t/billing/pending?status=pending")
     assert "Andrea Blumtritt" in page.text
     response = client.post(
         "/t/billing/pending/delete",
-        data={"csrf_token": _csrf(page.text), "consultation_ids": str(row_id), "status": "excluded"},
+        data={"csrf_token": _csrf(page.text), "consultation_ids": str(row_id), "status": "pending"},
         follow_redirects=False,
     )
     assert response.status_code in (302, 303)
@@ -1468,7 +1471,7 @@ def test_billing_pending_delete_keeps_billed_consultations(client, db_session):
 
     row_id = asyncio.run(_seed())
     login(client, "tenant-delete-billed@test.com", "secret-123")
-    page = client.get("/t/billing/pending?status=billed")
+    page = client.get("/t/billing/finalized?status=billed")
     response = client.post(
         "/t/billing/pending/delete",
         data={"csrf_token": _csrf(page.text), "consultation_ids": str(row_id), "status": "billed"},
@@ -1481,7 +1484,7 @@ def test_billing_pending_delete_keeps_billed_consultations(client, db_session):
             return await session.get(BillingExternalConsultation, row_id)
 
     assert asyncio.run(_fetch()) is not None
-    listing = client.get("/t/billing/pending?status=billed")
+    listing = client.get("/t/billing/finalized?status=billed")
     assert "Juan Perez" in listing.text
 
 
@@ -2183,8 +2186,10 @@ def test_billing_csv_import_crosses_with_local_billed_consultations(
     login(client, "tenant-cross-billed@test.com", "secret-123")
 
     pending_before = client.get("/t/billing/pending")
-    assert "Juan Perez" in pending_before.text
-    assert "Facturado" in pending_before.text
+    assert "Juan Perez" not in pending_before.text
+    finalized_before = client.get("/t/billing/finalized?status=billed")
+    assert "Juan Perez" in finalized_before.text
+    assert "Facturado" in finalized_before.text
     csv_content = (
         "id,fecha,paciente,email,obra social,profesional,practica,diagnostico\n"
         f"{external_id},04/07/2026 10:00,Juan Perez,juan@example.com,OSDE,Dra Gomez,Consulta,Bronquitis aguda\n"
@@ -2199,9 +2204,11 @@ def test_billing_csv_import_crosses_with_local_billed_consultations(
     assert response.status_code in (302, 303)
 
     pending_after = client.get("/t/billing/pending?date_from=2026-07-04&date_to=2026-07-04")
-    assert "Juan Perez" in pending_after.text
-    assert "Facturado" in pending_after.text
-    assert "04/07/2026" in pending_after.text
+    assert "Juan Perez" not in pending_after.text
+    finalized_after = client.get("/t/billing/finalized?date_from=2026-07-04&date_to=2026-07-04&status=billed")
+    assert "Juan Perez" in finalized_after.text
+    assert "Facturado" in finalized_after.text
+    assert "04/07/2026" in finalized_after.text
 
     invoice_list = client.get("/t/billing/invoices")
     assert invoice_list.status_code == 200

@@ -381,6 +381,13 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
+    "/billing/finalized",
+    views.billing_finalized_consultations,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing/pending/import",
     views.billing_pending_import,
     methods=["POST"],

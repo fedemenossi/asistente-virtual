@@ -1,19 +1,28 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/pagination.html" import pagination %}
 
-{% set title = "Consultas pendientes" %}
-{% set breadcrumb = "Tenant / Billing / Pendientes" %}
+{% set title = page_title or "Consultas pendientes" %}
+{% set breadcrumb = "Tenant / Billing / " ~ title %}
 
 {% block content %}
   <div class="page-header">
     <div>
-      <p class="page-subtitle">Consultas atendidas importadas desde CSV</p>
-      <h1 class="page-title">Pendientes de facturacion</h1>
+      <p class="page-subtitle">{{ page_subtitle or "Consultas atendidas importadas desde CSV" }}</p>
+      <h1 class="page-title">{{ page_title or "Pendientes de facturacion" }}</h1>
     </div>
-    <a class="btn btn-secondary" href="/t/billing/invoices">Facturas emitidas</a>
+    <div class="flex flex-wrap gap-2">
+      {% if is_finalized_screen %}
+        <a class="btn btn-secondary" href="/t/billing/pending">Consultas a facturar</a>
+      {% else %}
+        <a class="btn btn-secondary" href="/t/billing/finalized">Consultas finalizadas</a>
+      {% endif %}
+      <a class="btn btn-secondary" href="/t/billing/invoices">Facturas emitidas</a>
+    </div>
   </div>
 
-  <div class="mb-5">
+  {% if show_csv_import %}
+    <div class="mb-5">
     <form method="post" action="/t/billing/pending/import" enctype="multipart/form-data" class="surface" data-billing-csv-form>
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <div class="mb-3">
@@ -37,7 +46,8 @@
         </div>
       </div>
     </form>
-  </div>
+    </div>
+  {% endif %}
 
   {% if job %}
     {% set job_active = job.status in ["queued", "running"] %}
@@ -89,7 +99,7 @@
   {% endif %}
 
   <section class="surface mb-4">
-    <form method="get" action="/t/billing/pending" class="toolbar flex-nowrap">
+    <form method="get" action="{{ base_url or '/t/billing/pending' }}" class="toolbar flex-nowrap">
       <input type="hidden" name="consultorio_id" value="{{ consultorio_id }}" />
       <input type="hidden" name="dni" value="{{ dni or '' }}" />
       <input type="hidden" name="obra_social" value="{{ obra_social or '' }}" />
@@ -102,17 +112,18 @@
       <input class="input" style="width: 9rem; max-width: 9rem; flex: 0 0 9rem;" type="date" name="date_to" value="{{ date_to if request.query_params.get('date_to') else '' }}" aria-label="Fecha hasta" />
       <select class="select" style="width: 9.5rem; max-width: 9.5rem; flex: 0 0 9.5rem;" name="status">
         <option value="">Estado</option>
-        <option value="pending" {% if status == 'pending' %}selected{% endif %}>Pendiente</option>
-        <option value="billed" {% if status == 'billed' %}selected{% endif %}>Facturado</option>
-        <option value="excluded" {% if status == 'excluded' %}selected{% endif %}>No facturar</option>
-        <option value="missing_patient_match" {% if status == 'missing_patient_match' %}selected{% endif %}>Sin DNI</option>
-        <option value="error" {% if status == 'error' %}selected{% endif %}>Error</option>
+        {% for option_value, option_label in status_options %}
+          <option value="{{ option_value }}" {% if status == option_value %}selected{% endif %}>{{ option_label }}</option>
+        {% endfor %}
       </select>
       <button class="btn btn-secondary" type="submit">Filtrar</button>
     </form>
     <div class="mt-4 flex flex-wrap gap-2 text-sm">
-      <span class="status-badge bg-slate-100 text-slate-700">Consultas listadas: {{ rows|length }}</span>
-      {% if rows %}
+      <span class="status-badge bg-slate-100 text-slate-700">Consultas listadas: {{ total_rows if total_rows is defined else rows|length }}</span>
+      {% if total_rows is defined and total_rows != rows|length %}
+        <span class="status-badge bg-slate-50 text-slate-600">Mostradas: {{ rows|length }}</span>
+      {% endif %}
+      {% if rows and show_actions %}
         <span class="status-badge bg-indigo-50 text-indigo-700">Seleccionadas: <span data-billing-selected-count>0</span></span>
       {% endif %}
     </div>
@@ -131,6 +142,7 @@
       <input type="hidden" name="status" value="{{ status or '' }}" />
       <input type="hidden" name="batch_id" value="{{ batch_id or '' }}" />
     </form>
+    {% if show_actions %}
     <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
       <button class="btn btn-secondary" type="button" data-billing-select-all>Seleccionar todos los resultados</button>
       <div class="flex flex-wrap justify-end gap-2">
@@ -139,6 +151,7 @@
         <button class="btn btn-primary" type="submit" form="billing-grid-form">Facturar seleccionadas</button>
       </div>
     </div>
+    {% endif %}
     <section class="surface">
     <div class="table-wrap billing-pending-wrap">
       <table class="data-table billing-pending-table">
@@ -384,10 +397,13 @@
       </table>
     </div>
     </section>
+    {% if total_pages > 1 %}
+      {{ pagination(page, total_pages, base_url or "/t/billing/pending", query_string) }}
+    {% endif %}
   {% else %}
     <div class="surface p-10 text-center">
-      <p class="text-sm text-slate-600">No hay consultas pendientes para los filtros seleccionados.</p>
-      <p class="mt-2 text-xs text-slate-500">Carga un CSV de atendidas para preparar la grilla de facturacion.</p>
+      <p class="text-sm text-slate-600">{{ empty_title or "No hay consultas pendientes para los filtros seleccionados." }}</p>
+      <p class="mt-2 text-xs text-slate-500">{{ empty_subtitle or "Carga un CSV de atendidas para preparar la grilla de facturacion." }}</p>
     </div>
   {% endif %}
 

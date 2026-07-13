@@ -2975,6 +2975,12 @@ async def billing_arca_list(
     q = request.query_params.get("q", "").strip()
     email_status = request.query_params.get("email_status", "").strip()
     pdf_status = request.query_params.get("pdf_status", "").strip()
+    try:
+        page = max(int(request.query_params.get("page", "1") or 1), 1)
+    except ValueError:
+        page = 1
+    limit = 15
+    offset = (page - 1) * limit
     stmt = (
         select(ArcaInvoice, BillingExternalConsultation)
         .outerjoin(
@@ -3005,13 +3011,35 @@ async def billing_arca_list(
         stmt = stmt.where(or_(ArcaInvoice.pdf_generated_at.is_not(None), ArcaInvoice.document_pdf.is_not(None)))
     elif pdf_status == "missing":
         stmt = stmt.where(ArcaInvoice.pdf_generated_at.is_(None), ArcaInvoice.document_pdf.is_(None))
-    result = await session.execute(stmt.order_by(desc(ArcaInvoice.created_at)))
+    total = await session.scalar(select(func.count()).select_from(stmt.subquery()))
+    total = int(total or 0)
+    total_pages = max((total + limit - 1) // limit, 1)
+    if page > total_pages:
+        page = total_pages
+        offset = (page - 1) * limit
+    result = await session.execute(stmt.order_by(desc(ArcaInvoice.created_at)).limit(limit).offset(offset))
     rows = list(result.all())
+    query_string = urlencode(
+        {
+            key: value
+            for key, value in {
+                "q": q,
+                "status": status_filter,
+                "email_status": email_status,
+                "pdf_status": pdf_status,
+            }.items()
+            if value
+        }
+    )
     return _template(
         request,
         "tenant/billing_arca_list.html",
         {
             "rows": rows,
+            "total_rows": total,
+            "page": page,
+            "total_pages": total_pages,
+            "query_string": query_string,
             "status_filter": status_filter,
             "q": q,
             "email_status": email_status,
@@ -4016,11 +4044,23 @@ async def billing_dashboard(
     )
 
 
-async def billing_pending_consultations(
+async def _billing_consultations_screen(
     request: Request,
-    user: CurrentUser = Depends(require_permission("billing_arca:read")),
-    session: AsyncSession = Depends(get_async_session),
+    user: CurrentUser,
+    session: AsyncSession,
+    *,
+    mode: str,
 ) -> Response:
+    is_finalized = mode == "finalized"
+    allowed_statuses = ("billed", "excluded") if is_finalized else ("pending", "missing_patient_match", "error")
+    status_options = [
+        ("billed", "Facturado"),
+        ("excluded", "No facturar"),
+    ] if is_finalized else [
+        ("pending", "Pendiente"),
+        ("missing_patient_match", "Sin DNI"),
+        ("error", "Error"),
+    ]
     raw_date_from = request.query_params.get("date_from", "").strip()
     raw_date_to = request.query_params.get("date_to", "").strip()
     date_from = raw_date_from
@@ -4033,6 +4073,12 @@ async def billing_pending_consultations(
     status = request.query_params.get("status", "").strip()
     job_id = request.query_params.get("job_id", "").strip()
     batch_id = request.query_params.get("batch_id", "").strip()
+    try:
+        page = max(int(request.query_params.get("page", "1") or 1), 1)
+    except ValueError:
+        page = 1
+    limit = 20
+    offset = (page - 1) * limit
     date_from, date_to, start, end, _, _ = _selected_date_range(date_from, date_to)
 
     stmt = (
@@ -4072,8 +4118,12 @@ async def billing_pending_consultations(
         stmt = stmt.where(BillingExternalConsultation.insurance_name.ilike(f"%{obra_social}%"))
     if staff_id:
         stmt = stmt.where(BillingExternalConsultation.external_staff_id.ilike(f"%{staff_id}%"))
-    if status:
+    if status and status in allowed_statuses:
         stmt = stmt.where(BillingExternalConsultation.status == status)
+    else:
+        if status:
+            status = ""
+        stmt = stmt.where(BillingExternalConsultation.status.in_(allowed_statuses))
     if raw_date_from or raw_date_to:
         stmt = stmt.where(
             or_(
@@ -4085,16 +4135,44 @@ async def billing_pending_consultations(
                 BillingExternalConsultation.attended_at < end,
             ),
         )
-    result = await session.execute(stmt.order_by(BillingExternalConsultation.attended_at.desc()))
+    total = await session.scalar(select(func.count()).select_from(stmt.subquery()))
+    total = int(total or 0)
+    total_pages = max((total + limit - 1) // limit, 1)
+    if page > total_pages:
+        page = total_pages
+        offset = (page - 1) * limit
+    result = await session.execute(
+        stmt.order_by(BillingExternalConsultation.attended_at.desc()).limit(limit).offset(offset)
+    )
     rows = list(result.all())
     consultorios = await _billing_consultorios(session, int(user.tenant_id))
     items = await _active_billing_items(session, int(user.tenant_id))
     diagnostics = await _active_billing_diagnostics(session, int(user.tenant_id))
-    job = get_billing_emission_job(job_id, int(user.tenant_id)) if job_id else get_latest_billing_emission_job(int(user.tenant_id))
+    job = None
+    if not is_finalized:
+        job = get_billing_emission_job(job_id, int(user.tenant_id)) if job_id else get_latest_billing_emission_job(int(user.tenant_id))
+    query_string = urlencode(
+        {
+            key: value
+            for key, value in {
+                "date_from": raw_date_from,
+                "date_to": raw_date_to,
+                "consultorio_id": consultorio_id,
+                "q": q,
+                "dni": dni,
+                "obra_social": obra_social,
+                "staff_id": staff_id,
+                "status": status,
+                "batch_id": batch_id,
+            }.items()
+            if value
+        }
+    )
     logger.info(
         "billing_pending_filter",
         extra={
             "tenant_id": user.tenant_id,
+            "mode": mode,
             "date_from": date_from,
             "date_to": date_to,
             "consultorio_id": consultorio_id,
@@ -4104,6 +4182,7 @@ async def billing_pending_consultations(
             "has_staff_id": bool(staff_id),
             "status": status,
             "rows_count": len(rows),
+            "total_count": total,
             "consultorios_count": len(consultorios),
         },
     )
@@ -4112,6 +4191,20 @@ async def billing_pending_consultations(
         "tenant/billing_pending.html",
         {
             "rows": rows,
+            "total_rows": total,
+            "page": page,
+            "total_pages": total_pages,
+            "query_string": query_string,
+            "base_url": "/t/billing/finalized" if is_finalized else "/t/billing/pending",
+            "screen_mode": mode,
+            "is_finalized_screen": is_finalized,
+            "show_csv_import": not is_finalized,
+            "show_actions": not is_finalized,
+            "status_options": status_options,
+            "page_title": "Consultas finalizadas" if is_finalized else "Pendientes de facturacion",
+            "page_subtitle": "Consultas facturadas y no facturadas" if is_finalized else "Consultas atendidas importadas desde CSV",
+            "empty_title": "No hay consultas finalizadas para los filtros seleccionados." if is_finalized else "No hay consultas pendientes para los filtros seleccionados.",
+            "empty_subtitle": "Ajusta los filtros para consultar el historico." if is_finalized else "Carga un CSV de atendidas para preparar la grilla de facturacion.",
             "consultorios": consultorios,
             "date_from": date_from,
             "date_to": date_to,
@@ -4128,6 +4221,22 @@ async def billing_pending_consultations(
             "job": job.public_dict() if job else None,
         },
     )
+
+
+async def billing_pending_consultations(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    return await _billing_consultations_screen(request, user, session, mode="pending")
+
+
+async def billing_finalized_consultations(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    return await _billing_consultations_screen(request, user, session, mode="finalized")
 
 
 async def billing_pending_import(

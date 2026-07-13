@@ -1,6 +1,7 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
 {% from "layout/partials/components/action_icons.html" import action_link %}
+{% from "layout/partials/components/pagination.html" import pagination %}
 
 {% set title = "Facturacion ARCA" %}
 {% set breadcrumb = "Tenant / Facturacion ARCA" %}
@@ -46,7 +47,10 @@
   </form>
 
   <div class="mb-4 mt-4 flex flex-wrap items-center gap-2">
-    <span class="status-badge bg-indigo-50 text-indigo-700">Facturas listadas: {{ rows|length }}</span>
+    <span class="status-badge bg-indigo-50 text-indigo-700">Facturas listadas: {{ total_rows if total_rows is defined else rows|length }}</span>
+    {% if total_rows is defined and total_rows != rows|length %}
+      <span class="status-badge bg-slate-50 text-slate-600">Mostradas: {{ rows|length }}</span>
+    {% endif %}
     {% if q or status_filter or email_status or pdf_status %}
       <span class="status-badge bg-slate-50 text-slate-600">Filtros aplicados</span>
     {% endif %}
@@ -167,6 +171,9 @@
     <div class="p-10 text-center">
       <p class="text-sm text-slate-600">Todavia no hay comprobantes ARCA registrados.</p>
     </div>
+  {% endif %}
+  {% if total_pages > 1 %}
+    {{ pagination(page, total_pages, "/t/billing/invoices", query_string) }}
   {% endif %}
   </section>
 {% endblock %}
