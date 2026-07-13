@@ -879,30 +879,40 @@
   .pagination {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-top: 18px;
+    justify-content: center;
+    gap: 8px;
+    margin: 18px auto 0;
   }
   .pagination-item {
     display: inline-flex;
-    min-width: 38px;
-    height: 38px;
+    min-width: 36px;
+    height: 34px;
     align-items: center;
     justify-content: center;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: #fff;
-    color: #374151;
+    border-radius: 999px;
+    border: 1px solid #dbe4f0;
+    background: #ffffff;
+    color: #53627a;
     font-size: 14px;
-    font-weight: 700;
+    font-weight: 800;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
   }
   .pagination-item:hover {
-    background: #f3f4f6;
+    background: #f8fafc;
+    border-color: #cbd5e1;
   }
   .pagination-item-active {
-    background: #111827;
+    min-width: 40px;
+    background: #64748b;
     color: #fff;
-    border-color: #111827;
+    border-color: #64748b;
+  }
+  .pagination-item-disabled {
+    color: #cbd5e1;
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    box-shadow: none;
   }
   .table tr:last-child td,
   .card table tr:last-child td {
