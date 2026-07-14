@@ -394,6 +394,12 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
+    "/billing/pending/sync-consultorio-movil",
+    views.billing_pending_sync_consultorio_movil,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing/preview",
     views.billing_invoice_preview,
     methods=["POST"],
@@ -427,6 +433,12 @@ router.add_api_route(
 router.add_api_route(
     "/billing/emit-jobs/{job_id}",
     views.billing_emission_job_status,
+    methods=["GET"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/sync-jobs/{job_id}",
+    views.billing_consultorio_sync_job_status,
     methods=["GET"],
     dependencies=[Depends(require_feature("billing_arca"))],
 )

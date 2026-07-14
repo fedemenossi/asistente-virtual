@@ -7,6 +7,7 @@ from app.models.billing_diagnostic import BillingDiagnostic
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_invoice_line import BillingInvoiceLine
 from app.models.billing_setting import BillingSetting
+from app.models.billing_sync_state import BillingSyncState
 from app.models.consultorio import Consultorio
 from app.models.conversacion import EstadoConversacion
 from app.models.conversation_history import ConversationHistory
@@ -33,6 +34,7 @@ __all__ = [
     "BillingExternalConsultation",
     "BillingInvoiceLine",
     "BillingSetting",
+    "BillingSyncState",
     "Consultorio",
     "ConversationHistory",
     "EstadoConversacion",

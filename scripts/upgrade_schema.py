@@ -17,6 +17,7 @@ from app.models import (  # noqa: F401
     BillingDiagnostic,
     BillingInvoiceLine,
     BillingSetting,
+    BillingSyncState,
     ConversationHistory,
     Notification,
     Payment,
@@ -136,6 +137,9 @@ EXTRA_COLUMNS = {
     },
     "billing_settings": {
         "include_diagnosis_in_invoice_pdf": "BOOLEAN NOT NULL DEFAULT TRUE",
+    },
+    "billing_sync_states": {
+        "last_result": "TEXT NULL",
     },
     "billing_external_consultations": {
         "patient_id": "INT NULL",

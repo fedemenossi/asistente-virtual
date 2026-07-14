@@ -18,6 +18,7 @@ from app.models.billing_diagnostic import BillingDiagnostic
 from app.models.billing_email_log import BillingEmailLog
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_invoice_line import BillingInvoiceLine
+from app.services.billing_consultorio_sync_job_service import _latest_imported_attended_at
 from app.models.tenant import Tenant
 from app.models.tenant_feature import TenantFeature
 from app.models.user import UserRole
@@ -1631,6 +1632,111 @@ def test_billing_pending_import_requires_csv_file(
     )
     assert response.status_code in (302, 303)
     assert response.headers["location"] == "/t/billing/pending"
+
+
+def test_billing_pending_starts_consultorio_movil_sync_job(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync CM", "whatsapp:+682"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-sync-cm@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    started = {}
+
+    def fake_start(tenant_id_arg, consultorio_id=None):
+        started["tenant_id"] = tenant_id_arg
+        started["consultorio_id"] = consultorio_id
+        return SimpleNamespace(id="sync-job-test")
+
+    monkeypatch.setattr("app.web.tenant.views.start_billing_consultorio_sync_job", fake_start)
+    login(client, "tenant-sync-cm@test.com", "secret-123")
+    page = client.get("/t/billing/pending")
+    assert "Sincronizar Consultorio Movil" in page.text
+    assert "Ultima consulta sincronizada" in page.text
+    response = client.post(
+        "/t/billing/pending/sync-consultorio-movil",
+        data={"csrf_token": _csrf(page.text)},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    assert response.headers["location"] == "/t/billing/pending?sync_job_id=sync-job-test"
+    assert started == {"tenant_id": tenant_id, "consultorio_id": None}
+
+
+def test_billing_consultorio_sync_job_status_endpoint(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Status", "whatsapp:+683"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-sync-status@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    class FakeSyncJob:
+        def public_dict(self):
+            return {"id": "sync-status-job", "status": "running", "percent": 15}
+
+    monkeypatch.setattr(
+        "app.web.tenant.views.get_billing_consultorio_sync_job",
+        lambda job_id, tenant_id_arg: FakeSyncJob() if job_id == "sync-status-job" and tenant_id_arg == tenant_id else None,
+    )
+    login(client, "tenant-sync-status@test.com", "secret-123")
+    response = client.get("/t/billing/sync-jobs/sync-status-job")
+    assert response.status_code == 200
+    assert response.json()["status"] == "running"
+
+
+def test_billing_consultorio_sync_uses_latest_imported_consultation_date(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Latest", "whatsapp:+684"))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Sede Sync Latest",
+            proveedor_turnos="consultorio_movil",
+            configuracion_externa={"cabildo": {"user": "u", "password": "p", "staff_id": "77"}},
+        )
+    )
+
+    async def _seed_and_fetch():
+        async with db_session() as session:
+            async with session.begin():
+                session.add_all(
+                    [
+                        BillingExternalConsultation(
+                            tenant_id=tenant_id,
+                            consultorio_id=consultorio_id,
+                            external_provider="consultorio_movil_sync",
+                            external_id="old",
+                            attended_at=datetime(2026, 7, 10, 9, 0),
+                        ),
+                        BillingExternalConsultation(
+                            tenant_id=tenant_id,
+                            consultorio_id=consultorio_id,
+                            external_provider="consultorio_movil_sync",
+                            external_id="new",
+                            attended_at=datetime(2026, 7, 12, 11, 30),
+                        ),
+                        BillingExternalConsultation(
+                            tenant_id=tenant_id,
+                            consultorio_id=consultorio_id,
+                            external_provider="csv_attended",
+                            external_id="csv-newer",
+                            attended_at=datetime(2026, 7, 13, 11, 30),
+                        ),
+                    ]
+                )
+            return await _latest_imported_attended_at(session, tenant_id, consultorio_id)
+
+    latest = asyncio.run(_seed_and_fetch())
+    assert latest == datetime(2026, 7, 12, 11, 30)
 
 
 def test_billing_pending_shows_emission_job_error(client, db_session, monkeypatch):

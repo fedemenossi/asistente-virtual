@@ -46,7 +46,73 @@
         </div>
       </div>
     </form>
+    <form method="post" action="/t/billing/pending/sync-consultorio-movil" class="surface mt-4" data-billing-sync-form>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p class="text-sm font-semibold text-slate-900">Sincronizar desde Consultorio Movil</p>
+          <p class="text-xs text-slate-500">Experimental: lee pacientes atendidos por scraping desde la ultima consulta sincronizada.</p>
+          <p class="mt-2 inline-flex rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
+            Ultima consulta sincronizada:
+            <span class="ml-1 text-slate-950">
+              {{ latest_sync_consultation_at|format_ba('%d/%m/%Y') if latest_sync_consultation_at else "sin registros" }}
+            </span>
+          </p>
+        </div>
+        <button class="btn btn-secondary" type="submit" data-billing-sync-submit>Sincronizar Consultorio Movil</button>
+      </div>
+      <div class="mt-5 hidden rounded-lg border border-sky-200 bg-sky-50 p-4" data-billing-sync-progress>
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-semibold text-sky-950">Iniciando sincronizacion...</p>
+          <span class="rounded-full bg-white px-3 py-1 text-xs font-medium text-sky-700">Procesando</span>
+        </div>
+        <div class="mt-3 h-2 overflow-hidden rounded-full bg-sky-100">
+          <div class="h-full w-1/3 rounded-full bg-sky-500 transition-all duration-500"></div>
+        </div>
+      </div>
+    </form>
     </div>
+  {% endif %}
+
+  {% if sync_job %}
+    {% set sync_active = sync_job.status in ["queued", "running"] %}
+    <section class="mb-5 rounded-lg border p-4 {% if sync_active %}border-sky-200 bg-sky-50{% else %}border-slate-200 bg-white{% endif %}" data-billing-sync-job data-billing-sync-job-id="{{ sync_job.id }}">
+      <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p class="text-sm font-semibold {% if sync_active %}text-sky-950{% else %}text-slate-950{% endif %}">Sincronizacion Consultorio Movil</p>
+          <p class="text-xs {% if sync_active %}text-sky-700{% else %}text-slate-600{% endif %}">
+            Estado <span data-sync-status>{{ sync_job.status }}</span>.
+            <span data-sync-phase>{{ sync_job.phase }}</span>.
+            Periodo <span data-sync-date-from>{{ sync_job.date_from or "-" }}</span> a <span data-sync-date-to>{{ sync_job.date_to or "-" }}</span>.
+          </p>
+        </div>
+        <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold text-sky-700" data-sync-percent>{{ sync_job.percent }}%</span>
+      </div>
+      <div class="mt-3 h-2 overflow-hidden rounded-full {% if sync_active %}bg-sky-100{% else %}bg-slate-100{% endif %}">
+        <div class="h-full rounded-full {% if sync_active %}bg-sky-500{% else %}bg-slate-500{% endif %} transition-all duration-500" style="width: {{ sync_job.percent }}%" data-sync-bar></div>
+      </div>
+      <div class="mt-3 grid gap-3 md:grid-cols-4">
+        <div class="rounded-lg border border-slate-200 bg-white/70 p-3">
+          <p class="text-xs font-semibold text-slate-500">Procesadas</p>
+          <p class="text-lg font-bold text-slate-950"><span data-sync-processed>{{ sync_job.processed }}</span>/<span data-sync-total>{{ sync_job.total_rows }}</span></p>
+        </div>
+        <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+          <p class="text-xs font-semibold text-emerald-700">Creadas</p>
+          <p class="text-lg font-bold text-emerald-950" data-sync-created>{{ sync_job.created }}</p>
+        </div>
+        <div class="rounded-lg border border-indigo-200 bg-indigo-50 p-3">
+          <p class="text-xs font-semibold text-indigo-700">Actualizadas</p>
+          <p class="text-lg font-bold text-indigo-950" data-sync-updated>{{ sync_job.updated }}</p>
+        </div>
+        <div class="rounded-lg border border-rose-200 bg-rose-50 p-3">
+          <p class="text-xs font-semibold text-rose-700">Errores</p>
+          <p class="text-lg font-bold text-rose-950" data-sync-errors>{{ sync_job.errors }}</p>
+        </div>
+      </div>
+      <p class="{% if not sync_job.error_message %}hidden {% endif %}mt-3 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm font-medium text-rose-700" data-sync-error>
+        {% if sync_job.error_message %}Error: {{ sync_job.error_message }}{% endif %}
+      </p>
+    </section>
   {% endif %}
 
   {% if job %}
@@ -426,6 +492,17 @@
         });
       }
 
+      const syncForm = document.querySelector("[data-billing-sync-form]");
+      const syncProgress = document.querySelector("[data-billing-sync-progress]");
+      const syncSubmit = document.querySelector("[data-billing-sync-submit]");
+      if (syncForm && syncProgress) {
+        syncForm.addEventListener("submit", () => {
+          syncProgress.classList.remove("hidden");
+          syncSubmit?.classList.add("pointer-events-none", "opacity-70");
+          if (syncSubmit) syncSubmit.textContent = "Sincronizando...";
+        });
+      }
+
       document.querySelectorAll(".billing-grid-select").forEach((select) => {
         select.addEventListener("change", () => {
           const row = select.closest("tr");
@@ -520,6 +597,48 @@
         if (event.key !== "Escape") return;
         document.querySelectorAll("[data-invoice-modal]").forEach(closeInvoiceModal);
       });
+
+      const syncBox = document.querySelector("[data-billing-sync-job]");
+      const syncJobId = syncBox?.dataset.billingSyncJobId;
+      if (syncBox && syncJobId) {
+        const setSyncText = (selector, value) => {
+          const node = syncBox.querySelector(selector);
+          if (node) node.textContent = value;
+        };
+        const refreshSync = async () => {
+          const response = await fetch(`/t/billing/sync-jobs/${syncJobId}`);
+          if (!response.ok) return;
+          const job = await response.json();
+          setSyncText("[data-sync-status]", job.status);
+          setSyncText("[data-sync-phase]", job.phase || "");
+          setSyncText("[data-sync-date-from]", job.date_from || "-");
+          setSyncText("[data-sync-date-to]", job.date_to || "-");
+          setSyncText("[data-sync-percent]", `${job.percent}%`);
+          setSyncText("[data-sync-processed]", job.processed);
+          setSyncText("[data-sync-total]", job.total_rows);
+          setSyncText("[data-sync-created]", job.created);
+          setSyncText("[data-sync-updated]", job.updated);
+          setSyncText("[data-sync-errors]", job.errors);
+          const bar = syncBox.querySelector("[data-sync-bar]");
+          if (bar) bar.style.width = `${job.percent}%`;
+          const error = syncBox.querySelector("[data-sync-error]");
+          if (error) {
+            if (job.error_message) {
+              error.textContent = `Error: ${job.error_message}`;
+              error.classList.remove("hidden");
+            } else {
+              error.textContent = "";
+              error.classList.add("hidden");
+            }
+          }
+          if (["queued", "running"].includes(job.status)) {
+            window.setTimeout(refreshSync, 1500);
+          }
+        };
+        if (["queued", "running"].includes(syncBox.querySelector("[data-sync-status]")?.textContent || "")) {
+          window.setTimeout(refreshSync, 800);
+        }
+      }
 
       const jobBox = document.querySelector("[data-billing-job]");
       const jobId = jobBox?.dataset.billingJobId;

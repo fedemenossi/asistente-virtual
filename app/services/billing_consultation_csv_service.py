@@ -50,6 +50,8 @@ class BillingConsultationCsvImportService:
         *,
         filename: str,
         batch_id: str,
+        external_provider: str = "csv_attended",
+        consultorio_id: int | None = None,
     ) -> BillingCsvImportResult:
         default_item = await self._default_item(tenant_id)
         patients = await self._patients_by_name(tenant_id)
@@ -72,16 +74,18 @@ class BillingConsultationCsvImportService:
                 external_id = _external_id(filename, index, raw)
                 existing = await self._find_existing_consultation(
                     tenant_id,
+                    external_provider=external_provider,
                     external_id=external_id,
                     attended_at=attended_at,
                     patient_name=name,
                 )
                 row = existing or BillingExternalConsultation(
                     tenant_id=tenant_id,
-                    external_provider="csv_attended",
+                    external_provider=external_provider,
                     external_id=external_id,
                 )
                 row.import_batch_id = batch_id
+                row.consultorio_id = consultorio_id or row.consultorio_id
                 row.attended_at = attended_at or row.attended_at
                 row.patient_name = name or row.patient_name or None
                 row.patient_external_id = external_patient_id or row.patient_external_id or None
@@ -150,6 +154,7 @@ class BillingConsultationCsvImportService:
         self,
         tenant_id: int,
         *,
+        external_provider: str,
         external_id: str,
         attended_at: datetime | None,
         patient_name: str,
@@ -157,7 +162,7 @@ class BillingConsultationCsvImportService:
         existing = await self._session.scalar(
             select(BillingExternalConsultation).where(
                 BillingExternalConsultation.tenant_id == tenant_id,
-                BillingExternalConsultation.external_provider == "csv_attended",
+                BillingExternalConsultation.external_provider == external_provider,
                 BillingExternalConsultation.external_id == external_id,
             )
         )

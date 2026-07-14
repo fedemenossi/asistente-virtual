@@ -110,6 +110,11 @@ from app.services.billing_emission_job_service import (
     get_latest_billing_emission_job,
     start_billing_emission_job,
 )
+from app.services.billing_consultorio_sync_job_service import (
+    get_billing_consultorio_sync_job,
+    get_latest_billing_consultorio_sync_job,
+    start_billing_consultorio_sync_job,
+)
 from app.services.arca_service import (
     ArcaConfigurationError,
     ArcaConnectivityError,
@@ -4072,6 +4077,7 @@ async def _billing_consultations_screen(
     staff_id = request.query_params.get("staff_id", "").strip()
     status = request.query_params.get("status", "").strip()
     job_id = request.query_params.get("job_id", "").strip()
+    sync_job_id = request.query_params.get("sync_job_id", "").strip()
     batch_id = request.query_params.get("batch_id", "").strip()
     try:
         page = max(int(request.query_params.get("page", "1") or 1), 1)
@@ -4149,8 +4155,21 @@ async def _billing_consultations_screen(
     items = await _active_billing_items(session, int(user.tenant_id))
     diagnostics = await _active_billing_diagnostics(session, int(user.tenant_id))
     job = None
+    sync_job = None
+    latest_sync_consultation_at = None
     if not is_finalized:
         job = get_billing_emission_job(job_id, int(user.tenant_id)) if job_id else get_latest_billing_emission_job(int(user.tenant_id))
+        sync_job = (
+            get_billing_consultorio_sync_job(sync_job_id, int(user.tenant_id))
+            if sync_job_id
+            else get_latest_billing_consultorio_sync_job(int(user.tenant_id))
+        )
+        latest_sync_consultation_at = await session.scalar(
+            select(func.max(BillingExternalConsultation.attended_at)).where(
+                BillingExternalConsultation.tenant_id == user.tenant_id,
+                BillingExternalConsultation.external_provider == "consultorio_movil_sync",
+            )
+        )
     query_string = urlencode(
         {
             key: value
@@ -4219,6 +4238,8 @@ async def _billing_consultations_screen(
             "diagnostics": diagnostics,
             "sale_condition_options": SALE_CONDITION_OPTIONS,
             "job": job.public_dict() if job else None,
+            "sync_job": sync_job.public_dict() if sync_job else None,
+            "latest_sync_consultation_at": latest_sync_consultation_at,
         },
     )
 
@@ -4303,6 +4324,25 @@ async def billing_pending_import(
         ),
     )
     return RedirectResponse("/t/billing/pending", status_code=303)
+
+
+async def billing_pending_sync_consultorio_movil(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    form = await request.form()
+    validate_csrf(request, str(form.get("csrf_token") or ""))
+    consultorio_id_value = str(form.get("consultorio_id") or "").strip()
+    consultorio_id: int | None = None
+    if consultorio_id_value:
+        try:
+            consultorio_id = int(consultorio_id_value)
+        except ValueError:
+            consultorio_id = None
+    job = start_billing_consultorio_sync_job(int(user.tenant_id), consultorio_id)
+    add_flash(request, "warning", "Sincronizacion experimental iniciada. Si Consultorio Movil bloquea el scraping, se informara el error.")
+    return RedirectResponse(f"/t/billing/pending?sync_job_id={job.id}", status_code=303)
 
 
 async def _load_pending_consultations(
@@ -4661,6 +4701,16 @@ async def billing_emission_job_status(
     job = get_billing_emission_job(job_id, int(user.tenant_id))
     if job is None:
         return JSONResponse({"error": "job_not_found"}, status_code=404)
+    return JSONResponse(job.public_dict())
+
+
+async def billing_consultorio_sync_job_status(
+    job_id: str,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+) -> JSONResponse:
+    job = get_billing_consultorio_sync_job(job_id, int(user.tenant_id))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job no encontrado")
     return JSONResponse(job.public_dict())
 
 
