@@ -173,3 +173,41 @@ def test_fetch_attended_consultations_falls_back_to_appointment_list() -> None:
     assert consultation.insurance_name == "Medife"
     assert consultation.diagnosis == "Lumbalgia"
     assert session.calls[-1][1] == APPOINTMENT_LIST_URL
+
+
+def test_fetch_attended_consultations_falls_back_when_seen_report_returns_500() -> None:
+    seen_error_responses = [
+        FakeResponse(status_code=500, text="server error", url=SEEN_PATIENT_REPORT_URL)
+        for _ in range(8)
+    ]
+    session = FakeSession(
+        [
+            *seen_error_responses,
+            FakeResponse(
+                data={
+                    "content": [
+                        {
+                            "id": "appt-500-fallback",
+                            "attendedAt": "2026-07-04 12:00:00",
+                            "patient": {
+                                "id": "patient-500",
+                                "name": "Laura Gomez",
+                                "email": "laura@example.com",
+                                "document": {"number": "30123123"},
+                            },
+                            "insurance": {"name": "OSDE"},
+                            "practice": {"name": "Consulta"},
+                        }
+                    ]
+                },
+                url=APPOINTMENT_LIST_URL,
+            ),
+        ]
+    )
+
+    consultations = fetch_attended_consultations(session, "8", date(2026, 7, 1), date(2026, 7, 4))
+
+    assert len(consultations) == 1
+    assert consultations[0].external_id == "appt-500-fallback"
+    assert consultations[0].patient_name == "Laura Gomez"
+    assert session.calls[-1][1] == APPOINTMENT_LIST_URL

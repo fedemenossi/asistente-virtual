@@ -1034,6 +1034,17 @@ def fetch_seen_patient_report(
             )
             if response.status_code in {404, 405}:
                 continue
+            if response.status_code >= 500:
+                logger.warning(
+                    "consultorio_movil_seen_report_server_error",
+                    extra={
+                        "method": method.upper(),
+                        "url": url,
+                        "status_code": response.status_code,
+                        "final_url": str(response.url),
+                    },
+                )
+                continue
             response.raise_for_status()
             items = _response_report_items(response)
             logger.info(
