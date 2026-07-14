@@ -11,13 +11,24 @@ from sqlalchemy import func, select
 
 from app.core.db import AsyncSessionLocal
 from app.core.timezone import now_ba
-from app.integrations.consultorio_movil import AttendedConsultation, fetch_attended_consultations, login
+from app.integrations.consultorio_movil import (
+    AttendedConsultation,
+    ConsultorioMovilAccessBlocked,
+    fetch_attended_consultations,
+    login,
+)
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_sync_state import BillingSyncState
 from app.models.consultorio import Consultorio
 from app.services.billing_consultation_csv_service import BillingConsultationCsvImportService
 
 logger = logging.getLogger(__name__)
+
+CONSULTORIO_MOVIL_BLOCKED_MESSAGE = (
+    "Consultorio Movil bloqueo el acceso automatico al login (HTTP 403). "
+    "La sincronizacion por scraping no se puede completar desde este servidor. "
+    "Usa la carga por CSV para importar las consultas atendidas."
+)
 
 
 @dataclass
@@ -150,10 +161,27 @@ async def _run_billing_consultorio_sync_job(job_id: str) -> None:
             await session.commit()
         job.status = "completed" if job.errors == 0 else "completed_with_errors"
         job.phase = "Finalizada"
+    except ConsultorioMovilAccessBlocked as exc:
+        logger.warning(
+            "billing_consultorio_sync_job_blocked",
+            extra={"job_id": job.id, "tenant_id": job.tenant_id, "source_error": str(exc)},
+            exc_info=True,
+        )
+        job.status = "failed"
+        job.phase = "Acceso bloqueado por Consultorio Movil"
+        job.errors = 1
+        job.error_message = CONSULTORIO_MOVIL_BLOCKED_MESSAGE
+        async with AsyncSessionLocal() as session:
+            if job.consultorio_id is not None:
+                state = await _sync_state(session, job.tenant_id, job.consultorio_id)
+                state.last_status = "failed"
+                state.last_error = job.error_message
+                await session.commit()
     except Exception as exc:
         logger.warning("billing_consultorio_sync_job_failed", extra={"job_id": job.id, "tenant_id": job.tenant_id}, exc_info=True)
         job.status = "failed"
         job.phase = "Error"
+        job.errors = 1
         job.error_message = str(exc) or exc.__class__.__name__
         async with AsyncSessionLocal() as session:
             if job.consultorio_id is not None:

@@ -4680,6 +4680,65 @@ async def billing_pending_delete_selected(
     return RedirectResponse(_pending_back_url(form), status_code=303)
 
 
+async def billing_finalized_restore_pending(
+    request: Request,
+    consultation_id: int,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    form = await request.form()
+    validate_csrf(request, str(form.get("csrf_token") or ""))
+    consultation = await session.scalar(
+        select(BillingExternalConsultation).where(
+            BillingExternalConsultation.id == consultation_id,
+            BillingExternalConsultation.tenant_id == user.tenant_id,
+        )
+    )
+    if consultation is None:
+        raise HTTPException(status_code=404, detail="Consulta no encontrada")
+    if consultation.arca_invoice_id is not None or consultation.status == "billed":
+        add_flash(request, "error", "No se puede volver a pendiente una consulta que ya tiene factura emitida.")
+        return RedirectResponse("/t/billing/finalized", status_code=303)
+    if consultation.status != "excluded":
+        add_flash(request, "warning", "Solo las consultas en estado No facturar pueden volver a pendiente desde esta pantalla.")
+        return RedirectResponse("/t/billing/finalized", status_code=303)
+
+    async with session.begin_nested():
+        consultation.status = "pending"
+        consultation.selected_for_billing = False
+        await audit_log(
+            session,
+            request,
+            user,
+            action="billing_consultation_restored_pending",
+            entity="billing_external_consultation",
+            entity_id=consultation.id,
+            tenant_id=int(user.tenant_id),
+            metadata={
+                "previous_status": "excluded",
+                "new_status": "pending",
+                "patient_name": consultation.patient_name,
+                "attended_at": consultation.attended_at.isoformat() if consultation.attended_at else None,
+            },
+        )
+    add_flash(request, "success", "La consulta volvio a pendiente y ya puede facturarse.")
+    params = {
+        key: value
+        for key, value in {
+            "date_from": request.query_params.get("date_from", "").strip(),
+            "date_to": request.query_params.get("date_to", "").strip(),
+            "q": request.query_params.get("q", "").strip(),
+            "dni": request.query_params.get("dni", "").strip(),
+            "obra_social": request.query_params.get("obra_social", "").strip(),
+            "staff_id": request.query_params.get("staff_id", "").strip(),
+            "status": "pending",
+        }.items()
+        if value
+    }
+    suffix = f"?{urlencode(params)}" if params else "?status=pending"
+    return RedirectResponse(f"/t/billing/pending{suffix}", status_code=303)
+
+
 async def billing_invoice_emit_one(
     request: Request,
     consultation_id: int,

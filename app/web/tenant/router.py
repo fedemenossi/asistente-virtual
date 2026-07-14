@@ -425,6 +425,12 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
+    "/billing/finalized/{consultation_id}/restore-pending",
+    views.billing_finalized_restore_pending,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing/emit/{consultation_id}",
     views.billing_invoice_emit_one,
     methods=["POST"],

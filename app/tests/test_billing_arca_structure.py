@@ -18,7 +18,14 @@ from app.models.billing_diagnostic import BillingDiagnostic
 from app.models.billing_email_log import BillingEmailLog
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_invoice_line import BillingInvoiceLine
-from app.services.billing_consultorio_sync_job_service import _latest_imported_attended_at
+from app.integrations.consultorio_movil import ConsultorioMovilAccessBlocked
+from app.services.billing_consultorio_sync_job_service import (
+    BillingConsultorioSyncJob,
+    CONSULTORIO_MOVIL_BLOCKED_MESSAGE,
+    _jobs,
+    _latest_imported_attended_at,
+    _run_billing_consultorio_sync_job,
+)
 from app.models.tenant import Tenant
 from app.models.tenant_feature import TenantFeature
 from app.models.user import UserRole
@@ -1321,6 +1328,123 @@ def test_billing_pending_can_mark_selected_as_no_facturar(client, db_session):
     assert "Andrea Blumtritt" in listing.text
 
 
+def test_billing_finalized_can_restore_excluded_consultation_to_pending(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Restore Pending", "whatsapp:+6378"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-restore-pending@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    async def _seed():
+        async with db_session() as session:
+            async with session.begin():
+                row = BillingExternalConsultation(
+                    tenant_id=tenant_id,
+                    external_provider="csv_attended",
+                    external_id="restore-pending-1",
+                    attended_at=datetime(2026, 6, 17, 3, 0),
+                    patient_name="Paciente Tardia",
+                    patient_document="30999111",
+                    patient_email="tardia@example.com",
+                    status="excluded",
+                    selected_for_billing=False,
+                    send_email=False,
+                )
+                session.add(row)
+                await session.flush()
+                return row.id
+
+    row_id = asyncio.run(_seed())
+    login(client, "tenant-restore-pending@test.com", "secret-123")
+    page = client.get("/t/billing/finalized?status=excluded")
+    assert "Paciente Tardia" in page.text
+    assert "Volver a pendiente" in page.text
+    response = client.post(
+        f"/t/billing/finalized/{row_id}/restore-pending?date_from=2026-06-17&date_to=2026-06-17",
+        data={"csrf_token": _csrf(page.text)},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+    assert response.headers["location"] == "/t/billing/pending?date_from=2026-06-17&date_to=2026-06-17&status=pending"
+
+    async def _fetch():
+        async with db_session() as session:
+            return await session.get(BillingExternalConsultation, row_id)
+
+    row = asyncio.run(_fetch())
+    assert row.status == "pending"
+    assert row.selected_for_billing is False
+    assert row.send_email is False
+    pending = client.get("/t/billing/pending?status=pending")
+    assert "Paciente Tardia" in pending.text
+
+
+def test_billing_finalized_restore_pending_rejects_billed_consultation(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Restore Billed", "whatsapp:+6379"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-restore-billed@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    async def _seed():
+        async with db_session() as session:
+            async with session.begin():
+                row = BillingExternalConsultation(
+                    tenant_id=tenant_id,
+                    external_provider="csv_attended",
+                    external_id="restore-billed-1",
+                    attended_at=datetime(2026, 6, 17, 3, 0),
+                    patient_name="Paciente Facturada",
+                    patient_document="30999222",
+                    status="billed",
+                )
+                session.add(row)
+                await session.flush()
+                invoice = ArcaInvoice(
+                    tenant_id=tenant_id,
+                    external_consultation_id=row.id,
+                    represented_cuit="27285069012",
+                    environment="homo",
+                    pto_vta=6,
+                    cbte_tipo=11,
+                    cbte_nro=101,
+                    status=ArcaInvoiceStatus.AUTHORIZED,
+                    mon_id="PES",
+                )
+                session.add(invoice)
+                await session.flush()
+                row.arca_invoice_id = invoice.id
+                return row.id
+
+    row_id = asyncio.run(_seed())
+    login(client, "tenant-restore-billed@test.com", "secret-123")
+    page = client.get("/t/billing/finalized?status=billed")
+    response = client.post(
+        f"/t/billing/finalized/{row_id}/restore-pending",
+        data={"csrf_token": _csrf(page.text)},
+        follow_redirects=False,
+    )
+    assert response.status_code in (302, 303)
+
+    async def _fetch():
+        async with db_session() as session:
+            return await session.get(BillingExternalConsultation, row_id)
+
+    row = asyncio.run(_fetch())
+    assert row.status == "billed"
+    assert row.arca_invoice_id is not None
+
+
 def test_billing_emit_keeps_excluded_consultation_without_email(client, db_session, monkeypatch):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Excluded No Email", "whatsapp:+6377"))
     item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
@@ -1691,6 +1815,43 @@ def test_billing_consultorio_sync_job_status_endpoint(client, db_session, monkey
     response = client.get("/t/billing/sync-jobs/sync-status-job")
     assert response.status_code == 200
     assert response.json()["status"] == "running"
+
+
+def test_billing_consultorio_sync_job_reports_blocked_login(db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Blocked", "whatsapp:+685"))
+    consultorio_id = 9876
+    job = BillingConsultorioSyncJob(id="sync-blocked-test", tenant_id=tenant_id, consultorio_id=consultorio_id)
+    _jobs[job.id] = job
+
+    async def fake_sync_consultorio(_session, _tenant_id, _consultorio_id):
+        return SimpleNamespace(
+            id=consultorio_id,
+            configuracion_externa={"cabildo": {"user": "u", "password": "p", "staff_id": "77"}},
+        )
+
+    async def fake_latest_imported_attended_at(_session, _tenant_id, _consultorio_id):
+        return None
+
+    async def fake_sync_state(_session, _tenant_id, _consultorio_id):
+        return SimpleNamespace(last_status=None, last_error=None)
+
+    def blocked_login(_username, _password):
+        raise ConsultorioMovilAccessBlocked("Consultorio Movil devolvio HTTP 403 al abrir login")
+
+    monkeypatch.setattr("app.services.billing_consultorio_sync_job_service._sync_consultorio", fake_sync_consultorio)
+    monkeypatch.setattr(
+        "app.services.billing_consultorio_sync_job_service._latest_imported_attended_at",
+        fake_latest_imported_attended_at,
+    )
+    monkeypatch.setattr("app.services.billing_consultorio_sync_job_service._sync_state", fake_sync_state)
+    monkeypatch.setattr("app.services.billing_consultorio_sync_job_service.login", blocked_login)
+
+    asyncio.run(_run_billing_consultorio_sync_job(job.id))
+
+    assert job.status == "failed"
+    assert job.phase == "Acceso bloqueado por Consultorio Movil"
+    assert job.errors == 1
+    assert job.error_message == CONSULTORIO_MOVIL_BLOCKED_MESSAGE
 
 
 def test_billing_consultorio_sync_uses_latest_imported_consultation_date(db_session):

@@ -95,6 +95,10 @@ class AttendedConsultation:
     raw_payload: dict[str, Any]
 
 
+class ConsultorioMovilAccessBlocked(RuntimeError):
+    """Raised when Consultorio Movil blocks automated access before login."""
+
+
 def login(username: str, password: str) -> requests.Session:
     session = requests.Session()
     session.headers.update(
@@ -151,9 +155,10 @@ def login(username: str, password: str) -> requests.Session:
             )
             time.sleep(delay)
             continue
-        raise RuntimeError(
-            f"Consultorio Movil devolvio HTTP {login_page.status_code} al abrir login: {login_page.url}"
-        )
+        message = f"Consultorio Movil devolvio HTTP {login_page.status_code} al abrir login: {login_page.url}"
+        if login_page.status_code == 403:
+            raise ConsultorioMovilAccessBlocked(message)
+        raise RuntimeError(message)
 
     payload = {
         "email": username,
