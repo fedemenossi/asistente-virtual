@@ -99,7 +99,7 @@
           <p class="text-sm font-medium text-slate-900">{{ invoice.cae_fch_vto or "-" }}</p>
         </div>
       </div>
-      <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      {% if invoice.origin != 'manual' %}<div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
         <p class="text-xs uppercase tracking-[0.2em] text-slate-500">Diagnostico en factura</p>
         {% if diagnosis %}
           <p class="mt-2 whitespace-pre-wrap text-sm font-semibold text-slate-900">{{ diagnosis }}</p>
@@ -107,6 +107,7 @@
           <p class="mt-2 text-sm font-semibold text-slate-600">No informado.</p>
         {% endif %}
       </div>
+      {% endif %}
       <div class="flex flex-wrap gap-2">
         <a class="btn btn-secondary" href="/t/billing-arca/{{ invoice.id }}/comprobante.html" target="_blank">Ver HTML</a>
         {% if status == 'authorized' and invoice.cae %}
@@ -132,7 +133,7 @@
           <input class="input" type="email" name="to_email" value="{{ invoice.email_to or patient_email }}" placeholder="paciente@correo.com" required />
           <button class="btn btn-primary" type="submit" {% if not invoice.cae %}disabled{% endif %}>Enviar / reenviar</button>
         </div>
-        <p class="mt-2 text-xs text-slate-500">Si hay diagnostico cargado, se incluye en el HTML, PDF y cuerpo del email.</p>
+        <p class="mt-2 text-xs text-slate-500">El comprobante autorizado se envia sin volver a emitir.</p>
       </form>
     </div>
     <div class="card p-6">

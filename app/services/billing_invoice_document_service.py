@@ -60,10 +60,12 @@ class BillingInvoiceDocumentService:
     ) -> BillingInvoiceDocument:
         if consultation is None:
             consultation = await self.get_consultation(invoice)
-        if include_diagnosis is None:
+        if invoice.origin == "manual":
+            include_diagnosis = False
+        elif include_diagnosis is None:
             include_diagnosis = await self.include_diagnosis_in_pdf(invoice.tenant_id)
         diagnosis = extract_invoice_diagnosis(invoice, consultation) if include_diagnosis else ""
-        patient_email = extract_patient_email(consultation)
+        patient_email = invoice.email_to if invoice.origin == "manual" else extract_patient_email(consultation)
         body = build_invoice_html(tenant, invoice, consultation, diagnosis)
         pdf = build_invoice_pdf(tenant, invoice, consultation, diagnosis)
         return BillingInvoiceDocument(
@@ -95,8 +97,8 @@ class BillingInvoiceDocumentService:
     ) -> BillingInvoiceDocument:
         if consultation is None:
             consultation = await self.get_consultation(invoice)
-        patient_email = extract_patient_email(consultation)
-        include_diagnosis = await self.include_diagnosis_in_pdf(invoice.tenant_id)
+        patient_email = invoice.email_to if invoice.origin == "manual" else extract_patient_email(consultation)
+        include_diagnosis = False if invoice.origin == "manual" else await self.include_diagnosis_in_pdf(invoice.tenant_id)
         diagnosis = extract_invoice_diagnosis(invoice, consultation) if include_diagnosis else ""
         if (
             not force
@@ -259,6 +261,8 @@ def extract_sale_condition(
     invoice: ArcaInvoice,
     consultation: BillingExternalConsultation | None = None,
 ) -> str:
+    if invoice.sale_condition:
+        return _normalize_sale_condition(invoice.sale_condition)
     if consultation and consultation.sale_condition:
         return _normalize_sale_condition(consultation.sale_condition)
     request = invoice.request_json or {}
@@ -283,7 +287,7 @@ def build_invoice_html(
         or metadata.get("descripcion")
         or "Consulta medica"
     )
-    patient_name = consultation.patient_name if consultation else "-"
+    patient_name = consultation.patient_name if consultation else (invoice.receiver_name_snapshot or "-")
     patient_document = consultation.patient_document if consultation else invoice.doc_nro
     sale_condition = extract_sale_condition(invoice, consultation)
     fiscal = tenant.arca_settings or {}
@@ -336,19 +340,16 @@ def build_invoice_html(
     <p>Condicion de venta: {html.escape(sale_condition)}</p>
   </div>
   <table>
-    <thead><tr><th>Descripcion</th><th>Diagnostico</th><th>Importe</th></tr></thead>
+    <thead><tr><th>Descripcion</th>{'' if invoice.origin == 'manual' else '<th>Diagnostico</th>'}<th>Importe</th></tr></thead>
     <tbody>
       <tr>
         <td>{html.escape(str(description))}</td>
-        <td class="diagnosis">{html.escape(diagnosis or "No informado")}</td>
+        {'' if invoice.origin == 'manual' else '<td class="diagnosis">' + html.escape(diagnosis or 'No informado') + '</td>'}
         <td>{html.escape(_money(invoice.imp_total))} {html.escape(invoice.mon_id)}</td>
       </tr>
     </tbody>
   </table>
-  <div class="box">
-    <p class="label">Diagnostico informado en factura</p>
-    <p class="diagnosis">{html.escape(diagnosis or "No informado")}</p>
-  </div>
+  {'' if invoice.origin == 'manual' else '<div class="box"><p class="label">Diagnostico informado en factura</p><p class="diagnosis">' + html.escape(diagnosis or 'No informado') + '</p></div>'}
   <div class="box">
     <p class="label">QR ARCA</p>
     <p style="word-break: break-all;">{html.escape(qr_url)}</p>

@@ -312,6 +312,54 @@ class ArcaService:
         )
         return ArcaEmissionResult(invoice=invoice, recovered=False)
 
+    async def emit_manual_invoice_for_patient(
+        self, tenant: Tenant, patient: Paciente, item: ArcaBillableItem, *, amount: Any,
+        service_start, service_end, sale_condition: str, send_email: bool,
+    ) -> ArcaEmissionResult:
+        if patient.tenant_id != tenant.id or item.tenant_id != tenant.id or patient.deleted_at is not None:
+            raise ArcaEmissionError("El paciente o el item no pertenecen al tenant.")
+        if not item.active or item.currency != "PES" or int(item.concepto) != 2:
+            raise ArcaEmissionError("La factura manual requiere un item activo de servicios en pesos.")
+        if not patient.iva_condition:
+            raise ArcaEmissionError("El paciente no tiene condicion frente al IVA.")
+        settings = self.build_settings(tenant)
+        if settings.environment != "prod":
+            raise ArcaConfigurationError("La factura manual solo se emite con configuracion ARCA de produccion.")
+        ticket = await self.get_ticket(tenant, settings)
+        def auth_provider() -> dict[str, Any]:
+            return {"Token": ticket.token, "Sign": ticket.sign, "Cuit": settings.represented_cuit}
+        pto_vta = int((tenant.arca_settings or {}).get("default_pto_vta") or 0)
+        if pto_vta <= 0:
+            raise ArcaEmissionError("Punto de venta ARCA invalido.")
+        wsfe = self._wsfe_factory(settings, auth_provider)
+        try:
+            latest = await anyio.to_thread.run_sync(lambda: wsfe.get_ultimo_autorizado(pto_vta, 11).data)
+        except WsfeError as exc:
+            raise ArcaConnectivityError(str(exc)) from exc
+        cbte_nro = _extract_int(latest, "CbteNro", 0) + 1
+        value = Decimal(str(amount)).quantize(Decimal("0.01"))
+        if value <= 0:
+            raise ArcaEmissionError("El importe debe ser mayor a cero.")
+        doc_type, doc_number = _document_for_arca(patient.numero_documento or patient.dni)
+        today = datetime.now().date()
+        description = (item.description or item.name).strip()
+        detail = {"Concepto": 2, "DocTipo": doc_type, "DocNro": doc_number, "CbteDesde": cbte_nro, "CbteHasta": cbte_nro, "CbteFch": today.strftime("%Y%m%d"), "ImpTotal": float(value), "ImpTotConc": 0, "ImpNeto": float(value), "ImpOpEx": 0, "ImpTrib": 0, "ImpIVA": 0, "MonId": "PES", "MonCotiz": 1, "CondicionIVAReceptorId": _receiver_tax_condition_id(patient.iva_condition), "FchServDesde": service_start.strftime("%Y%m%d"), "FchServHasta": service_end.strftime("%Y%m%d"), "FchVtoPago": today.strftime("%Y%m%d")}
+        request = {"FeCabReq": {"CantReg": 1, "PtoVta": pto_vta, "CbteTipo": 11}, "FeDetReq": {"FECAEDetRequest": [detail]}, "metadata": {"origin": "manual", "patient_id": patient.id, "receiver_name": f"{patient.nombre} {patient.apellido}".strip(), "description": description, "sale_condition": sale_condition, "service_period_start": service_start.isoformat(), "service_period_end": service_end.isoformat()}}
+        invoice = ArcaInvoice(tenant_id=tenant.id, patient_id=patient.id, billing_item_id=item.id, origin="manual", receiver_name_snapshot=f"{patient.nombre} {patient.apellido}".strip(), receiver_iva_condition_snapshot=patient.iva_condition, service_period_start=service_start, service_period_end=service_end, sale_condition=sale_condition, represented_cuit=str(settings.represented_cuit), environment=settings.environment, pto_vta=pto_vta, cbte_tipo=11, cbte_nro=cbte_nro, concepto=2, doc_tipo=doc_type, doc_nro=str(doc_number), cbte_fch=today, imp_total=value, imp_tot_conc=Decimal("0"), imp_neto=value, imp_op_ex=Decimal("0"), imp_trib=Decimal("0"), imp_iva=Decimal("0"), mon_id="PES", mon_cotiz=Decimal("1"), status=ArcaInvoiceStatus.PENDING_AUTHORIZATION, diagnosis_original_snapshot=None, diagnosis_final_snapshot=None, send_email=send_email, email_to=patient.email, request_json=request)
+        self._session.add(invoice); await self._session.flush()
+        self._session.add(ArcaInvoiceEvent(invoice_id=invoice.id, event_type="authorization_requested", payload_json={"origin": "manual"}))
+        self._session.add(BillingInvoiceLine(invoice_id=invoice.id, item_code=item.code, description=description, diagnosis_text="", quantity=1, unit_price=value, subtotal=value, tax_rate=item.tax_rate, total=value))
+        try:
+            response = await anyio.to_thread.run_sync(lambda: wsfe.solicitar_cae(_soap_fe_cae_request(request)).data)
+        except WsfeError as exc:
+            invoice.status = ArcaInvoiceStatus.REJECTED; invoice.error_message = str(exc)
+            raise ArcaEmissionError(str(exc)) from exc
+        self._apply_authorization_response(invoice, response)
+        if invoice.status != ArcaInvoiceStatus.AUTHORIZED:
+            raise ArcaEmissionError(invoice.error_message or "ARCA rechazo la autorizacion.")
+        self._session.add(ArcaInvoiceEvent(invoice_id=invoice.id, event_type="authorization_approved", payload_json={"cae": invoice.cae, "origin": "manual"}))
+        return ArcaEmissionResult(invoice=invoice)
+
     async def _ensure_invoice_document(
         self,
         tenant: Tenant,

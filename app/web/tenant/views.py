@@ -3504,6 +3504,53 @@ async def billing_fiscal_contacts_list(
     )
 
 
+async def billing_manual_invoice_new(
+    request: Request, user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    patients = list((await session.execute(select(Paciente).where(Paciente.tenant_id == user.tenant_id, Paciente.deleted_at.is_(None)).order_by(Paciente.apellido, Paciente.nombre))).scalars())
+    items = list((await session.execute(select(ArcaBillableItem).where(ArcaBillableItem.tenant_id == user.tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2))).scalars())
+    today = now_ba().date().isoformat()
+    return _template(request, "tenant/billing_manual_invoice_form.html", {"patients": patients, "items": items, "today": today, "sale_conditions": SALE_CONDITION_OPTIONS})
+
+
+async def billing_manual_invoice_preview(
+    request: Request, patient_id: int = Form(...), item_id: int = Form(...), amount: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    patient = await get_tenant_entity_or_404(session, Paciente, patient_id, user.tenant_id)
+    item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == item_id, ArcaBillableItem.tenant_id == user.tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2))
+    try: value = Decimal(amount).quantize(Decimal("0.01")); start = date.fromisoformat(service_start); end = date.fromisoformat(service_end)
+    except (InvalidOperation, ValueError): value = Decimal("0"); start = end = now_ba().date()
+    if item is None or value <= 0 or start > end or sale_condition not in SALE_CONDITION_OPTIONS or not patient.iva_condition:
+        add_flash(request, "error", "Revisa paciente, condicion IVA, item, importe y periodo de prestacion.")
+        return RedirectResponse("/t/billing/manual/new", status_code=303)
+    return _template(request, "tenant/billing_manual_invoice_preview.html", {"patient": patient, "item": item, "amount": value, "service_start": start, "service_end": end, "sale_condition": sale_condition, "send_email": bool(send_email)})
+
+
+async def billing_manual_invoice_emit(
+    request: Request, patient_id: int = Form(...), item_id: int = Form(...), amount: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    patient = await get_tenant_entity_or_404(session, Paciente, patient_id, user.tenant_id)
+    item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == item_id, ArcaBillableItem.tenant_id == user.tenant_id))
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    try:
+        if item is None:
+            raise ArcaEmissionError("Item facturable invalido.")
+        result = await ArcaService(session).emit_manual_invoice_for_patient(tenant, patient, item, amount=Decimal(amount), service_start=date.fromisoformat(service_start), service_end=date.fromisoformat(service_end), sale_condition=sale_condition, send_email=bool(send_email))
+        await BillingInvoiceDocumentService(session).generate_and_store_document(tenant, result.invoice, user_id=user.id)
+        if send_email:
+            document = await BillingInvoiceDocumentService(session).ensure_document(tenant, result.invoice)
+            try: await BillingInvoiceEmailService(session).send_invoice(tenant, result.invoice, to_email=patient.email, document=document)
+            except BillingInvoiceDocumentError as exc: add_flash(request, "warning", f"Factura autorizada, pero no se pudo enviar el email: {exc}")
+        await audit_log(session, request, user, action="manual_invoice_emitted", entity="arca_invoice", entity_id=result.invoice.id, tenant_id=int(user.tenant_id), metadata={"patient_id": patient.id})
+        add_flash(request, "success", f"Factura manual #{result.invoice.cbte_nro} autorizada.")
+        return RedirectResponse(f"/t/billing/invoices/{result.invoice.id}", status_code=303)
+    except (ArcaConfigurationError, ArcaConnectivityError, ArcaEmissionError, InvalidOperation, ValueError) as exc:
+        add_flash(request, "error", f"No se pudo emitir la factura manual: {exc}")
+        return RedirectResponse("/t/billing/manual/new", status_code=303)
+
+
 async def billing_fiscal_contact_new_get(
     request: Request,
     user: CurrentUser = Depends(require_permission("billing_arca:write")),

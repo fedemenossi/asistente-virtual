@@ -1,0 +1,9 @@
+{% extends "layout/base.html" %}{% set title="Nueva factura manual" %}{% block content %}
+<div class="mb-6"><h1 class="text-2xl font-semibold">Nueva Factura C manual</h1><p class="text-sm text-slate-600">Servicios en pesos argentinos. La emision usa la configuracion ARCA de produccion.</p></div>
+<form method="post" action="/t/billing/manual/preview" class="card max-w-3xl space-y-4 p-6"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+<label>Paciente<select class="select" name="patient_id" required>{% for patient in patients %}<option value="{{ patient.id }}">{{ patient.apellido }}, {{ patient.nombre }} — {{ patient.dni }}</option>{% endfor %}</select></label>
+<label>Item facturable<select class="select" name="item_id" required>{% for item in items %}<option value="{{ item.id }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
+<label>Importe facturado<input class="input" name="amount" required /></label>
+<div class="grid gap-4 md:grid-cols-2"><label>Desde<input class="input" type="date" name="service_start" value="{{ today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ today }}" required /></label></div>
+<label>Condicion de venta<select class="select" name="sale_condition">{% for value in sale_conditions %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+<label><input type="checkbox" name="send_email" checked /> Enviar por email al autorizar</label><div><button class="btn btn-primary">Previsualizar</button><a class="btn btn-secondary" href="/t/billing/invoices">Cancelar</a></div></form>{% endblock %}

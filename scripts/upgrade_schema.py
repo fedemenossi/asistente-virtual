@@ -160,6 +160,12 @@ EXTRA_COLUMNS = {
         "billed_at": "DATETIME NULL",
     },
     "billing_invoices": {
+        "origin": "VARCHAR(30) NOT NULL DEFAULT 'consultation'",
+        "receiver_name_snapshot": "VARCHAR(200) NULL",
+        "receiver_iva_condition_snapshot": "VARCHAR(50) NULL",
+        "service_period_start": "DATE NULL",
+        "service_period_end": "DATE NULL",
+        "sale_condition": "VARCHAR(80) NULL",
         "external_consultation_id": "INT NULL",
         "billing_item_id": "INT NULL",
         "diagnosis_original_snapshot": "TEXT NULL",
