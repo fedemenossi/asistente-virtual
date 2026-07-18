@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 import re
+import asyncio
+import threading
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -15,6 +18,7 @@ from app.integrations.arca.config import ArcaWsSettings
 from app.integrations.arca.wsaa_client import AccessTicket, WsaaClient, WsaaError
 from app.integrations.arca.wsfe_client import WsfeClient, WsfeError
 from app.models.arca_billable_item import ArcaBillableItem
+from app.models.arca_fiscal_series import ArcaFiscalSeries
 from app.models.arca_invoice import ArcaInvoice, ArcaInvoiceStatus
 from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_external_consultation import BillingExternalConsultation
@@ -27,6 +31,24 @@ from app.services.billing_arca_settings_service import decrypt_secret
 
 
 logger = logging.getLogger(__name__)
+
+_fiscal_series_locks: dict[tuple[int, str, str, int, int], asyncio.Lock] = {}
+_fiscal_series_locks_guard = threading.Lock()
+
+
+@asynccontextmanager
+async def _in_process_fiscal_series_lock(
+    tenant_id: int,
+    represented_cuit: str,
+    environment: str,
+    pto_vta: int,
+    cbte_tipo: int,
+):
+    key = (tenant_id, represented_cuit, environment, pto_vta, cbte_tipo)
+    with _fiscal_series_locks_guard:
+        lock = _fiscal_series_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        yield
 
 
 class ArcaConfigurationError(RuntimeError):
@@ -180,6 +202,38 @@ class ArcaService:
     ) -> ArcaEmissionResult:
         if consultation.tenant_id != tenant.id or item.tenant_id != tenant.id:
             raise ArcaEmissionError("La consulta o el item no pertenecen al tenant.")
+        settings = self.build_settings(tenant)
+        arca_cfg = tenant.arca_settings or {}
+        pto_vta = int(arca_cfg.get("default_pto_vta") or 0)
+        cbte_tipo = int(arca_cfg.get("default_cbte_tipo") or 11)
+        if pto_vta <= 0:
+            raise ArcaEmissionError("Punto de venta ARCA invalido.")
+        async with _in_process_fiscal_series_lock(
+            tenant.id,
+            str(settings.represented_cuit),
+            settings.environment,
+            pto_vta,
+            cbte_tipo,
+        ):
+            return await self._emit_invoice_for_consultation_locked(
+                tenant,
+                consultation,
+                item,
+                amount_override=amount_override,
+                send_email=send_email,
+            )
+
+    async def _emit_invoice_for_consultation_locked(
+        self,
+        tenant: Tenant,
+        consultation: BillingExternalConsultation,
+        item: ArcaBillableItem,
+        *,
+        amount_override: Any | None = None,
+        send_email: bool | None = None,
+    ) -> ArcaEmissionResult:
+        if consultation.tenant_id != tenant.id or item.tenant_id != tenant.id:
+            raise ArcaEmissionError("La consulta o el item no pertenecen al tenant.")
         await self._session.refresh(consultation, with_for_update=True)
         if consultation.arca_invoice_id is not None:
             raise ArcaInvoiceAlreadyExists("La consulta ya esta facturada.")
@@ -213,6 +267,13 @@ class ArcaService:
         concepto = int(item.concepto or arca_cfg.get("default_concepto") or 2)
         if pto_vta <= 0:
             raise ArcaEmissionError("Punto de venta ARCA invalido.")
+        await self._lock_fiscal_series(
+            tenant_id=tenant.id,
+            represented_cuit=str(settings.represented_cuit),
+            environment=settings.environment,
+            pto_vta=pto_vta,
+            cbte_tipo=cbte_tipo,
+        )
 
         try:
             latest = await anyio.to_thread.run_sync(
@@ -314,6 +375,48 @@ class ArcaService:
         return ArcaEmissionResult(invoice=invoice, recovered=False)
 
     async def emit_manual_invoice_for_patient(
+        self,
+        tenant: Tenant,
+        patient: Paciente,
+        item: ArcaBillableItem,
+        *,
+        amount: Any,
+        service_start,
+        service_end,
+        sale_condition: str,
+        send_email: bool,
+    ) -> ArcaEmissionResult:
+        if patient.tenant_id != tenant.id or item.tenant_id != tenant.id or patient.deleted_at is not None:
+            raise ArcaEmissionError("El paciente o el item no pertenecen al tenant.")
+        if not item.active or item.currency != "PES" or int(item.concepto) != 2:
+            raise ArcaEmissionError("La factura manual requiere un item activo de servicios en pesos.")
+        if not patient.iva_condition:
+            raise ArcaEmissionError("El paciente no tiene condicion frente al IVA.")
+        settings = self.build_settings(tenant)
+        if settings.environment != "prod":
+            raise ArcaConfigurationError("La factura manual solo se emite con configuracion ARCA de produccion.")
+        pto_vta = int((tenant.arca_settings or {}).get("default_pto_vta") or 0)
+        if pto_vta <= 0:
+            raise ArcaEmissionError("Punto de venta ARCA invalido.")
+        async with _in_process_fiscal_series_lock(
+            tenant.id,
+            str(settings.represented_cuit),
+            settings.environment,
+            pto_vta,
+            11,
+        ):
+            return await self._emit_manual_invoice_for_patient_locked(
+                tenant,
+                patient,
+                item,
+                amount=amount,
+                service_start=service_start,
+                service_end=service_end,
+                sale_condition=sale_condition,
+                send_email=send_email,
+            )
+
+    async def _emit_manual_invoice_for_patient_locked(
         self, tenant: Tenant, patient: Paciente, item: ArcaBillableItem, *, amount: Any,
         service_start, service_end, sale_condition: str, send_email: bool,
     ) -> ArcaEmissionResult:
@@ -332,6 +435,13 @@ class ArcaService:
         pto_vta = int((tenant.arca_settings or {}).get("default_pto_vta") or 0)
         if pto_vta <= 0:
             raise ArcaEmissionError("Punto de venta ARCA invalido.")
+        await self._lock_fiscal_series(
+            tenant_id=tenant.id,
+            represented_cuit=str(settings.represented_cuit),
+            environment=settings.environment,
+            pto_vta=pto_vta,
+            cbte_tipo=11,
+        )
         wsfe = self._wsfe_factory(settings, auth_provider)
         try:
             latest = await anyio.to_thread.run_sync(lambda: wsfe.get_ultimo_autorizado(pto_vta, 11).data)
@@ -388,6 +498,66 @@ class ArcaService:
         result.invoice.receiver_name_snapshot = contact.name
         result.invoice.email_to = contact.email
         return result
+
+    async def _lock_fiscal_series(
+        self,
+        *,
+        tenant_id: int,
+        represented_cuit: str,
+        environment: str,
+        pto_vta: int,
+        cbte_tipo: int,
+    ) -> None:
+        """Lock one fiscal series until the surrounding transaction commits."""
+        values = {
+            "tenant_id": tenant_id,
+            "represented_cuit": represented_cuit,
+            "environment": environment,
+            "pto_vta": pto_vta,
+            "cbte_tipo": cbte_tipo,
+        }
+        dialect = self._session.get_bind().dialect.name
+        if dialect == "mysql":
+            from sqlalchemy.dialects.mysql import insert
+
+            statement = insert(ArcaFiscalSeries).values(**values)
+            statement = statement.on_duplicate_key_update(id=ArcaFiscalSeries.id)
+            await self._session.execute(statement)
+        elif dialect == "sqlite":
+            from sqlalchemy.dialects.sqlite import insert
+
+            statement = insert(ArcaFiscalSeries).values(**values)
+            await self._session.execute(statement.on_conflict_do_nothing())
+        elif dialect == "postgresql":
+            from sqlalchemy.dialects.postgresql import insert
+
+            statement = insert(ArcaFiscalSeries).values(**values)
+            await self._session.execute(statement.on_conflict_do_nothing())
+        else:
+            series = await self._session.scalar(
+                select(ArcaFiscalSeries).where(
+                    ArcaFiscalSeries.tenant_id == tenant_id,
+                    ArcaFiscalSeries.represented_cuit == represented_cuit,
+                    ArcaFiscalSeries.environment == environment,
+                    ArcaFiscalSeries.pto_vta == pto_vta,
+                    ArcaFiscalSeries.cbte_tipo == cbte_tipo,
+                )
+            )
+            if series is None:
+                self._session.add(ArcaFiscalSeries(**values))
+                await self._session.flush()
+
+        await self._session.scalar(
+            select(ArcaFiscalSeries)
+            .where(
+                ArcaFiscalSeries.tenant_id == tenant_id,
+                ArcaFiscalSeries.represented_cuit == represented_cuit,
+                ArcaFiscalSeries.environment == environment,
+                ArcaFiscalSeries.pto_vta == pto_vta,
+                ArcaFiscalSeries.cbte_tipo == cbte_tipo,
+            )
+            .with_for_update()
+        )
 
     async def _ensure_invoice_document(
         self,

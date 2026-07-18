@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import threading
+import time
 from types import SimpleNamespace
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
@@ -13,6 +15,7 @@ from app.core.security import hash_password
 from app.integrations.arca.wsaa_client import AccessTicket
 from app.integrations.arca.wsfe_client import WsfeError, WsfeResult
 from app.models.arca_billable_item import ArcaBillableItem
+from app.models.arca_access_ticket import ArcaAccessTicket
 from app.models.arca_invoice import ArcaInvoice, ArcaInvoiceStatus
 from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_diagnostic import BillingDiagnostic
@@ -2017,6 +2020,118 @@ def test_billing_pending_diagnosis_update_and_tenant_scope(client, db_session):
     own_diag, other_diag = asyncio.run(_diagnosis())
     assert own_diag == "Diagnostico editable"
     assert other_diag == "Otro"
+
+
+def test_arca_service_serializes_concurrent_emissions_for_the_same_fiscal_series(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Concurrent ARCA", "whatsapp:+625"))
+    first_item_id, first_consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
+
+    async def _create_second_consultation() -> int:
+        async with db_session() as session:
+            consultation = BillingExternalConsultation(
+                tenant_id=tenant_id,
+                external_provider="consultorio_movil",
+                external_id="att-concurrent-second",
+                attended_at=datetime(2026, 7, 4, 10, 30),
+                patient_name="Maria Perez",
+                patient_document="27111222",
+                insurance_name="OSDE",
+                practice_name="Consulta",
+                diagnosis_original="Control",
+                diagnosis="Control",
+            )
+            session.add(consultation)
+            await session.flush()
+            await session.commit()
+            return consultation.id
+
+    second_consultation_id = asyncio.run(_create_second_consultation())
+
+    async def _store_ticket():
+        async with db_session() as session:
+            session.add(
+                ArcaAccessTicket(
+                    tenant_id=tenant_id,
+                    represented_cuit="20123456789",
+                    environment="homo",
+                    service="wsfe",
+                    token_encrypted=encrypt_secret("token"),
+                    sign_encrypted=encrypt_secret("sign"),
+                    expiration_time=(datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None),
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_store_ticket())
+
+    class ConcurrentWsfe:
+        last_number = 0
+        requested_numbers: list[int] = []
+        state_lock = threading.Lock()
+
+        def __init__(self, settings, auth_provider):
+            pass
+
+        def get_ultimo_autorizado(self, pto_vta, cbte_tipo):
+            time.sleep(0.05)
+            with type(self).state_lock:
+                return WsfeResult(data={"CbteNro": type(self).last_number})
+
+        def solicitar_cae(self, request):
+            number = request["FeDetReq"]["FECAEDetRequest"][0]["CbteDesde"]
+            with type(self).state_lock:
+                if number != type(self).last_number + 1:
+                    raise WsfeError("Numero de comprobante repetido")
+                type(self).last_number = number
+                type(self).requested_numbers.append(number)
+            return WsfeResult(
+                data={
+                    "FeCabResp": {"Resultado": "A"},
+                    "FeDetResp": {
+                        "FEDetResponse": {
+                            "Resultado": "A",
+                            "CAE": f"{number:014d}",
+                            "CAEFchVto": "20260714",
+                        }
+                    },
+                }
+            )
+
+        def consultar_comprobante(self, pto_vta, cbte_tipo, cbte_nro):
+            raise AssertionError("No debe requerir reconciliacion")
+
+    async def _emit(item_id: int, consultation_id: int) -> int:
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            item = await session.get(ArcaBillableItem, item_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            result = await ArcaService(
+                session,
+                wsaa_factory=_FakeWsaaForEmission,
+                wsfe_factory=ConcurrentWsfe,
+            ).emit_invoice_for_consultation(tenant, consultation, item)
+            await session.commit()
+            return result.invoice.id
+
+    async def _emit_both() -> list[int]:
+        return await asyncio.gather(
+            _emit(first_item_id, first_consultation_id),
+            _emit(first_item_id, second_consultation_id),
+        )
+
+    invoice_ids = asyncio.run(_emit_both())
+
+    async def _numbers():
+        async with db_session() as session:
+            result = await session.execute(
+                select(ArcaInvoice.cbte_nro)
+                .where(ArcaInvoice.id.in_(invoice_ids))
+                .order_by(ArcaInvoice.cbte_nro)
+            )
+            return list(result.scalars())
+
+    assert asyncio.run(_numbers()) == [1, 2]
+    assert ConcurrentWsfe.requested_numbers == [1, 2]
 
 
 def test_arca_service_emits_invoice_with_diagnosis(db_session):

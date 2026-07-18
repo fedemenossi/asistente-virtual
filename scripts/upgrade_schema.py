@@ -207,6 +207,23 @@ async def _add_column(conn, table: str, column: str, ddl: str) -> None:
     await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
 
 
+async def _index_exists(conn, db_name: str, table: str, index_name: str) -> bool:
+    stmt = text(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = :schema
+          AND TABLE_NAME = :table
+          AND INDEX_NAME = :index_name
+        """
+    )
+    result = await conn.execute(
+        stmt,
+        {"schema": db_name, "table": table, "index_name": index_name},
+    )
+    return (result.scalar() or 0) > 0
+
+
 async def _timestamp_column_exists(
     conn,
     db_name: str,
@@ -239,6 +256,24 @@ async def upgrade(db_engine: AsyncEngine, *, dispose: bool = True) -> None:
                     if exists:
                         continue
                     await _add_column(conn, table, column, ddl)
+
+            invoice_series_index = "uq_arca_invoice_number_scope"
+            if not await _index_exists(conn, db_name, "billing_invoices", invoice_series_index):
+                await conn.execute(
+                    text(
+                        """
+                        CREATE UNIQUE INDEX uq_arca_invoice_number_scope
+                        ON billing_invoices (
+                            tenant_id,
+                            environment,
+                            represented_cuit,
+                            pto_vta,
+                            cbte_tipo,
+                            cbte_nro
+                        )
+                        """
+                    )
+                )
 
             if await _column_exists(conn, db_name, "turnos", "tenant_id"):
                 await conn.execute(

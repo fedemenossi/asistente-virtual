@@ -1,5 +1,6 @@
 from app.models.arca_access_ticket import ArcaAccessTicket
 from app.models.arca_billable_item import ArcaBillableItem
+from app.models.arca_fiscal_series import ArcaFiscalSeries
 from app.models.arca_invoice import ArcaInvoice
 from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_email_log import BillingEmailLog
@@ -28,6 +29,7 @@ __all__ = [
     "AuditLog",
     "ArcaAccessTicket",
     "ArcaBillableItem",
+    "ArcaFiscalSeries",
     "ArcaInvoice",
     "ArcaInvoiceEvent",
     "BillingEmailLog",
