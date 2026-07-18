@@ -1,6 +1,5 @@
 {% extends "layout/base.html" %}
 {% set title = "Nueva factura manual" %}
-{% set default_patient = patients[0] if patients else none %}
 {% block content %}
 <div class="mb-6">
   <h1 class="text-2xl font-semibold">Nueva Factura C manual</h1>
@@ -19,14 +18,17 @@
   </label>
 
   <label id="patient_selector">Paciente
-    <select class="select" name="patient_id" id="patient_id">
+    <select class="select" name="patient_id" id="patient_id" required>
+      <option value="" selected>Seleccionar paciente</option>
       {% for patient in patients %}
         <option value="{{ patient.id }}"
           data-receiver-name="{{ patient.nombre }} {{ patient.apellido }}"
           data-receiver-document-type="{{ patient.tipo_documento or 'DNI' }}"
           data-receiver-document-number="{{ patient.numero_documento or patient.dni }}"
           data-receiver-iva-condition="{{ patient.iva_condition or '' }}"
-          data-receiver-email="{{ patient.email or '' }}">
+          data-receiver-email="{{ patient.email or '' }}"
+          data-insurance-name="{{ patient.obra_social or patient.financiador_seguro or '' }}"
+          data-insurance-number="{{ patient.insurance_number or '' }}">
           {{ patient.apellido }}, {{ patient.nombre }} — {{ patient.dni }}
         </option>
       {% endfor %}
@@ -34,7 +36,7 @@
   </label>
 
   <label id="contact_selector" hidden>Contacto fiscal
-    <select class="select" name="contact_id" id="contact_id" disabled>
+    <select class="select" name="contact_id" id="contact_id" disabled required>
       <option value="">Seleccionar</option>
       {% for contact in contacts %}
         <option value="{{ contact.id }}"
@@ -50,25 +52,26 @@
   </label>
 
   <div class="grid gap-2 md:grid-cols-2">
-    <label>Nombre o razon social<input class="input" id="receiver_name" name="receiver_name" value="{{ default_patient.nombre ~ ' ' ~ default_patient.apellido if default_patient else '' }}" required /></label>
+    <label>Nombre o razon social<input class="input" id="receiver_name" name="receiver_name" required /></label>
     <label>Tipo de documento
       <select class="select" id="receiver_document_type" name="receiver_document_type" required>
-        <option value="DNI" {% if not default_patient or (default_patient.tipo_documento or 'DNI') == 'DNI' %}selected{% endif %}>DNI</option>
-        <option value="CUIT" {% if default_patient and default_patient.tipo_documento == 'CUIT' %}selected{% endif %}>CUIT</option>
+        <option value="DNI" selected>DNI</option>
+        <option value="CUIT">CUIT</option>
       </select>
     </label>
-    <label>Numero de documento<input class="input" id="receiver_document_number" name="receiver_document_number" value="{{ (default_patient.numero_documento or default_patient.dni) if default_patient else '' }}" required /></label>
+    <label>Numero de documento<input class="input" id="receiver_document_number" name="receiver_document_number" required /></label>
     <label>Condicion frente al IVA
       <select class="select" id="receiver_iva_condition" name="receiver_iva_condition" required>
         <option value="">Seleccionar</option>
-        {% for value, label in iva_conditions.items() %}<option value="{{ value }}" {% if default_patient and default_patient.iva_condition == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        {% for value, label in iva_conditions.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
       </select>
     </label>
-    <label class="md:col-span-2">Email<input class="input" id="receiver_email" name="receiver_email" type="email" value="{{ default_patient.email if default_patient else '' }}" /></label>
+    <label class="md:col-span-2">Email<input class="input" id="receiver_email" name="receiver_email" type="email" /></label>
   </div>
   <p class="text-xs text-slate-500">Los cambios se aplican solo a esta factura y no modifican el paciente ni el contacto fiscal guardado.</p>
 
-  <label>Item facturable<select class="select" name="item_id" required>{% for item in items %}<option value="{{ item.id }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
+  <label>Item facturable<select class="select" name="item_id" id="item_id" required>{% for item in items %}<option value="{{ item.id }}" data-item-name="{{ item.name }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
+  <p class="text-sm text-slate-700"><span class="font-medium">Vista previa del detalle a facturar:</span> <span id="invoice_line_preview">Selecciona un item.</span></p>
   <label>Importe facturado<input class="input" name="amount" required /></label>
   <div class="grid gap-4 md:grid-cols-2"><label>Desde<input class="input" type="date" name="service_start" value="{{ today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ today }}" required /></label></div>
   <label>Condicion de venta<select class="select" name="sale_condition">{% for value in sale_conditions %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
@@ -83,6 +86,8 @@
     const contactSelector = document.getElementById("contact_selector");
     const patient = document.getElementById("patient_id");
     const contact = document.getElementById("contact_id");
+    const item = document.getElementById("item_id");
+    const linePreview = document.getElementById("invoice_line_preview");
     const receiverFields = ["name", "document_type", "document_number", "iva_condition", "email"];
 
     function syncReceiverFields() {
@@ -98,13 +103,24 @@
         const datasetKey = `receiver${field.split("_").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`;
         document.getElementById(`receiver_${field}`).value = selected?.dataset[datasetKey] || "";
       });
+      updateInvoiceLinePreview();
     }
 
-    if (!patient.options.length && contact.options.length > 1) source.value = "contact";
-    if (!patient.options.length && contact.options.length <= 1) source.value = "provisional";
+    function updateInvoiceLinePreview() {
+      const selectedItem = item.options[item.selectedIndex];
+      const selectedPatient = source.value === "patient" ? patient.options[patient.selectedIndex] : null;
+      const parts = [selectedItem?.dataset.itemName || ""];
+      if (selectedPatient?.dataset.insuranceName) parts.push(selectedPatient.dataset.insuranceName);
+      if (selectedPatient?.dataset.insuranceNumber) parts.push(`Afiliado ${selectedPatient.dataset.insuranceNumber}`);
+      linePreview.textContent = parts.filter(Boolean).join(" - ") || "Selecciona un item.";
+    }
+
+    if (patient.options.length <= 1 && contact.options.length > 1) source.value = "contact";
+    if (patient.options.length <= 1 && contact.options.length <= 1) source.value = "provisional";
     source.addEventListener("change", syncReceiverFields);
     patient.addEventListener("change", syncReceiverFields);
     contact.addEventListener("change", syncReceiverFields);
+    item.addEventListener("change", updateInvoiceLinePreview);
     syncReceiverFields();
   })();
 </script>

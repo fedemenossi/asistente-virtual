@@ -434,6 +434,7 @@ class ArcaService:
         service_end,
         sale_condition: str,
         send_email: bool,
+        line_description: str | None = None,
     ) -> ArcaEmissionResult:
         if patient.tenant_id != tenant.id or item.tenant_id != tenant.id or patient.deleted_at is not None:
             raise ArcaEmissionError("El paciente o el item no pertenecen al tenant.")
@@ -463,11 +464,12 @@ class ArcaService:
                 service_end=service_end,
                 sale_condition=sale_condition,
                 send_email=send_email,
+                line_description=line_description,
             )
 
     async def _emit_manual_invoice_for_patient_locked(
         self, tenant: Tenant, patient: Paciente, item: ArcaBillableItem, *, amount: Any,
-        service_start, service_end, sale_condition: str, send_email: bool,
+        service_start, service_end, sale_condition: str, send_email: bool, line_description: str | None = None,
     ) -> ArcaEmissionResult:
         if patient.tenant_id != tenant.id or item.tenant_id != tenant.id or patient.deleted_at is not None:
             raise ArcaEmissionError("El paciente o el item no pertenecen al tenant.")
@@ -502,7 +504,7 @@ class ArcaService:
             raise ArcaEmissionError("El importe debe ser mayor a cero.")
         doc_type, doc_number = _document_for_arca(patient.numero_documento or patient.dni)
         today = datetime.now().date()
-        description = (item.description or item.name).strip()
+        description = (line_description or item.description or item.name).strip()
         detail = {"Concepto": 2, "DocTipo": doc_type, "DocNro": doc_number, "CbteDesde": cbte_nro, "CbteHasta": cbte_nro, "CbteFch": today.strftime("%Y%m%d"), "ImpTotal": float(value), "ImpTotConc": 0, "ImpNeto": float(value), "ImpOpEx": 0, "ImpTrib": 0, "ImpIVA": 0, "MonId": "PES", "MonCotiz": 1, "CondicionIVAReceptorId": _receiver_tax_condition_id(patient.iva_condition), "FchServDesde": service_start.strftime("%Y%m%d"), "FchServHasta": service_end.strftime("%Y%m%d"), "FchVtoPago": today.strftime("%Y%m%d")}
         request = {"FeCabReq": {"CantReg": 1, "PtoVta": pto_vta, "CbteTipo": 11}, "FeDetReq": {"FECAEDetRequest": [detail]}, "metadata": {"origin": "manual", "patient_id": patient.id, "receiver_name": f"{patient.nombre} {patient.apellido}".strip(), "description": description, "sale_condition": sale_condition, "service_period_start": service_start.isoformat(), "service_period_end": service_end.isoformat()}}
         invoice = ArcaInvoice(tenant_id=tenant.id, patient_id=patient.id, billing_item_id=item.id, origin="manual", receiver_name_snapshot=f"{patient.nombre} {patient.apellido}".strip(), receiver_iva_condition_snapshot=patient.iva_condition, service_period_start=service_start, service_period_end=service_end, sale_condition=sale_condition, represented_cuit=str(settings.represented_cuit), environment=settings.environment, pto_vta=pto_vta, cbte_tipo=11, cbte_nro=cbte_nro, concepto=2, doc_tipo=doc_type, doc_nro=str(doc_number), cbte_fch=today, imp_total=value, imp_tot_conc=Decimal("0"), imp_neto=value, imp_op_ex=Decimal("0"), imp_trib=Decimal("0"), imp_iva=Decimal("0"), mon_id="PES", mon_cotiz=Decimal("1"), status=ArcaInvoiceStatus.PENDING_AUTHORIZATION, diagnosis_original_snapshot=None, diagnosis_final_snapshot=None, send_email=send_email, email_to=patient.email, request_json=request)
@@ -532,12 +534,12 @@ class ArcaService:
 
     async def emit_manual_invoice_for_contact(
         self, tenant: Tenant, contact: BillingFiscalContact, item: ArcaBillableItem, *, amount: Any,
-        service_start, service_end, sale_condition: str, send_email: bool,
+        service_start, service_end, sale_condition: str, send_email: bool, line_description: str | None = None,
     ) -> ArcaEmissionResult:
         if contact.tenant_id != tenant.id or not contact.active:
             raise ArcaEmissionError("El contacto fiscal no pertenece al tenant o esta inactivo.")
         proxy = Paciente(tenant_id=tenant.id, nombre=contact.name, apellido="", telefono="", dni=contact.document_number, email=contact.email or "", iva_condition=contact.iva_condition, numero_documento=contact.document_number)
-        result = await self.emit_manual_invoice_for_patient(tenant, proxy, item, amount=amount, service_start=service_start, service_end=service_end, sale_condition=sale_condition, send_email=send_email)
+        result = await self.emit_manual_invoice_for_patient(tenant, proxy, item, amount=amount, service_start=service_start, service_end=service_end, sale_condition=sale_condition, send_email=send_email, line_description=line_description)
         result.invoice.patient_id = None
         result.invoice.fiscal_contact_id = contact.id
         result.invoice.receiver_name_snapshot = contact.name
@@ -730,7 +732,7 @@ class ArcaService:
             or ""
         )
         insurance_number = (patient.insurance_number if patient else None) or ""
-        description = _compose_invoice_line_description(item.name, insurance_name, insurance_number)
+        description = compose_invoice_line_description(item.name, insurance_name, insurance_number)
         return description, insurance_name.strip(), insurance_number.strip()
 
     async def _consultation_patient(
@@ -1023,7 +1025,7 @@ def _build_invoice_line(
     )
 
 
-def _compose_invoice_line_description(item_name: str, insurance_name: str | None, insurance_number: str | None) -> str:
+def compose_invoice_line_description(item_name: str, insurance_name: str | None, insurance_number: str | None) -> str:
     parts = [(item_name or "Consulta").strip()]
     insurance = (insurance_name or "").strip()
     affiliate = (insurance_number or "").strip()

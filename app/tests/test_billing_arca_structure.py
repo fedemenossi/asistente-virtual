@@ -233,7 +233,7 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
             tenant_id,
         )
     )
-    asyncio.run(
+    patient_id = asyncio.run(
         create_paciente(
             db_session,
             tenant_id,
@@ -245,6 +245,8 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
             tipo_documento="CUIT",
             numero_documento="27301112229",
             iva_condition="monotributista",
+            obra_social="OSDE",
+            insurance_number="12345",
         )
     )
 
@@ -281,7 +283,10 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
     assert form_response.status_code == 200
     assert 'href="/t/billing/manual/new"' in form_response.text
     assert "Facturaci\u00f3n manual" in form_response.text
+    assert '<option value="" selected>Seleccionar paciente</option>' in form_response.text
     assert 'data-receiver-name="Ana Fiscal"' in form_response.text
+    assert 'data-insurance-name="OSDE"' in form_response.text
+    assert 'data-insurance-number="12345"' in form_response.text
     assert 'data-receiver-document-type="CUIT"' in form_response.text
     assert 'data-receiver-document-number="27301112229"' in form_response.text
     assert 'data-receiver-email="ana.fiscal@example.com"' in form_response.text
@@ -295,6 +300,28 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
     assert 'name="receiver_email"' in form_response.text
     assert 'receiver_name" readonly' not in form_response.text
     assert "syncReceiverFields" in form_response.text
+    assert 'id="invoice_line_preview"' in form_response.text
+
+    patient_preview_response = client.post(
+        "/t/billing/manual/preview",
+        data={
+            "csrf_token": _csrf(form_response.text),
+            "receiver_type": "patient",
+            "patient_id": str(patient_id),
+            "receiver_name": "Ana Fiscal",
+            "receiver_document_type": "CUIT",
+            "receiver_document_number": "27301112229",
+            "receiver_iva_condition": "monotributista",
+            "receiver_email": "ana.fiscal@example.com",
+            "item_id": str(item_id),
+            "amount": "1000.00",
+            "service_start": "2026-07-18",
+            "service_end": "2026-07-18",
+            "sale_condition": "Contado",
+        },
+    )
+    assert patient_preview_response.status_code == 200
+    assert "Prestacion manual - OSDE - Afiliado 12345" in patient_preview_response.text
 
     preview_response = client.post(
         "/t/billing/manual/preview",
@@ -329,6 +356,7 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
 
         async def emit_manual_invoice_for_contact(self, tenant, receiver, item, **kwargs):
             captured["receiver"] = receiver
+            captured["line_description"] = kwargs["line_description"]
             invoice = SimpleNamespace(id=900, cbte_nro=81, patient_id=None, fiscal_contact_id=None)
             captured["invoice"] = invoice
             return SimpleNamespace(invoice=invoice)
@@ -364,8 +392,32 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
     assert emit_response.status_code == 303
     assert captured["receiver"].name == "Clinica Central Actualizada"
     assert captured["receiver"].email == "cuentas@clinica.example.com"
+    assert captured["line_description"] == "Prestacion manual"
     assert captured["invoice"].fiscal_contact_id == contact_id
     assert captured["document_generated"] is True
+
+    patient_emit_response = client.post(
+        "/t/billing/manual/emit",
+        data={
+            "csrf_token": _csrf(patient_preview_response.text),
+            "receiver_type": "patient",
+            "patient_id": str(patient_id),
+            "receiver_name": "Ana Fiscal",
+            "receiver_document_type": "CUIT",
+            "receiver_document_number": "27301112229",
+            "receiver_iva_condition": "monotributista",
+            "receiver_email": "ana.fiscal@example.com",
+            "item_id": str(item_id),
+            "amount": "1000.00",
+            "service_start": "2026-07-18",
+            "service_end": "2026-07-18",
+            "sale_condition": "Contado",
+        },
+        follow_redirects=False,
+    )
+    assert patient_emit_response.status_code == 303
+    assert captured["line_description"] == "Prestacion manual - OSDE - Afiliado 12345"
+    assert captured["invoice"].patient_id == patient_id
 
     async def _contact_name() -> str:
         async with db_session() as session:
