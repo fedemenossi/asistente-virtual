@@ -36,6 +36,7 @@ from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_email_log import BillingEmailLog
 from app.models.billing_diagnostic import BillingDiagnostic
 from app.models.billing_external_consultation import BillingExternalConsultation
+from app.models.billing_fiscal_contact import BillingFiscalContact
 from app.models.billing_setting import BillingSetting
 from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.conversation_history import ConversationHistory
@@ -2729,6 +2730,94 @@ def _billing_item_form_context(
     }
 
 
+FISCAL_CONTACT_TYPE_LABELS = {
+    "person": "Persona",
+    "organization": "Organizacion",
+}
+FISCAL_CONTACT_IVA_CONDITIONS = {
+    "consumidor_final": "Consumidor final",
+    "responsable_inscripto": "Responsable inscripto",
+    "monotributista": "Monotributista",
+    "exento": "Exento",
+    "no_categorizado": "No categorizado",
+}
+
+
+def _fiscal_contact_form_context(
+    contact: BillingFiscalContact | None = None,
+    *,
+    errors: dict[str, str] | None = None,
+    form_data: dict | None = None,
+) -> dict:
+    return {
+        "contact": contact,
+        "errors": errors or {},
+        "form_data": form_data or {},
+        "contact_types": FISCAL_CONTACT_TYPE_LABELS,
+        "iva_conditions": FISCAL_CONTACT_IVA_CONDITIONS,
+    }
+
+
+def _fiscal_contact_form_data(
+    contact_type: str,
+    name: str,
+    document_type: str,
+    document_number: str,
+    iva_condition: str,
+    email: str,
+    active: str | None,
+) -> dict:
+    return {
+        "contact_type": contact_type.strip().lower(),
+        "name": " ".join(name.strip().split()),
+        "document_type": document_type.strip().upper(),
+        "document_number": re.sub(r"\D", "", document_number),
+        "iva_condition": iva_condition.strip().lower(),
+        "email": email.strip().lower(),
+        "active": bool(active),
+    }
+
+
+async def _validate_fiscal_contact(
+    session: AsyncSession,
+    tenant_id: int,
+    data: dict,
+    *,
+    contact_id: int | None = None,
+) -> dict[str, str]:
+    errors: dict[str, str] = {}
+    contact_type = data["contact_type"]
+    document_type = data["document_type"]
+    document_number = data["document_number"]
+
+    if contact_type not in FISCAL_CONTACT_TYPE_LABELS:
+        errors["contact_type"] = "Tipo de contacto invalido."
+    if not data["name"] or len(data["name"]) > 200:
+        errors["name"] = "El nombre o razon social es obligatorio."
+    expected_document_type = "DNI" if contact_type == "person" else "CUIT"
+    if document_type != expected_document_type:
+        errors["document_type"] = f"{FISCAL_CONTACT_TYPE_LABELS.get(contact_type, 'El contacto')} debe identificarse con {expected_document_type}."
+    elif document_type == "DNI" and not re.fullmatch(r"\d{7,8}", document_number):
+        errors["document_number"] = "El DNI debe tener 7 u 8 digitos."
+    elif document_type == "CUIT" and not re.fullmatch(r"\d{11}", document_number):
+        errors["document_number"] = "El CUIT debe tener 11 digitos."
+    if data["iva_condition"] not in FISCAL_CONTACT_IVA_CONDITIONS:
+        errors["iva_condition"] = "Condicion frente al IVA invalida."
+    if data["email"] and (len(data["email"]) > 200 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", data["email"])):
+        errors["email"] = "Ingresa un email valido."
+    if document_type and document_number:
+        stmt = select(BillingFiscalContact.id).where(
+            BillingFiscalContact.tenant_id == tenant_id,
+            BillingFiscalContact.document_type == document_type,
+            BillingFiscalContact.document_number == document_number,
+        )
+        if contact_id is not None:
+            stmt = stmt.where(BillingFiscalContact.id != contact_id)
+        if await session.scalar(stmt) is not None:
+            errors["document_number"] = "Ya existe un contacto fiscal con esta identidad en el Tenant."
+    return errors
+
+
 def _billing_item_form_data(
     code: str,
     name: str,
@@ -3364,6 +3453,146 @@ async def billing_arca_send_email(
             )
         add_flash(request, "success", "Factura enviada por email.")
     return RedirectResponse(f"/t/billing-arca/{invoice.id}", status_code=303)
+
+
+async def billing_fiscal_contacts_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    q = request.query_params.get("q", "").strip()
+    stmt = select(BillingFiscalContact).where(BillingFiscalContact.tenant_id == user.tenant_id)
+    if q:
+        like_q = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                BillingFiscalContact.name.ilike(like_q),
+                BillingFiscalContact.document_number.ilike(like_q),
+                BillingFiscalContact.email.ilike(like_q),
+            )
+        )
+    result = await session.execute(
+        stmt.order_by(BillingFiscalContact.active.desc(), BillingFiscalContact.name.asc())
+    )
+    return _template(
+        request,
+        "tenant/billing_fiscal_contacts_list.html",
+        {
+            "contacts": list(result.scalars().all()),
+            "q": q,
+            "contact_types": FISCAL_CONTACT_TYPE_LABELS,
+            "iva_conditions": FISCAL_CONTACT_IVA_CONDITIONS,
+        },
+    )
+
+
+async def billing_fiscal_contact_new_get(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+) -> Response:
+    return _template(request, "tenant/billing_fiscal_contact_form.html", _fiscal_contact_form_context())
+
+
+async def billing_fiscal_contact_new_post(
+    request: Request,
+    contact_type: str = Form(""),
+    name: str = Form(""),
+    document_type: str = Form(""),
+    document_number: str = Form(""),
+    iva_condition: str = Form(""),
+    email: str = Form(""),
+    active: str | None = Form(None),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    data = _fiscal_contact_form_data(contact_type, name, document_type, document_number, iva_condition, email, active)
+    errors = await _validate_fiscal_contact(session, int(user.tenant_id), data)
+    if errors:
+        return _template(request, "tenant/billing_fiscal_contact_form.html", _fiscal_contact_form_context(errors=errors, form_data=data))
+    async with session.begin_nested():
+        contact = BillingFiscalContact(tenant_id=int(user.tenant_id), **{**data, "email": data["email"] or None})
+        session.add(contact)
+        await session.flush()
+        await audit_log(
+            session, request, user, action="create", entity="billing_fiscal_contact", entity_id=contact.id,
+            tenant_id=int(user.tenant_id), metadata={"document_type": contact.document_type, "document_number": contact.document_number},
+        )
+    add_flash(request, "success", "Contacto fiscal creado")
+    return RedirectResponse("/t/billing/fiscal-contacts", status_code=303)
+
+
+async def billing_fiscal_contact_edit_get(
+    request: Request,
+    contact_id: int,
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    contact = await session.scalar(
+        select(BillingFiscalContact).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id)
+    )
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Contacto fiscal no encontrado")
+    return _template(request, "tenant/billing_fiscal_contact_form.html", _fiscal_contact_form_context(contact=contact))
+
+
+async def billing_fiscal_contact_edit_post(
+    request: Request,
+    contact_id: int,
+    contact_type: str = Form(""),
+    name: str = Form(""),
+    document_type: str = Form(""),
+    document_number: str = Form(""),
+    iva_condition: str = Form(""),
+    email: str = Form(""),
+    active: str | None = Form(None),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    contact = await session.scalar(
+        select(BillingFiscalContact).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id)
+    )
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Contacto fiscal no encontrado")
+    data = _fiscal_contact_form_data(contact_type, name, document_type, document_number, iva_condition, email, active)
+    errors = await _validate_fiscal_contact(session, int(user.tenant_id), data, contact_id=contact.id)
+    if errors:
+        return _template(request, "tenant/billing_fiscal_contact_form.html", _fiscal_contact_form_context(contact=contact, errors=errors, form_data=data))
+    async with session.begin_nested():
+        for field, value in data.items():
+            setattr(contact, field, value or None if field == "email" else value)
+        await audit_log(
+            session, request, user, action="update", entity="billing_fiscal_contact", entity_id=contact.id,
+            tenant_id=int(user.tenant_id), metadata={"document_type": contact.document_type, "document_number": contact.document_number},
+        )
+    add_flash(request, "success", "Contacto fiscal actualizado")
+    return RedirectResponse("/t/billing/fiscal-contacts", status_code=303)
+
+
+async def billing_fiscal_contact_deactivate(
+    request: Request,
+    contact_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    contact = await session.scalar(
+        select(BillingFiscalContact).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id)
+    )
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Contacto fiscal no encontrado")
+    async with session.begin_nested():
+        contact.active = False
+        await audit_log(
+            session, request, user, action="deactivate", entity="billing_fiscal_contact", entity_id=contact.id,
+            tenant_id=int(user.tenant_id), metadata={"document_type": contact.document_type, "document_number": contact.document_number},
+        )
+    add_flash(request, "success", "Contacto fiscal desactivado")
+    return RedirectResponse("/t/billing/fiscal-contacts", status_code=303)
 
 
 async def billing_arca_items_list(

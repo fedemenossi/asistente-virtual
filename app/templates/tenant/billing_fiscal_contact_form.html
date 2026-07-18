@@ -1,0 +1,72 @@
+{% extends "layout/base.html" %}
+
+{% set is_edit = contact is defined and contact %}
+{% set title = "Editar contacto fiscal" if is_edit else "Nuevo contacto fiscal" %}
+{% set breadcrumb = "Tenant / Facturacion ARCA / Contactos fiscales" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="text-sm text-slate-600">El contacto se puede reutilizar como receptor en futuras facturas manuales.</p>
+    <h1 class="text-2xl font-semibold text-slate-900">{{ title }}</h1>
+  </div>
+
+  <form method="post" class="card max-w-3xl space-y-4 p-6">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    {% if errors %}<div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Revisa los campos marcados.</div>{% endif %}
+    <div class="grid gap-4 md:grid-cols-2">
+      <div>
+        <label class="text-xs text-slate-500" for="contact_type">Tipo</label>
+        {% set selected_type = form_data.get('contact_type') if form_data else (contact.contact_type if contact else 'person') %}
+        <select class="select" id="contact_type" name="contact_type">
+          {% for value, label in contact_types.items() %}<option value="{{ value }}" {% if selected_type == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        {% if errors.contact_type %}<p class="mt-1 text-xs text-rose-600">{{ errors.contact_type }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500" for="name">Nombre o razon social</label>
+        <input class="input" id="name" name="name" value="{{ form_data.get('name') if form_data else (contact.name if contact else '') }}" />
+        {% if errors.name %}<p class="mt-1 text-xs text-rose-600">{{ errors.name }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500" for="document_type">Tipo de documento</label>
+        {% set selected_document_type = form_data.get('document_type') if form_data else (contact.document_type if contact else 'DNI') %}
+        <select class="select" id="document_type" name="document_type">
+          <option value="DNI" {% if selected_document_type == 'DNI' %}selected{% endif %}>DNI</option>
+          <option value="CUIT" {% if selected_document_type == 'CUIT' %}selected{% endif %}>CUIT</option>
+        </select>
+        {% if errors.document_type %}<p class="mt-1 text-xs text-rose-600">{{ errors.document_type }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500" for="document_number">Numero de documento</label>
+        <input class="input" id="document_number" name="document_number" inputmode="numeric" value="{{ form_data.get('document_number') if form_data else (contact.document_number if contact else '') }}" />
+        {% if errors.document_number %}<p class="mt-1 text-xs text-rose-600">{{ errors.document_number }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500" for="iva_condition">Condicion frente al IVA</label>
+        {% set selected_iva_condition = form_data.get('iva_condition') if form_data else (contact.iva_condition if contact else 'consumidor_final') %}
+        <select class="select" id="iva_condition" name="iva_condition">
+          {% for value, label in iva_conditions.items() %}<option value="{{ value }}" {% if selected_iva_condition == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        {% if errors.iva_condition %}<p class="mt-1 text-xs text-rose-600">{{ errors.iva_condition }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="text-xs text-slate-500" for="email">Email</label>
+        <input class="input" id="email" name="email" type="email" value="{{ form_data.get('email') if form_data else (contact.email if contact else '') }}" />
+        {% if errors.email %}<p class="mt-1 text-xs text-rose-600">{{ errors.email }}</p>{% endif %}
+      </div>
+      <div class="flex items-center gap-3 pt-6">
+        {% set is_active = form_data.get('active') if form_data else (contact.active if contact else true) %}
+        <input class="h-4 w-4" type="checkbox" name="active" id="active" {% if is_active %}checked{% endif %} />
+        <label class="text-sm text-slate-700" for="active">Activo para futuras facturas</label>
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-3"><button class="btn btn-primary" type="submit">Guardar</button><a class="btn btn-secondary" href="/t/billing/fiscal-contacts">Volver</a></div>
+  </form>
+
+  {% if is_edit and contact.active %}
+    <form method="post" action="/t/billing/fiscal-contacts/{{ contact.id }}/deactivate" class="mt-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <button class="btn btn-secondary" type="submit">Dar de baja contacto</button>
+    </form>
+  {% endif %}
+{% endblock %}

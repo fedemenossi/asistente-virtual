@@ -38,6 +38,7 @@ FEATURE_REGISTRY: dict[str, dict] = {
             "/t/billing-arca",
             "/t/billing/pending",
             "/t/billing/invoices",
+            "/t/billing/fiscal-contacts",
             "/t/settings/billing",
             "/t/settings/billing-arca",
         ],

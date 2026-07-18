@@ -15,6 +15,7 @@ from app.models import (  # noqa: F401
     AuditLog,
     BillingEmailLog,
     BillingDiagnostic,
+    BillingFiscalContact,
     BillingInvoiceLine,
     BillingSetting,
     BillingSyncState,

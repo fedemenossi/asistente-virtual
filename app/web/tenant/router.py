@@ -225,6 +225,45 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route(
+    "/billing/fiscal-contacts",
+    views.billing_fiscal_contacts_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/fiscal-contacts/new",
+    views.billing_fiscal_contact_new_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/fiscal-contacts/new",
+    views.billing_fiscal_contact_new_post,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/fiscal-contacts/{contact_id}/edit",
+    views.billing_fiscal_contact_edit_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/fiscal-contacts/{contact_id}/edit",
+    views.billing_fiscal_contact_edit_post,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
+    "/billing/fiscal-contacts/{contact_id}/deactivate",
+    views.billing_fiscal_contact_deactivate,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("billing_arca"))],
+)
+router.add_api_route(
     "/billing-arca/items",
     views.billing_arca_items_list,
     methods=["GET"],

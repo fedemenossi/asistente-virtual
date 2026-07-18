@@ -1,0 +1,54 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/badge.html" import badge %}
+{% from "layout/partials/components/action_icons.html" import action_link %}
+
+{% set title = "Contactos fiscales" %}
+{% set breadcrumb = "Tenant / Facturacion ARCA / Contactos fiscales" %}
+
+{% block content %}
+  <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+    <div>
+      <p class="text-sm text-slate-600">Receptores fiscales reutilizables de este Tenant.</p>
+      <h1 class="text-2xl font-semibold text-slate-900">Contactos fiscales</h1>
+    </div>
+    <a class="btn btn-primary" href="/t/billing/fiscal-contacts/new">Nuevo contacto</a>
+  </div>
+
+  <form method="get" class="card mb-4 flex flex-col gap-3 p-4 md:flex-row">
+    <input class="input flex-1" name="q" value="{{ q }}" placeholder="Buscar por nombre, DNI/CUIT o email" />
+    <button class="btn btn-secondary" type="submit">Buscar</button>
+  </form>
+
+  {% if contacts %}
+    <div class="card overflow-x-auto overflow-y-visible">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium">Nombre / razon social</th>
+            <th class="px-4 py-3 text-left font-medium">Tipo</th>
+            <th class="px-4 py-3 text-left font-medium">Identidad fiscal</th>
+            <th class="px-4 py-3 text-left font-medium">IVA</th>
+            <th class="px-4 py-3 text-left font-medium">Email</th>
+            <th class="px-4 py-3 text-left font-medium">Estado</th>
+            <th class="px-4 py-3 text-right font-medium">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for contact in contacts %}
+            <tr class="border-t border-slate-200 hover:bg-slate-50">
+              <td class="px-4 py-3 text-slate-900">{{ contact.name }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ contact_types[contact.contact_type] }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ contact.document_type }} {{ contact.document_number }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ iva_conditions[contact.iva_condition] }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ contact.email or "-" }}</td>
+              <td class="px-4 py-3">{{ badge("Activo", "success") if contact.active else badge("Inactivo", "neutral") }}</td>
+              <td class="px-4 py-3 text-right"><div class="row-actions">{{ action_link("/t/billing/fiscal-contacts/" ~ contact.id ~ "/edit", "Editar contacto fiscal", "edit") }}</div></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="card p-10 text-center"><p class="text-sm text-slate-600">No hay contactos fiscales para mostrar.</p></div>
+  {% endif %}
+{% endblock %}

@@ -4,6 +4,7 @@ from app.models.arca_invoice import ArcaInvoice
 from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_email_log import BillingEmailLog
 from app.models.billing_diagnostic import BillingDiagnostic
+from app.models.billing_fiscal_contact import BillingFiscalContact
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_invoice_line import BillingInvoiceLine
 from app.models.billing_setting import BillingSetting
@@ -31,6 +32,7 @@ __all__ = [
     "ArcaInvoiceEvent",
     "BillingEmailLog",
     "BillingDiagnostic",
+    "BillingFiscalContact",
     "BillingExternalConsultation",
     "BillingInvoiceLine",
     "BillingSetting",
