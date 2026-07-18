@@ -135,6 +135,21 @@ SALE_CONDITION_OPTIONS = ("Contado", "Transferencia", "Otros medios")
 BILLING_DASHBOARD_GROUP_OPTIONS = {"month", "year", "none"}
 
 
+def _invoice_delivery_state(
+    invoice: ArcaInvoice,
+    consultation: BillingExternalConsultation | None,
+    latest_log: BillingEmailLog | None,
+) -> tuple[str, str, str | None]:
+    recipient = invoice.email_to or extract_patient_email(consultation) or ""
+    if latest_log and latest_log.status == "failed":
+        return "failed", recipient, latest_log.error_message
+    if invoice.email_sent_at or (latest_log and latest_log.status == "sent"):
+        return "sent", recipient, None
+    if not recipient:
+        return "missing_email", "", None
+    return "pending", recipient, None
+
+
 def _template(request: Request, name: str, context: dict) -> Response:
     base = base_context(request)
     base.update(context)
@@ -3084,6 +3099,7 @@ async def billing_arca_list(
     session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     status_filter = request.query_params.get("status", "").strip()
+    origin_filter = request.query_params.get("origin", "").strip()
     q = request.query_params.get("q", "").strip()
     email_status = request.query_params.get("email_status", "").strip()
     pdf_status = request.query_params.get("pdf_status", "").strip()
@@ -3103,6 +3119,8 @@ async def billing_arca_list(
     )
     if status_filter:
         stmt = stmt.where(ArcaInvoice.status == status_filter)
+    if origin_filter in {"consultation", "manual"}:
+        stmt = stmt.where(ArcaInvoice.origin == origin_filter)
     if q:
         like_q = f"%{q}%"
         stmt = stmt.where(
@@ -3111,6 +3129,7 @@ async def billing_arca_list(
                 BillingExternalConsultation.patient_document.ilike(like_q),
                 BillingExternalConsultation.patient_email.ilike(like_q),
                 ArcaInvoice.email_to.ilike(like_q),
+                ArcaInvoice.receiver_name_snapshot.ilike(like_q),
                 ArcaInvoice.cae.ilike(like_q),
                 ArcaInvoice.doc_nro.ilike(like_q),
             )
@@ -3131,12 +3150,30 @@ async def billing_arca_list(
         offset = (page - 1) * limit
     result = await session.execute(stmt.order_by(desc(ArcaInvoice.created_at)).limit(limit).offset(offset))
     rows = list(result.all())
+    invoice_ids = [invoice.id for invoice, _ in rows]
+    latest_email_logs: dict[int, BillingEmailLog] = {}
+    if invoice_ids:
+        logs_result = await session.execute(
+            select(BillingEmailLog)
+            .where(
+                BillingEmailLog.tenant_id == user.tenant_id,
+                BillingEmailLog.invoice_id.in_(invoice_ids),
+            )
+            .order_by(desc(BillingEmailLog.created_at))
+        )
+        for log in logs_result.scalars():
+            latest_email_logs.setdefault(log.invoice_id, log)
+    delivery_states = {
+        invoice.id: _invoice_delivery_state(invoice, consultation, latest_email_logs.get(invoice.id))
+        for invoice, consultation in rows
+    }
     query_string = urlencode(
         {
             key: value
             for key, value in {
                 "q": q,
                 "status": status_filter,
+                "origin": origin_filter,
                 "email_status": email_status,
                 "pdf_status": pdf_status,
             }.items()
@@ -3148,11 +3185,13 @@ async def billing_arca_list(
         "tenant/billing_arca_list.html",
         {
             "rows": rows,
+            "delivery_states": delivery_states,
             "total_rows": total,
             "page": page,
             "total_pages": total_pages,
             "query_string": query_string,
             "status_filter": status_filter,
+            "origin_filter": origin_filter,
             "q": q,
             "email_status": email_status,
             "pdf_status": pdf_status,
@@ -3198,6 +3237,11 @@ async def billing_arca_detail(
     email_logs = list(email_logs_result.scalars().all())
     diagnosis = extract_invoice_diagnosis(invoice, consultation)
     patient_email = invoice.email_to or extract_patient_email(consultation) or ""
+    delivery_status, delivery_recipient, delivery_error = _invoice_delivery_state(
+        invoice,
+        consultation,
+        email_logs[0] if email_logs else None,
+    )
     document_error = ""
     return _template(
         request,
@@ -3209,6 +3253,9 @@ async def billing_arca_detail(
             "email_logs": email_logs,
             "diagnosis": diagnosis,
             "patient_email": patient_email,
+            "delivery_status": delivery_status,
+            "delivery_recipient": delivery_recipient,
+            "delivery_error": delivery_error,
             "document_error": document_error,
         },
     )
@@ -3552,7 +3599,16 @@ async def billing_manual_invoice_emit(
             document = await BillingInvoiceDocumentService(session).ensure_document(tenant, result.invoice)
             try: await BillingInvoiceEmailService(session).send_invoice(tenant, result.invoice, to_email=(patient.email if patient else contact.email or ""), document=document)
             except BillingInvoiceDocumentError as exc: add_flash(request, "warning", f"Factura autorizada, pero no se pudo enviar el email: {exc}")
-        await audit_log(session, request, user, action="manual_invoice_emitted", entity="arca_invoice", entity_id=result.invoice.id, tenant_id=int(user.tenant_id), metadata={"patient_id": patient.id})
+        await audit_log(
+            session,
+            request,
+            user,
+            action="manual_invoice_emitted",
+            entity="arca_invoice",
+            entity_id=result.invoice.id,
+            tenant_id=int(user.tenant_id),
+            metadata={"patient_id": patient.id if patient else None, "fiscal_contact_id": result.invoice.fiscal_contact_id},
+        )
         add_flash(request, "success", f"Factura manual #{result.invoice.cbte_nro} autorizada.")
         return RedirectResponse(f"/t/billing/invoices/{result.invoice.id}", status_code=303)
     except (ArcaConfigurationError, ArcaConnectivityError, ArcaEmissionError, InvalidOperation, ValueError) as exc:

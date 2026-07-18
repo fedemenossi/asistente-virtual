@@ -34,6 +34,11 @@
       <option value="needs_reconciliation" {% if status_filter == 'needs_reconciliation' %}selected{% endif %}>A reconciliar</option>
       <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelado</option>
     </select>
+    <select class="select" name="origin">
+      <option value="">Origen</option>
+      <option value="consultation" {% if origin_filter == 'consultation' %}selected{% endif %}>Consulta atendida</option>
+      <option value="manual" {% if origin_filter == 'manual' %}selected{% endif %}>Factura manual</option>
+    </select>
     <select class="select" name="email_status">
       <option value="">Mail</option>
       <option value="sent" {% if email_status == 'sent' %}selected{% endif %}>Enviado</option>
@@ -52,7 +57,7 @@
     {% if total_rows is defined and total_rows != rows|length %}
       <span class="status-badge bg-slate-50 text-slate-600">Mostradas: {{ rows|length }}</span>
     {% endif %}
-    {% if q or status_filter or email_status or pdf_status %}
+    {% if q or status_filter or origin_filter or email_status or pdf_status %}
       <span class="status-badge bg-slate-50 text-slate-600">Filtros aplicados</span>
     {% endif %}
   </div>
@@ -65,6 +70,7 @@
             <th class="px-4 py-3 text-center font-medium">Comprobante</th>
             <th class="px-4 py-3 text-center font-medium">Fecha facturacion</th>
             <th class="px-4 py-3 text-center font-medium">Fecha consulta</th>
+            <th class="px-4 py-3 text-center font-medium">Origen</th>
             <th class="px-4 py-3 text-center font-medium">Paciente</th>
             <th class="px-4 py-3 text-center font-medium">Importe</th>
             <th class="px-4 py-3 text-center font-medium">Estado</th>
@@ -78,6 +84,7 @@
             {% set invoice = row[0] %}
             {% set consultation = row[1] %}
             {% set status = invoice.status.value if invoice.status.value is defined else invoice.status %}
+            {% set delivery = delivery_states.get(invoice.id, ('pending', '', none)) %}
             <tr>
               <td class="px-4 py-3 text-center text-slate-900">
                 {% if invoice.cbte_nro %}
@@ -93,10 +100,20 @@
               <td class="px-4 py-3 whitespace-nowrap text-center text-slate-600">
                 {{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation and consultation.attended_at else "-" }}
               </td>
+              <td class="px-4 py-3 text-center">
+                {% if invoice.origin == 'manual' %}
+                  {{ badge("Factura manual", "info") }}
+                {% else %}
+                  {{ badge("Consulta atendida", "neutral") }}
+                {% endif %}
+              </td>
               <td class="px-4 py-3 text-center text-slate-600">
                 {% if consultation %}
                   <p class="font-medium text-slate-900">{{ consultation.patient_name or "-" }}</p>
                   <p class="text-xs text-slate-500">DNI {{ consultation.patient_document or "-" }}</p>
+                {% elif invoice.origin == 'manual' %}
+                  <p class="font-medium text-slate-900">{{ invoice.receiver_name_snapshot or "-" }}</p>
+                  <p class="text-xs text-slate-500">Documento {{ invoice.doc_nro or "-" }}</p>
                 {% else %}
                   -
                 {% endif %}
@@ -131,12 +148,17 @@
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-center">
-                {% if invoice.email_sent_at %}
+                {% if delivery[0] == 'sent' %}
                   {{ badge("Enviado", "success") }}
-                  <p class="mt-1 text-xs text-slate-500">{{ invoice.email_to or "-" }}</p>
+                  <p class="mt-1 text-xs text-slate-500">{{ delivery[1] or "-" }}</p>
+                {% elif delivery[0] == 'failed' %}
+                  {{ badge("Entrega fallida", "danger") }}
+                  <p class="mt-1 text-xs text-slate-500">{{ delivery[1] or "-" }}</p>
+                {% elif delivery[0] == 'missing_email' %}
+                  {{ badge("Sin email configurado", "warning") }}
                 {% else %}
-                  {{ badge("No enviado", "neutral") }}
-                  <p class="mt-1 text-xs text-slate-500">{{ invoice.email_to or "-" }}</p>
+                  {{ badge("Pendiente de envio", "neutral") }}
+                  <p class="mt-1 text-xs text-slate-500">{{ delivery[1] or "-" }}</p>
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-center">

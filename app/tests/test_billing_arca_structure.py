@@ -14,10 +14,12 @@ from app.integrations.arca.wsaa_client import AccessTicket
 from app.integrations.arca.wsfe_client import WsfeError, WsfeResult
 from app.models.arca_billable_item import ArcaBillableItem
 from app.models.arca_invoice import ArcaInvoice, ArcaInvoiceStatus
+from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_diagnostic import BillingDiagnostic
 from app.models.billing_email_log import BillingEmailLog
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_invoice_line import BillingInvoiceLine
+from app.models.paciente import Paciente
 from app.integrations.consultorio_movil import ConsultorioMovilAccessBlocked
 from app.services.billing_consultorio_sync_job_service import (
     BillingConsultorioSyncJob,
@@ -3129,3 +3131,280 @@ def test_billing_invoice_pdf_route_regenerates_stale_stored_document(client, db_
     assert b"01/07/2026" in response.content
     assert response.headers["content-type"] == "application/pdf"
     assert "factura-almacenada.pdf" in response.headers["content-disposition"]
+
+
+def test_manual_invoices_can_be_filtered_and_show_actionable_delivery_status(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Manual Listing", "whatsapp:+687"))
+    item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
+    asyncio.run(_emit_authorized_test_invoice(db_session, tenant_id, item_id, consultation_id))
+
+    async def _seed():
+        async with db_session() as session:
+            async with session.begin():
+                missing_email = ArcaInvoice(
+                    tenant_id=tenant_id,
+                    origin="manual",
+                    receiver_name_snapshot="Receptor sin email",
+                    represented_cuit="20123456789",
+                    environment="prod",
+                    pto_vta=1,
+                    cbte_tipo=11,
+                    cbte_nro=71,
+                    concepto=2,
+                    doc_tipo=96,
+                    doc_nro="30111222",
+                    imp_total=Decimal("1200.00"),
+                    imp_tot_conc=Decimal("0.00"),
+                    imp_neto=Decimal("1200.00"),
+                    imp_op_ex=Decimal("0.00"),
+                    imp_trib=Decimal("0.00"),
+                    imp_iva=Decimal("0.00"),
+                    mon_id="PES",
+                    mon_cotiz=Decimal("1.000000"),
+                    status=ArcaInvoiceStatus.AUTHORIZED,
+                    cae="12345678901234",
+                )
+                failed_delivery = ArcaInvoice(
+                    tenant_id=tenant_id,
+                    origin="manual",
+                    receiver_name_snapshot="Receptor con entrega fallida",
+                    represented_cuit="20123456789",
+                    environment="prod",
+                    pto_vta=1,
+                    cbte_tipo=11,
+                    cbte_nro=72,
+                    concepto=2,
+                    doc_tipo=96,
+                    doc_nro="30222333",
+                    imp_total=Decimal("1300.00"),
+                    imp_tot_conc=Decimal("0.00"),
+                    imp_neto=Decimal("1300.00"),
+                    imp_op_ex=Decimal("0.00"),
+                    imp_trib=Decimal("0.00"),
+                    imp_iva=Decimal("0.00"),
+                    mon_id="PES",
+                    mon_cotiz=Decimal("1.000000"),
+                    status=ArcaInvoiceStatus.AUTHORIZED,
+                    cae="22345678901234",
+                    email_to="fallido@example.com",
+                )
+                session.add_all([missing_email, failed_delivery])
+                await session.flush()
+                session.add(
+                    BillingEmailLog(
+                        tenant_id=tenant_id,
+                        invoice_id=failed_delivery.id,
+                        recipient_email="fallido@example.com",
+                        subject="Factura",
+                        status="failed",
+                        error_message="SMTP no configurado",
+                    )
+                )
+
+    asyncio.run(_seed())
+    asyncio.run(create_user(db_session, "tenant-manual-list@test.com", hash_password("secret-123"), UserRole.TENANT_ADMIN.value, tenant_id))
+    login(client, "tenant-manual-list@test.com", "secret-123")
+
+    response = client.get("/t/billing/invoices?origin=manual")
+
+    assert response.status_code == 200
+    assert "Factura manual" in response.text
+    assert "Receptor sin email" in response.text
+    assert "Receptor con entrega fallida" in response.text
+    assert "Sin email configurado" in response.text
+    assert "Entrega fallida" in response.text
+    assert "Juan Perez" not in response.text
+
+
+def test_manual_authorized_invoice_can_be_resent_without_requesting_another_cae(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Manual Resend", "whatsapp:+688"))
+
+    async def _seed():
+        async with db_session() as session:
+            async with session.begin():
+                tenant = await session.get(Tenant, tenant_id)
+                tenant.arca_settings = {"fiscal_name": "Consultorio", "fiscal_address": "Calle 1"}
+                invoice = ArcaInvoice(
+                    tenant_id=tenant_id,
+                    origin="manual",
+                    receiver_name_snapshot="Receptor de reenvio",
+                    represented_cuit="20123456789",
+                    environment="prod",
+                    pto_vta=1,
+                    cbte_tipo=11,
+                    cbte_nro=73,
+                    concepto=2,
+                    doc_tipo=96,
+                    doc_nro="30333444",
+                    imp_total=Decimal("1400.00"),
+                    imp_tot_conc=Decimal("0.00"),
+                    imp_neto=Decimal("1400.00"),
+                    imp_op_ex=Decimal("0.00"),
+                    imp_trib=Decimal("0.00"),
+                    imp_iva=Decimal("0.00"),
+                    mon_id="PES",
+                    mon_cotiz=Decimal("1.000000"),
+                    status=ArcaInvoiceStatus.AUTHORIZED,
+                    cae="32345678901234",
+                    cae_fch_vto=datetime(2026, 7, 31).date(),
+                    email_to="receptor@example.com",
+                    request_json={"metadata": {"description": "Prestacion manual"}},
+                )
+                session.add(invoice)
+                await session.flush()
+                return invoice.id, invoice.cae, invoice.cbte_nro
+
+    invoice_id, cae, cbte_nro = asyncio.run(_seed())
+    asyncio.run(create_user(db_session, "tenant-manual-resend@test.com", hash_password("secret-123"), UserRole.TENANT_ADMIN.value, tenant_id))
+    sent = {}
+
+    def fake_send_email(self, to_email, subject, body, *, html_body=None, attachments=None):
+        sent["to_email"] = to_email
+        sent["attachments"] = attachments
+
+    monkeypatch.setattr("app.services.messaging_service.MessagingService.send_email", fake_send_email)
+    login(client, "tenant-manual-resend@test.com", "secret-123")
+    detail = client.get(f"/t/billing-arca/{invoice_id}")
+    response = client.post(
+        f"/t/billing-arca/{invoice_id}/send-email",
+        data={"csrf_token": _csrf(detail.text), "to_email": ""},
+        follow_redirects=False,
+    )
+
+    assert response.status_code in (302, 303)
+    assert sent["to_email"] == "receptor@example.com"
+    assert sent["attachments"][0][1].startswith(b"%PDF")
+
+    async def _fetch():
+        async with db_session() as session:
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            return invoice.cae, invoice.cbte_nro, invoice.email_sent_at
+
+    persisted_cae, persisted_number, emailed_at = asyncio.run(_fetch())
+    assert persisted_cae == cae
+    assert persisted_number == cbte_nro
+    assert emailed_at is not None
+
+
+def test_manual_rejection_is_visible_as_history_and_starts_a_new_corrected_invoice(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Manual Rejection", "whatsapp:+689"))
+
+    async def _seed():
+        async with db_session() as session:
+            async with session.begin():
+                invoice = ArcaInvoice(
+                    tenant_id=tenant_id,
+                    origin="manual",
+                    receiver_name_snapshot="Receptor rechazado",
+                    represented_cuit="20123456789",
+                    environment="prod",
+                    pto_vta=1,
+                    cbte_tipo=11,
+                    cbte_nro=74,
+                    concepto=2,
+                    doc_tipo=96,
+                    doc_nro="30444555",
+                    imp_total=Decimal("1500.00"),
+                    imp_tot_conc=Decimal("0.00"),
+                    imp_neto=Decimal("1500.00"),
+                    imp_op_ex=Decimal("0.00"),
+                    imp_trib=Decimal("0.00"),
+                    imp_iva=Decimal("0.00"),
+                    mon_id="PES",
+                    mon_cotiz=Decimal("1.000000"),
+                    status=ArcaInvoiceStatus.REJECTED,
+                    error_message="ARCA rechazo la autorizacion: documento invalido",
+                )
+                session.add(invoice)
+                await session.flush()
+                session.add(
+                    ArcaInvoiceEvent(
+                        invoice_id=invoice.id,
+                        event_type="authorization_rejected",
+                        payload_json={"error": invoice.error_message, "origin": "manual"},
+                    )
+                )
+                return invoice.id
+
+    invoice_id = asyncio.run(_seed())
+    asyncio.run(create_user(db_session, "tenant-manual-rejected@test.com", hash_password("secret-123"), UserRole.TENANT_ADMIN.value, tenant_id))
+    login(client, "tenant-manual-rejected@test.com", "secret-123")
+
+    response = client.get(f"/t/billing-arca/{invoice_id}")
+
+    assert response.status_code == 200
+    assert "Rechazo de ARCA" in response.text
+    assert "documento invalido" in response.text
+    assert "Nueva factura corregida" in response.text
+
+
+def test_manual_arca_rejection_persists_an_immutable_rejection_event(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Manual Rejection Event", "whatsapp:+690"))
+    item_id, _ = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
+    patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "whatsapp:+549110000690",
+            dni="30555666",
+            iva_condition="Consumidor Final",
+        )
+    )
+
+    class RejectedWsfe:
+        def __init__(self, settings, auth_provider):
+            pass
+
+        def get_ultimo_autorizado(self, pto_vta, cbte_tipo):
+            return WsfeResult(data={"CbteNro": 80})
+
+        def solicitar_cae(self, request):
+            return WsfeResult(
+                data={
+                    "FeCabResp": {"Resultado": "R"},
+                    "FeDetResp": {"FEDetResponse": {"Resultado": "R"}},
+                }
+            )
+
+    async def _run():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            tenant.arca_settings = {**(tenant.arca_settings or {}), "environment": "prod"}
+            patient = await session.get(Paciente, patient_id)
+            item = await session.get(ArcaBillableItem, item_id)
+            with pytest.raises(ArcaEmissionError, match="ARCA rechazo"):
+                await ArcaService(
+                    session,
+                    wsaa_factory=_FakeWsaaForEmission,
+                    wsfe_factory=RejectedWsfe,
+                ).emit_manual_invoice_for_patient(
+                    tenant,
+                    patient,
+                    item,
+                    amount=Decimal("1500.00"),
+                    service_start=datetime(2026, 7, 1).date(),
+                    service_end=datetime(2026, 7, 1).date(),
+                    sale_condition="Contado",
+                    send_email=False,
+                )
+            await session.commit()
+
+    asyncio.run(_run())
+
+    async def _fetch():
+        async with db_session() as session:
+            invoice = await session.scalar(select(ArcaInvoice).where(ArcaInvoice.tenant_id == tenant_id))
+            events = list(
+                (
+                    await session.execute(
+                        select(ArcaInvoiceEvent).where(ArcaInvoiceEvent.invoice_id == invoice.id)
+                    )
+                ).scalars()
+            )
+            return invoice, events
+
+    invoice, events = asyncio.run(_fetch())
+    assert invoice.status == ArcaInvoiceStatus.REJECTED
+    rejection_events = [event for event in events if event.event_type == "authorization_rejected"]
+    assert len(rejection_events) == 1
+    assert rejection_events[0].payload_json["origin"] == "manual"

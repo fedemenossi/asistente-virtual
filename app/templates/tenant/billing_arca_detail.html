@@ -39,8 +39,11 @@
       </div>
       <div class="grid gap-4 md:grid-cols-2">
         <div>
-          <p class="text-xs text-slate-500">Consulta facturada</p>
-          {% if consultation %}
+          <p class="text-xs text-slate-500">Origen</p>
+          {% if invoice.origin == 'manual' %}
+            <p class="text-sm font-medium text-slate-900">Factura manual</p>
+            <p class="text-xs text-slate-500">{{ invoice.receiver_name_snapshot or "Receptor fiscal" }}</p>
+          {% elif consultation %}
             <p class="text-sm font-medium text-slate-900">#{{ consultation.id }} - {{ consultation.patient_name or "-" }}</p>
             <p class="text-xs text-slate-500">Fecha consulta: {{ consultation.attended_at|format_ba('%d/%m/%Y') if consultation.attended_at else "-" }}</p>
             <p class="text-xs text-slate-500">{{ consultation.external_provider }}: {{ consultation.external_id }}</p>
@@ -50,12 +53,18 @@
         </div>
         <div>
           <p class="text-xs text-slate-500">Envio por mail</p>
-          {% if invoice.email_sent_at %}
+          {% if delivery_status == 'sent' %}
             <p class="text-sm font-medium text-slate-900">Enviado {{ invoice.email_sent_at }}</p>
-            <p class="text-xs text-slate-500">{{ invoice.email_to or "-" }}</p>
+            <p class="text-xs text-slate-500">{{ delivery_recipient or "-" }}</p>
+          {% elif delivery_status == 'failed' %}
+            <p class="text-sm font-medium text-rose-700">Entrega fallida</p>
+            <p class="text-xs text-slate-500">{{ delivery_error or "Reintenta el envio desde este comprobante." }}</p>
+          {% elif delivery_status == 'missing_email' %}
+            <p class="text-sm font-medium text-amber-700">Sin email configurado</p>
+            <p class="text-xs text-slate-500">Carga una direccion para enviar el PDF autorizado.</p>
           {% else %}
-            <p class="text-sm font-medium text-slate-900">No enviado</p>
-            <p class="text-xs text-slate-500">{{ invoice.email_to or patient_email or "-" }}</p>
+            <p class="text-sm font-medium text-slate-900">Pendiente de envio</p>
+            <p class="text-xs text-slate-500">{{ delivery_recipient or "-" }}</p>
           {% endif %}
         </div>
         <div>
@@ -108,6 +117,14 @@
         {% endif %}
       </div>
       {% endif %}
+      {% if invoice.origin == 'manual' and status == 'rejected' %}
+        <div class="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p class="text-sm font-semibold text-amber-900">Rechazo de ARCA</p>
+          <p class="mt-1 text-sm text-amber-800">{{ invoice.error_message or "ARCA rechazo la autorizacion." }}</p>
+          <p class="mt-2 text-xs text-amber-800">Este intento queda conservado como historial. Corregi los datos e inicia una factura nueva; no se reenviara esta solicitud a ARCA.</p>
+          <a class="btn btn-secondary mt-3" href="/t/billing/manual/new">Nueva factura corregida</a>
+        </div>
+      {% endif %}
       <div class="flex flex-wrap gap-2">
         <a class="btn btn-secondary" href="/t/billing-arca/{{ invoice.id }}/comprobante.html" target="_blank">Ver HTML</a>
         {% if status == 'authorized' and invoice.cae %}
@@ -126,15 +143,17 @@
           {% endif %}
         {% endif %}
       </div>
-      <form method="post" action="/t/billing-arca/{{ invoice.id }}/send-email" class="rounded-lg border border-slate-200 p-4" data-submit-label="Enviando...">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-        <label class="block text-sm font-medium text-slate-700">Email del paciente</label>
-        <div class="mt-2 flex flex-col gap-2 md:flex-row">
-          <input class="input" type="email" name="to_email" value="{{ invoice.email_to or patient_email }}" placeholder="paciente@correo.com" required />
-          <button class="btn btn-primary" type="submit" {% if not invoice.cae %}disabled{% endif %}>Enviar / reenviar</button>
-        </div>
-        <p class="mt-2 text-xs text-slate-500">El comprobante autorizado se envia sin volver a emitir.</p>
-      </form>
+      {% if status == 'authorized' and invoice.cae %}
+        <form method="post" action="/t/billing-arca/{{ invoice.id }}/send-email" class="rounded-lg border border-slate-200 p-4" data-submit-label="Enviando...">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+          <label class="block text-sm font-medium text-slate-700">Email del receptor</label>
+          <div class="mt-2 flex flex-col gap-2 md:flex-row">
+            <input class="input" type="email" name="to_email" value="{{ invoice.email_to or patient_email }}" placeholder="receptor@correo.com" />
+            <button class="btn btn-primary" type="submit">Enviar / reenviar</button>
+          </div>
+          <p class="mt-2 text-xs text-slate-500">El comprobante autorizado se envia sin volver a emitir.</p>
+        </form>
+      {% endif %}
     </div>
     <div class="card p-6">
       <p class="mb-3 text-xs uppercase tracking-[0.2em] text-slate-500">Eventos</p>

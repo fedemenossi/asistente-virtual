@@ -354,9 +354,23 @@ class ArcaService:
             response = await anyio.to_thread.run_sync(lambda: wsfe.solicitar_cae(_soap_fe_cae_request(request)).data)
         except WsfeError as exc:
             invoice.status = ArcaInvoiceStatus.REJECTED; invoice.error_message = str(exc)
+            self._session.add(
+                ArcaInvoiceEvent(
+                    invoice_id=invoice.id,
+                    event_type="authorization_rejected",
+                    payload_json={"error": str(exc), "origin": "manual"},
+                )
+            )
             raise ArcaEmissionError(str(exc)) from exc
         self._apply_authorization_response(invoice, response)
         if invoice.status != ArcaInvoiceStatus.AUTHORIZED:
+            self._session.add(
+                ArcaInvoiceEvent(
+                    invoice_id=invoice.id,
+                    event_type="authorization_rejected",
+                    payload_json={"error": invoice.error_message, "origin": "manual"},
+                )
+            )
             raise ArcaEmissionError(invoice.error_message or "ARCA rechazo la autorizacion.")
         self._session.add(ArcaInvoiceEvent(invoice_id=invoice.id, event_type="authorization_approved", payload_json={"cae": invoice.cae, "origin": "manual"}))
         return ArcaEmissionResult(invoice=invoice)
