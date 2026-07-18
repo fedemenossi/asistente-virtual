@@ -40,6 +40,7 @@ class ArcaInvoice(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     patient_id: Mapped[int | None] = mapped_column(ForeignKey("pacientes.id"), nullable=True)
+    fiscal_contact_id: Mapped[int | None] = mapped_column(ForeignKey("billing_fiscal_contacts.id"), nullable=True)
     external_consultation_id: Mapped[int | None] = mapped_column(ForeignKey("billing_external_consultations.id"), nullable=True, index=True)
     billing_item_id: Mapped[int | None] = mapped_column(ForeignKey("billing_items.id"), nullable=True)
     appointment_id: Mapped[int | None] = mapped_column(ForeignKey("turnos.id"), nullable=True)

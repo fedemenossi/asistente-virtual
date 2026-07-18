@@ -160,6 +160,7 @@ EXTRA_COLUMNS = {
         "billed_at": "DATETIME NULL",
     },
     "billing_invoices": {
+        "fiscal_contact_id": "INT NULL",
         "origin": "VARCHAR(30) NOT NULL DEFAULT 'consultation'",
         "receiver_name_snapshot": "VARCHAR(200) NULL",
         "receiver_iva_condition_snapshot": "VARCHAR(50) NULL",

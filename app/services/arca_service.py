@@ -20,6 +20,7 @@ from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_external_consultation import BillingExternalConsultation
 from app.models.billing_invoice_line import BillingInvoiceLine
 from app.models.paciente import Paciente
+from app.models.billing_fiscal_contact import BillingFiscalContact
 from app.models.tenant import Tenant
 from app.repositories.arca_ticket_repository import ArcaTicketRepository
 from app.services.billing_arca_settings_service import decrypt_secret
@@ -359,6 +360,20 @@ class ArcaService:
             raise ArcaEmissionError(invoice.error_message or "ARCA rechazo la autorizacion.")
         self._session.add(ArcaInvoiceEvent(invoice_id=invoice.id, event_type="authorization_approved", payload_json={"cae": invoice.cae, "origin": "manual"}))
         return ArcaEmissionResult(invoice=invoice)
+
+    async def emit_manual_invoice_for_contact(
+        self, tenant: Tenant, contact: BillingFiscalContact, item: ArcaBillableItem, *, amount: Any,
+        service_start, service_end, sale_condition: str, send_email: bool,
+    ) -> ArcaEmissionResult:
+        if contact.tenant_id != tenant.id or not contact.active:
+            raise ArcaEmissionError("El contacto fiscal no pertenece al tenant o esta inactivo.")
+        proxy = Paciente(tenant_id=tenant.id, nombre=contact.name, apellido="", telefono="", dni=contact.document_number, email=contact.email or "", iva_condition=contact.iva_condition, numero_documento=contact.document_number)
+        result = await self.emit_manual_invoice_for_patient(tenant, proxy, item, amount=amount, service_start=service_start, service_end=service_end, sale_condition=sale_condition, send_email=send_email)
+        result.invoice.patient_id = None
+        result.invoice.fiscal_contact_id = contact.id
+        result.invoice.receiver_name_snapshot = contact.name
+        result.invoice.email_to = contact.email
+        return result
 
     async def _ensure_invoice_document(
         self,
