@@ -222,7 +222,7 @@ def test_tenant_can_access_billing_arca_placeholder_and_sidebar(client, db_sessi
     assert "Configuracion ARCA" in settings_response.text
 
 
-def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(client, db_session):
+def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(client, db_session, monkeypatch):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Manual Receiver", "whatsapp:+614"))
     asyncio.run(
         create_user(
@@ -288,6 +288,12 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
     assert 'data-receiver-name="Clinica Central"' in form_response.text
     assert 'data-receiver-email="facturacion@clinica.example.com"' in form_response.text
     assert 'id="receiver_name"' in form_response.text
+    assert 'name="receiver_name"' in form_response.text
+    assert 'id="receiver_document_number"' in form_response.text
+    assert 'name="receiver_document_number"' in form_response.text
+    assert 'id="receiver_email"' in form_response.text
+    assert 'name="receiver_email"' in form_response.text
+    assert 'receiver_name" readonly' not in form_response.text
     assert "syncReceiverFields" in form_response.text
 
     preview_response = client.post(
@@ -296,6 +302,11 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
             "csrf_token": _csrf(form_response.text),
             "receiver_type": "contact",
             "contact_id": str(contact_id),
+            "receiver_name": "Clinica Central Actualizada",
+            "receiver_document_type": "CUIT",
+            "receiver_document_number": "30709998887",
+            "receiver_iva_condition": "monotributista",
+            "receiver_email": "cuentas@clinica.example.com",
             "item_id": str(item_id),
             "amount": "1000.00",
             "service_start": "2026-07-18",
@@ -304,8 +315,63 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
         },
     )
     assert preview_response.status_code == 200
+    assert "Clinica Central Actualizada" in preview_response.text
     assert 'name="receiver_type" value="contact"' in preview_response.text
     assert f'name="contact_id" value="{contact_id}"' in preview_response.text
+    assert 'name="receiver_name" value="Clinica Central Actualizada"' in preview_response.text
+    assert 'name="receiver_email" value="cuentas@clinica.example.com"' in preview_response.text
+
+    captured = {}
+
+    class FakeArcaService:
+        def __init__(self, session):
+            pass
+
+        async def emit_manual_invoice_for_contact(self, tenant, receiver, item, **kwargs):
+            captured["receiver"] = receiver
+            invoice = SimpleNamespace(id=900, cbte_nro=81, patient_id=None, fiscal_contact_id=None)
+            captured["invoice"] = invoice
+            return SimpleNamespace(invoice=invoice)
+
+    class FakeInvoiceDocumentService:
+        def __init__(self, session):
+            pass
+
+        async def generate_and_store_document(self, tenant, invoice, user_id):
+            captured["document_generated"] = True
+
+    monkeypatch.setattr("app.web.tenant.views.ArcaService", FakeArcaService)
+    monkeypatch.setattr("app.web.tenant.views.BillingInvoiceDocumentService", FakeInvoiceDocumentService)
+    emit_response = client.post(
+        "/t/billing/manual/emit",
+        data={
+            "csrf_token": _csrf(preview_response.text),
+            "receiver_type": "contact",
+            "contact_id": str(contact_id),
+            "receiver_name": "Clinica Central Actualizada",
+            "receiver_document_type": "CUIT",
+            "receiver_document_number": "30709998887",
+            "receiver_iva_condition": "monotributista",
+            "receiver_email": "cuentas@clinica.example.com",
+            "item_id": str(item_id),
+            "amount": "1000.00",
+            "service_start": "2026-07-18",
+            "service_end": "2026-07-18",
+            "sale_condition": "Contado",
+        },
+        follow_redirects=False,
+    )
+    assert emit_response.status_code == 303
+    assert captured["receiver"].name == "Clinica Central Actualizada"
+    assert captured["receiver"].email == "cuentas@clinica.example.com"
+    assert captured["invoice"].fiscal_contact_id == contact_id
+    assert captured["document_generated"] is True
+
+    async def _contact_name() -> str:
+        async with db_session() as session:
+            return (await session.get(BillingFiscalContact, contact_id)).name
+
+    assert asyncio.run(_contact_name()) == "Clinica Central"
 
     invoice_list_response = client.get("/t/billing/invoices")
     assert invoice_list_response.status_code == 200

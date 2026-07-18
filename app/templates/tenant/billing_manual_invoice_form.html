@@ -1,5 +1,6 @@
 {% extends "layout/base.html" %}
 {% set title = "Nueva factura manual" %}
+{% set default_patient = patients[0] if patients else none %}
 {% block content %}
 <div class="mb-6">
   <h1 class="text-2xl font-semibold">Nueva Factura C manual</h1>
@@ -48,23 +49,24 @@
     </select>
   </label>
 
-  <div id="saved_receiver_fields" class="grid gap-2 md:grid-cols-2">
-    <label>Nombre o razon social<input class="input" id="receiver_name" readonly /></label>
-    <label>Tipo de documento<input class="input" id="receiver_document_type" readonly /></label>
-    <label>Numero de documento<input class="input" id="receiver_document_number" readonly /></label>
-    <label>Condicion frente al IVA<input class="input" id="receiver_iva_condition" readonly /></label>
-    <label class="md:col-span-2">Email<input class="input" id="receiver_email" type="email" readonly /></label>
+  <div class="grid gap-2 md:grid-cols-2">
+    <label>Nombre o razon social<input class="input" id="receiver_name" name="receiver_name" value="{{ default_patient.nombre ~ ' ' ~ default_patient.apellido if default_patient else '' }}" required /></label>
+    <label>Tipo de documento
+      <select class="select" id="receiver_document_type" name="receiver_document_type" required>
+        <option value="DNI" {% if not default_patient or (default_patient.tipo_documento or 'DNI') == 'DNI' %}selected{% endif %}>DNI</option>
+        <option value="CUIT" {% if default_patient and default_patient.tipo_documento == 'CUIT' %}selected{% endif %}>CUIT</option>
+      </select>
+    </label>
+    <label>Numero de documento<input class="input" id="receiver_document_number" name="receiver_document_number" value="{{ (default_patient.numero_documento or default_patient.dni) if default_patient else '' }}" required /></label>
+    <label>Condicion frente al IVA
+      <select class="select" id="receiver_iva_condition" name="receiver_iva_condition" required>
+        <option value="">Seleccionar</option>
+        {% for value, label in iva_conditions.items() %}<option value="{{ value }}" {% if default_patient and default_patient.iva_condition == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="md:col-span-2">Email<input class="input" id="receiver_email" name="receiver_email" type="email" value="{{ default_patient.email if default_patient else '' }}" /></label>
   </div>
-
-  <div id="provisional_receiver_fields" class="grid gap-2 md:grid-cols-2" hidden>
-    <input class="input" name="provisional_name" placeholder="Nombre / razon social provisorio" disabled />
-    <select class="select" name="provisional_document_type" disabled><option>DNI</option><option>CUIT</option></select>
-    <input class="input" name="provisional_document_number" placeholder="DNI o CUIT" disabled />
-    <select class="select" name="provisional_iva_condition" disabled>
-      {% for value, label in iva_conditions.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-    </select>
-    <input class="input" type="email" name="provisional_email" placeholder="Email" disabled />
-  </div>
+  <p class="text-xs text-slate-500">Los cambios se aplican solo a esta factura y no modifican el paciente ni el contacto fiscal guardado.</p>
 
   <label>Item facturable<select class="select" name="item_id" required>{% for item in items %}<option value="{{ item.id }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
   <label>Importe facturado<input class="input" name="amount" required /></label>
@@ -81,26 +83,20 @@
     const contactSelector = document.getElementById("contact_selector");
     const patient = document.getElementById("patient_id");
     const contact = document.getElementById("contact_id");
-    const savedFields = document.getElementById("saved_receiver_fields");
-    const provisionalFields = document.getElementById("provisional_receiver_fields");
     const receiverFields = ["name", "document_type", "document_number", "iva_condition", "email"];
 
     function syncReceiverFields() {
       const isPatient = source.value === "patient";
-      const isProvisional = source.value === "provisional";
-      const selected = isPatient ? patient.options[patient.selectedIndex] : contact.options[contact.selectedIndex];
+      const isContact = source.value === "contact";
+      const selected = isPatient ? patient.options[patient.selectedIndex] : (isContact ? contact.options[contact.selectedIndex] : null);
 
       patientSelector.hidden = !isPatient;
       contactSelector.hidden = !isContact;
       patient.disabled = !isPatient;
       contact.disabled = !isContact;
-      savedFields.hidden = isProvisional;
-      provisionalFields.hidden = !isProvisional;
-      provisionalFields.querySelectorAll("input, select").forEach((field) => { field.disabled = !isProvisional; });
-
       receiverFields.forEach((field) => {
         const datasetKey = `receiver${field.split("_").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`;
-        document.getElementById(`receiver_${field}`).value = isProvisional ? "" : (selected?.dataset[datasetKey] || "");
+        document.getElementById(`receiver_${field}`).value = selected?.dataset[datasetKey] || "";
       });
     }
 
