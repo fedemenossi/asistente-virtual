@@ -1,12 +1,115 @@
-{% extends "layout/base.html" %}{% set title="Nueva factura manual" %}{% block content %}
-<div class="mb-6"><h1 class="text-2xl font-semibold">Nueva Factura C manual</h1><p class="text-sm text-slate-600">Servicios en pesos argentinos. La emision usa la configuracion ARCA de produccion.</p></div>
-<form method="post" action="/t/billing/manual/preview" class="card max-w-3xl space-y-4 p-6"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-<label>Fuente del receptor<select class="select" name="receiver_type"><option value="patient">Paciente</option><option value="contact">Contacto fiscal</option><option value="provisional">Receptor provisorio</option></select></label>
-<label>Paciente<select class="select" name="patient_id">{% for patient in patients %}<option value="{{ patient.id }}">{{ patient.apellido }}, {{ patient.nombre }} — {{ patient.dni }}</option>{% endfor %}</select></label>
-<label>Contacto fiscal<select class="select" name="contact_id"><option value="">Seleccionar</option>{% for contact in contacts %}<option value="{{ contact.id }}">{{ contact.name }} — {{ contact.document_type }} {{ contact.document_number }}</option>{% endfor %}</select></label>
-<div class="grid gap-2 md:grid-cols-2"><input class="input" name="provisional_name" placeholder="Nombre / razon social provisorio" /><select class="select" name="provisional_document_type"><option>DNI</option><option>CUIT</option></select><input class="input" name="provisional_document_number" placeholder="DNI o CUIT" /><select class="select" name="provisional_iva_condition"><option value="consumidor_final">Consumidor final</option><option value="responsable_inscripto">Responsable inscripto</option><option value="monotributista">Monotributista</option></select><input class="input" type="email" name="provisional_email" placeholder="Email" /></div>
-<label>Item facturable<select class="select" name="item_id" required>{% for item in items %}<option value="{{ item.id }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
-<label>Importe facturado<input class="input" name="amount" required /></label>
-<div class="grid gap-4 md:grid-cols-2"><label>Desde<input class="input" type="date" name="service_start" value="{{ today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ today }}" required /></label></div>
-<label>Condicion de venta<select class="select" name="sale_condition">{% for value in sale_conditions %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
-<label><input type="checkbox" name="send_email" checked /> Enviar por email al autorizar</label><div><button class="btn btn-primary">Previsualizar</button><a class="btn btn-secondary" href="/t/billing/invoices">Cancelar</a></div></form>{% endblock %}
+{% extends "layout/base.html" %}
+{% set title = "Nueva factura manual" %}
+{% block content %}
+<div class="mb-6">
+  <h1 class="text-2xl font-semibold">Nueva Factura C manual</h1>
+  <p class="text-sm text-slate-600">Servicios en pesos argentinos. La emision usa la configuracion ARCA de produccion.</p>
+</div>
+
+<form method="post" action="/t/billing/manual/preview" class="card max-w-3xl space-y-4 p-6">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+
+  <label>Fuente del receptor
+    <select class="select" name="receiver_type" id="receiver_type">
+      <option value="patient">Paciente</option>
+      <option value="contact">Contacto fiscal</option>
+      <option value="provisional">Receptor provisorio</option>
+    </select>
+  </label>
+
+  <label id="patient_selector">Paciente
+    <select class="select" name="patient_id" id="patient_id">
+      {% for patient in patients %}
+        <option value="{{ patient.id }}"
+          data-receiver-name="{{ patient.nombre }} {{ patient.apellido }}"
+          data-receiver-document-type="{{ patient.tipo_documento or 'DNI' }}"
+          data-receiver-document-number="{{ patient.numero_documento or patient.dni }}"
+          data-receiver-iva-condition="{{ patient.iva_condition or '' }}"
+          data-receiver-email="{{ patient.email or '' }}">
+          {{ patient.apellido }}, {{ patient.nombre }} — {{ patient.dni }}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label id="contact_selector" hidden>Contacto fiscal
+    <select class="select" name="contact_id" id="contact_id" disabled>
+      <option value="">Seleccionar</option>
+      {% for contact in contacts %}
+        <option value="{{ contact.id }}"
+          data-receiver-name="{{ contact.name }}"
+          data-receiver-document-type="{{ contact.document_type }}"
+          data-receiver-document-number="{{ contact.document_number }}"
+          data-receiver-iva-condition="{{ contact.iva_condition }}"
+          data-receiver-email="{{ contact.email or '' }}">
+          {{ contact.name }} — {{ contact.document_type }} {{ contact.document_number }}
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <div id="saved_receiver_fields" class="grid gap-2 md:grid-cols-2">
+    <label>Nombre o razon social<input class="input" id="receiver_name" readonly /></label>
+    <label>Tipo de documento<input class="input" id="receiver_document_type" readonly /></label>
+    <label>Numero de documento<input class="input" id="receiver_document_number" readonly /></label>
+    <label>Condicion frente al IVA<input class="input" id="receiver_iva_condition" readonly /></label>
+    <label class="md:col-span-2">Email<input class="input" id="receiver_email" type="email" readonly /></label>
+  </div>
+
+  <div id="provisional_receiver_fields" class="grid gap-2 md:grid-cols-2" hidden>
+    <input class="input" name="provisional_name" placeholder="Nombre / razon social provisorio" disabled />
+    <select class="select" name="provisional_document_type" disabled><option>DNI</option><option>CUIT</option></select>
+    <input class="input" name="provisional_document_number" placeholder="DNI o CUIT" disabled />
+    <select class="select" name="provisional_iva_condition" disabled>
+      {% for value, label in iva_conditions.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+    </select>
+    <input class="input" type="email" name="provisional_email" placeholder="Email" disabled />
+  </div>
+
+  <label>Item facturable<select class="select" name="item_id" required>{% for item in items %}<option value="{{ item.id }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
+  <label>Importe facturado<input class="input" name="amount" required /></label>
+  <div class="grid gap-4 md:grid-cols-2"><label>Desde<input class="input" type="date" name="service_start" value="{{ today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ today }}" required /></label></div>
+  <label>Condicion de venta<select class="select" name="sale_condition">{% for value in sale_conditions %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+  <label><input type="checkbox" name="send_email" checked /> Enviar por email al autorizar</label>
+  <div><button class="btn btn-primary">Previsualizar</button><a class="btn btn-secondary" href="/t/billing/invoices">Cancelar</a></div>
+</form>
+
+<script>
+  (() => {
+    const source = document.getElementById("receiver_type");
+    const patientSelector = document.getElementById("patient_selector");
+    const contactSelector = document.getElementById("contact_selector");
+    const patient = document.getElementById("patient_id");
+    const contact = document.getElementById("contact_id");
+    const savedFields = document.getElementById("saved_receiver_fields");
+    const provisionalFields = document.getElementById("provisional_receiver_fields");
+    const receiverFields = ["name", "document_type", "document_number", "iva_condition", "email"];
+
+    function syncReceiverFields() {
+      const isPatient = source.value === "patient";
+      const isProvisional = source.value === "provisional";
+      const selected = isPatient ? patient.options[patient.selectedIndex] : contact.options[contact.selectedIndex];
+
+      patientSelector.hidden = !isPatient;
+      contactSelector.hidden = !isContact;
+      patient.disabled = !isPatient;
+      contact.disabled = !isContact;
+      savedFields.hidden = isProvisional;
+      provisionalFields.hidden = !isProvisional;
+      provisionalFields.querySelectorAll("input, select").forEach((field) => { field.disabled = !isProvisional; });
+
+      receiverFields.forEach((field) => {
+        const datasetKey = `receiver${field.split("_").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`;
+        document.getElementById(`receiver_${field}`).value = isProvisional ? "" : (selected?.dataset[datasetKey] || "");
+      });
+    }
+
+    if (!patient.options.length && contact.options.length > 1) source.value = "contact";
+    if (!patient.options.length && contact.options.length <= 1) source.value = "provisional";
+    source.addEventListener("change", syncReceiverFields);
+    patient.addEventListener("change", syncReceiverFields);
+    contact.addEventListener("change", syncReceiverFields);
+    syncReceiverFields();
+  })();
+</script>
+{% endblock %}

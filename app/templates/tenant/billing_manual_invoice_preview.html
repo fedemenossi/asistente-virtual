@@ -1,4 +1,27 @@
-{% extends "layout/base.html" %}{% set title="Previsualizacion factura manual" %}{% block content %}
+{% extends "layout/base.html" %}
+{% set title = "Previsualizacion factura manual" %}
+{% block content %}
 <div class="mb-6"><h1 class="text-2xl font-semibold">Previsualizacion temporal</h1><p class="text-sm text-slate-600">No se creo ningun comprobante ni se llamo a ARCA.</p></div>
-<div class="card max-w-3xl space-y-3 p-6"><p><b>Receptor:</b> {{ patient.nombre }} {{ patient.apellido }} — {{ patient.iva_condition }}</p><p><b>Item:</b> {{ item.name }}</p><p><b>Importe:</b> $ {{ amount }} PES</p><p><b>Periodo:</b> {{ service_start }} a {{ service_end }}</p><p><b>Condicion de venta:</b> {{ sale_condition }}</p>
-<form method="post" action="/t/billing/manual/emit"><input type="hidden" name="csrf_token" value="{{ csrf_token }}" /><input type="hidden" name="patient_id" value="{{ patient.id }}" /><input type="hidden" name="item_id" value="{{ item.id }}" /><input type="hidden" name="amount" value="{{ amount }}" /><input type="hidden" name="service_start" value="{{ service_start }}" /><input type="hidden" name="service_end" value="{{ service_end }}" /><input type="hidden" name="sale_condition" value="{{ sale_condition }}" />{% if send_email %}<input type="hidden" name="send_email" value="on" />{% endif %}<button class="btn btn-primary">Confirmar y emitir Factura C</button><a class="btn btn-secondary" href="/t/billing/manual/new">Volver</a></form></div>{% endblock %}
+<div class="card max-w-3xl space-y-3 p-6">
+  <p><b>Receptor:</b> {{ receiver.nombre ~ ' ' ~ receiver.apellido if receiver_type == 'patient' else receiver.name }} — {{ receiver.iva_condition }}</p>
+  <p><b>Item:</b> {{ item.name }}</p><p><b>Importe:</b> $ {{ amount }} PES</p><p><b>Periodo:</b> {{ service_start }} a {{ service_end }}</p><p><b>Condicion de venta:</b> {{ sale_condition }}</p>
+  <form method="post" action="/t/billing/manual/emit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <input type="hidden" name="receiver_type" value="{{ receiver_type }}" />
+    {% if receiver_type == 'patient' %}
+      <input type="hidden" name="patient_id" value="{{ receiver.id }}" />
+    {% elif receiver_type == 'contact' %}
+      <input type="hidden" name="contact_id" value="{{ receiver.id }}" />
+    {% else %}
+      <input type="hidden" name="provisional_name" value="{{ receiver.name }}" />
+      <input type="hidden" name="provisional_document_type" value="{{ receiver.document_type }}" />
+      <input type="hidden" name="provisional_document_number" value="{{ receiver.document_number }}" />
+      <input type="hidden" name="provisional_iva_condition" value="{{ receiver.iva_condition }}" />
+      <input type="hidden" name="provisional_email" value="{{ receiver.email or '' }}" />
+    {% endif %}
+    <input type="hidden" name="item_id" value="{{ item.id }}" /><input type="hidden" name="amount" value="{{ amount }}" /><input type="hidden" name="service_start" value="{{ service_start }}" /><input type="hidden" name="service_end" value="{{ service_end }}" /><input type="hidden" name="sale_condition" value="{{ sale_condition }}" />
+    {% if send_email %}<input type="hidden" name="send_email" value="on" />{% endif %}
+    <button class="btn btn-primary">Confirmar y emitir Factura C</button><a class="btn btn-secondary" href="/t/billing/manual/new">Volver</a>
+  </form>
+</div>
+{% endblock %}

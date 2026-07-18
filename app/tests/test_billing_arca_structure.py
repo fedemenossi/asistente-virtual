@@ -21,6 +21,7 @@ from app.models.arca_invoice_event import ArcaInvoiceEvent
 from app.models.billing_diagnostic import BillingDiagnostic
 from app.models.billing_email_log import BillingEmailLog
 from app.models.billing_external_consultation import BillingExternalConsultation
+from app.models.billing_fiscal_contact import BillingFiscalContact
 from app.models.billing_invoice_line import BillingInvoiceLine
 from app.models.paciente import Paciente
 from app.integrations.consultorio_movil import ConsultorioMovilAccessBlocked
@@ -219,6 +220,96 @@ def test_tenant_can_access_billing_arca_placeholder_and_sidebar(client, db_sessi
     settings_response = client.get("/t/settings/billing-arca")
     assert settings_response.status_code == 200
     assert "Configuracion ARCA" in settings_response.text
+
+
+def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Manual Receiver", "whatsapp:+614"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-manual-receiver@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "whatsapp:+549116140000",
+            nombre="Ana",
+            apellido="Fiscal",
+            dni="30111222",
+            email="ana.fiscal@example.com",
+            tipo_documento="CUIT",
+            numero_documento="27301112229",
+            iva_condition="monotributista",
+        )
+    )
+
+    async def _create_contact_and_item() -> tuple[int, int]:
+        async with db_session() as session:
+            async with session.begin():
+                contact = BillingFiscalContact(
+                    tenant_id=tenant_id,
+                    contact_type="organization",
+                    name="Clinica Central",
+                    document_type="CUIT",
+                    document_number="30709998887",
+                    iva_condition="responsable_inscripto",
+                    email="facturacion@clinica.example.com",
+                    active=True,
+                )
+                item = ArcaBillableItem(
+                    tenant_id=tenant_id,
+                    code="MANUAL",
+                    name="Prestacion manual",
+                    unit_price=Decimal("1000.00"),
+                    currency="PES",
+                    concepto=2,
+                    active=True,
+                )
+                session.add_all([contact, item])
+                await session.flush()
+                return contact.id, item.id
+
+    contact_id, item_id = asyncio.run(_create_contact_and_item())
+    login(client, "tenant-manual-receiver@test.com", "secret-123")
+
+    form_response = client.get("/t/billing/manual/new")
+    assert form_response.status_code == 200
+    assert 'href="/t/billing/manual/new"' in form_response.text
+    assert "Facturaci\u00f3n manual" in form_response.text
+    assert 'data-receiver-name="Ana Fiscal"' in form_response.text
+    assert 'data-receiver-document-type="CUIT"' in form_response.text
+    assert 'data-receiver-document-number="27301112229"' in form_response.text
+    assert 'data-receiver-email="ana.fiscal@example.com"' in form_response.text
+    assert 'data-receiver-name="Clinica Central"' in form_response.text
+    assert 'data-receiver-email="facturacion@clinica.example.com"' in form_response.text
+    assert 'id="receiver_name"' in form_response.text
+    assert "syncReceiverFields" in form_response.text
+
+    preview_response = client.post(
+        "/t/billing/manual/preview",
+        data={
+            "csrf_token": _csrf(form_response.text),
+            "receiver_type": "contact",
+            "contact_id": str(contact_id),
+            "item_id": str(item_id),
+            "amount": "1000.00",
+            "service_start": "2026-07-18",
+            "service_end": "2026-07-18",
+            "sale_condition": "Contado",
+        },
+    )
+    assert preview_response.status_code == 200
+    assert 'name="receiver_type" value="contact"' in preview_response.text
+    assert f'name="contact_id" value="{contact_id}"' in preview_response.text
+
+    invoice_list_response = client.get("/t/billing/invoices")
+    assert invoice_list_response.status_code == 200
+    assert "Nueva factura manual" not in invoice_list_response.text
 
 
 def test_billing_arca_settings_save_encrypts_certificate_and_key(client, db_session):

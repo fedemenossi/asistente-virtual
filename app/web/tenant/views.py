@@ -3576,7 +3576,7 @@ async def billing_manual_invoice_new(
     items = list((await session.execute(select(ArcaBillableItem).where(ArcaBillableItem.tenant_id == user.tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2))).scalars())
     today = now_ba().date().isoformat()
     contacts = list((await session.execute(select(BillingFiscalContact).where(BillingFiscalContact.tenant_id == user.tenant_id, BillingFiscalContact.active.is_(True)).order_by(BillingFiscalContact.name))).scalars())
-    return _template(request, "tenant/billing_manual_invoice_form.html", {"patients": patients, "contacts": contacts, "items": items, "today": today, "sale_conditions": SALE_CONDITION_OPTIONS})
+    return _template(request, "tenant/billing_manual_invoice_form.html", {"patients": patients, "contacts": contacts, "items": items, "today": today, "sale_conditions": SALE_CONDITION_OPTIONS, "iva_conditions": FISCAL_CONTACT_IVA_CONDITIONS})
 
 
 async def billing_manual_invoice_preview(
@@ -3593,7 +3593,7 @@ async def billing_manual_invoice_preview(
     if item is None or receiver is None or value <= 0 or start > end or sale_condition not in SALE_CONDITION_OPTIONS or not receiver.iva_condition:
         add_flash(request, "error", "Revisa paciente, condicion IVA, item, importe y periodo de prestacion.")
         return RedirectResponse("/t/billing/manual/new", status_code=303)
-    return _template(request, "tenant/billing_manual_invoice_preview.html", {"patient": receiver, "receiver_type": receiver_type, "item": item, "amount": value, "service_start": start, "service_end": end, "sale_condition": sale_condition, "send_email": bool(send_email), "provisional": receiver if receiver_type == "provisional" else None})
+    return _template(request, "tenant/billing_manual_invoice_preview.html", {"receiver": receiver, "receiver_type": receiver_type, "item": item, "amount": value, "service_start": start, "service_end": end, "sale_condition": sale_condition, "send_email": bool(send_email)})
 
 
 async def billing_manual_invoice_emit(
