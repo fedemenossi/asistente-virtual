@@ -2468,6 +2468,124 @@ def test_arca_service_marks_unconfirmed_emission_for_reconciliation_without_expo
     assert client.get(f"/t/billing-arca/{invoice.id}").status_code == 404
 
 
+def test_arca_service_reconciles_an_uncertain_consultation_before_another_emission(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Reconcile", "whatsapp:+629"))
+    item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
+
+    class InitialFailureWsfe:
+        def __init__(self, settings, auth_provider):
+            pass
+
+        def get_ultimo_autorizado(self, pto_vta, cbte_tipo):
+            return WsfeResult(data={"CbteNro": 40})
+
+        def solicitar_cae(self, request):
+            raise WsfeError("Timeout de ARCA")
+
+        def consultar_comprobante(self, pto_vta, cbte_tipo, cbte_nro):
+            raise WsfeError("Sin respuesta")
+
+    async def _create_uncertain() -> int:
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            item = await session.get(ArcaBillableItem, item_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            with pytest.raises(ArcaEmissionError, match="Reconciliar"):
+                await ArcaService(
+                    session,
+                    wsaa_factory=_FakeWsaaForEmission,
+                    wsfe_factory=InitialFailureWsfe,
+                ).emit_invoice_for_consultation(tenant, consultation, item)
+            await session.commit()
+            invoice = await session.scalar(
+                select(ArcaInvoice).where(ArcaInvoice.external_consultation_id == consultation_id)
+            )
+            return invoice.id
+
+    invoice_id = asyncio.run(_create_uncertain())
+
+    class StillUncertainWsfe:
+        def __init__(self, settings, auth_provider):
+            pass
+
+        def get_ultimo_autorizado(self, pto_vta, cbte_tipo):
+            raise AssertionError("No debe reservar un nuevo numero mientras la reconciliacion siga pendiente")
+
+        def solicitar_cae(self, request):
+            raise AssertionError("No debe reenviar una emision incierta")
+
+        def consultar_comprobante(self, pto_vta, cbte_tipo, cbte_nro):
+            raise WsfeError("ARCA aun no confirma el comprobante")
+
+    async def _keep_blocked():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            item = await session.get(ArcaBillableItem, item_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            with pytest.raises(ArcaEmissionError, match="Reconciliar"):
+                await ArcaService(
+                    session,
+                    wsaa_factory=_FakeWsaaForEmission,
+                    wsfe_factory=StillUncertainWsfe,
+                ).emit_invoice_for_consultation(tenant, consultation, item)
+            await session.commit()
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            return invoice.status
+
+    assert asyncio.run(_keep_blocked()) == ArcaInvoiceStatus.NEEDS_RECONCILIATION
+
+    class RecoveryWsfe:
+        def __init__(self, settings, auth_provider):
+            pass
+
+        def get_ultimo_autorizado(self, pto_vta, cbte_tipo):
+            raise AssertionError("No debe solicitar una nueva numeracion antes de reconciliar")
+
+        def solicitar_cae(self, request):
+            raise AssertionError("No debe reenviar una emision incierta")
+
+        def consultar_comprobante(self, pto_vta, cbte_tipo, cbte_nro):
+            assert (pto_vta, cbte_tipo, cbte_nro) == (3, 11, 41)
+            return WsfeResult(data={"CodAutorizacion": "98765432109876", "FchVto": "20260720"})
+
+    async def _reconcile():
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            item = await session.get(ArcaBillableItem, item_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            result = await ArcaService(
+                session,
+                wsaa_factory=_FakeWsaaForEmission,
+                wsfe_factory=RecoveryWsfe,
+            ).emit_invoice_for_consultation(tenant, consultation, item)
+            await session.commit()
+            return result
+
+    result = asyncio.run(_reconcile())
+    assert result.recovered is True
+    assert result.invoice.id == invoice_id
+    assert result.invoice.cae == "98765432109876"
+
+    async def _fetch():
+        async with db_session() as session:
+            invoice = await session.get(ArcaInvoice, invoice_id)
+            consultation = await session.get(BillingExternalConsultation, consultation_id)
+            events = list(
+                (
+                    await session.execute(
+                        select(ArcaInvoiceEvent).where(ArcaInvoiceEvent.invoice_id == invoice_id)
+                    )
+                ).scalars()
+            )
+            return invoice, consultation, events
+
+    invoice, consultation, events = asyncio.run(_fetch())
+    assert invoice.status == ArcaInvoiceStatus.AUTHORIZED
+    assert consultation.arca_invoice_id == invoice.id
+    assert consultation.status == "billed"
+    assert any(event.event_type == "reconciliation_authorized" for event in events)
+
+
 def test_arca_service_surfaces_arca_observations_on_rejection(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Emit Observed", "whatsapp:+682"))
     item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))

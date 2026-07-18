@@ -283,6 +283,55 @@ class ArcaService:
             cbte_tipo=cbte_tipo,
         )
 
+        uncertain_invoice = await self._session.scalar(
+            select(ArcaInvoice).where(
+                ArcaInvoice.tenant_id == tenant.id,
+                ArcaInvoice.external_consultation_id == consultation.id,
+                ArcaInvoice.status == ArcaInvoiceStatus.NEEDS_RECONCILIATION,
+            )
+        )
+        if uncertain_invoice is not None:
+            if uncertain_invoice.cbte_nro is None:
+                self._session.add(
+                    ArcaInvoiceEvent(
+                        invoice_id=uncertain_invoice.id,
+                        event_type="reconciliation_unconfirmed",
+                        payload_json={"reason": "missing_receipt_number"},
+                    )
+                )
+                raise ArcaEmissionError(
+                    uncertain_invoice.error_message or UNCERTAIN_ARCA_EMISSION_MESSAGE
+                )
+            recovered = await self._recover_invoice(
+                wsfe,
+                uncertain_invoice,
+                uncertain_invoice.pto_vta,
+                uncertain_invoice.cbte_tipo,
+                uncertain_invoice.cbte_nro,
+            )
+            if recovered:
+                consultation.arca_invoice_id = uncertain_invoice.id
+                consultation.status = "billed"
+                consultation.billed_at = datetime.now()
+                self._session.add(
+                    ArcaInvoiceEvent(
+                        invoice_id=uncertain_invoice.id,
+                        event_type="reconciliation_authorized",
+                        payload_json={"cbte_nro": uncertain_invoice.cbte_nro},
+                    )
+                )
+                return ArcaEmissionResult(invoice=uncertain_invoice, recovered=True)
+            self._session.add(
+                ArcaInvoiceEvent(
+                    invoice_id=uncertain_invoice.id,
+                    event_type="reconciliation_unconfirmed",
+                    payload_json={"cbte_nro": uncertain_invoice.cbte_nro},
+                )
+            )
+            raise ArcaEmissionError(
+                uncertain_invoice.error_message or UNCERTAIN_ARCA_EMISSION_MESSAGE
+            )
+
         try:
             latest = await anyio.to_thread.run_sync(
                 lambda: wsfe.get_ultimo_autorizado(pto_vta, cbte_tipo).data
