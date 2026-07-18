@@ -85,6 +85,7 @@
             {% set consultation = row[1] %}
             {% set status = invoice.status.value if invoice.status.value is defined else invoice.status %}
             {% set delivery = delivery_states.get(invoice.id, ('pending', '', none)) %}
+            {% set fiscal_message = fiscal_messages.get(invoice.id, '') %}
             <tr>
               <td class="px-4 py-3 text-center text-slate-900">
                 {% if invoice.cbte_nro %}
@@ -138,6 +139,9 @@
                   {{ badge("A reconciliar", "warning") }}
                 {% else %}
                   {{ badge("Borrador", "neutral") }}
+                {% endif %}
+                {% if status in ['rejected', 'needs_reconciliation'] and fiscal_message %}
+                  <p class="mt-1 text-xs text-slate-500">{{ fiscal_message }}</p>
                 {% endif %}
               </td>
               <td class="px-4 py-3 text-center">

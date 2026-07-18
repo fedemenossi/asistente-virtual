@@ -117,12 +117,21 @@
         {% endif %}
       </div>
       {% endif %}
-      {% if invoice.origin == 'manual' and status == 'rejected' %}
+      {% if status == 'needs_reconciliation' %}
+        <div class="rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <p class="text-sm font-semibold text-amber-900">Emision pendiente de reconciliacion</p>
+          <p class="mt-1 text-sm text-amber-800">{{ fiscal_message or "No se pudo confirmar si ARCA autorizo el comprobante." }}</p>
+          <p class="mt-2 text-xs text-amber-800">Consulta el estado en ARCA antes de iniciar otra emision con esta serie fiscal.</p>
+        </div>
+      {% endif %}
+      {% if status == 'rejected' %}
         <div class="rounded-lg border border-amber-200 bg-amber-50 p-4">
           <p class="text-sm font-semibold text-amber-900">Rechazo de ARCA</p>
-          <p class="mt-1 text-sm text-amber-800">{{ invoice.error_message or "ARCA rechazo la autorizacion." }}</p>
-          <p class="mt-2 text-xs text-amber-800">Este intento queda conservado como historial. Corregi los datos e inicia una factura nueva; no se reenviara esta solicitud a ARCA.</p>
-          <a class="btn btn-secondary mt-3" href="/t/billing/manual/new">Nueva factura corregida</a>
+          <p class="mt-1 text-sm text-amber-800">{{ fiscal_message or "ARCA rechazo la autorizacion." }}</p>
+          <p class="mt-2 text-xs text-amber-800">Este intento queda conservado como historial. Corregi los datos e inicia una emision nueva; no se reenviara esta solicitud a ARCA.</p>
+          {% if invoice.origin == 'manual' %}
+            <a class="btn btn-secondary mt-3" href="/t/billing/manual/new">Nueva factura corregida</a>
+          {% endif %}
         </div>
       {% endif %}
       <div class="flex flex-wrap gap-2">

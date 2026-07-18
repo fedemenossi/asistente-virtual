@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.audit import audit_log
+from app.core.safe_errors import safe_operational_error
 from app.core.config import get_settings
 from app.core.csrf import validate_csrf
 from app.core.db import get_async_session
@@ -142,7 +143,10 @@ def _invoice_delivery_state(
 ) -> tuple[str, str, str | None]:
     recipient = invoice.email_to or extract_patient_email(consultation) or ""
     if latest_log and latest_log.status == "failed":
-        return "failed", recipient, latest_log.error_message
+        return "failed", recipient, safe_operational_error(
+            latest_log.error_message,
+            fallback="No se pudo enviar el email. Revisa la configuracion de entrega e intenta nuevamente.",
+        )
     if invoice.email_sent_at or (latest_log and latest_log.status == "sent"):
         return "sent", recipient, None
     if not recipient:
@@ -3167,6 +3171,14 @@ async def billing_arca_list(
         invoice.id: _invoice_delivery_state(invoice, consultation, latest_email_logs.get(invoice.id))
         for invoice, consultation in rows
     }
+    fiscal_messages = {
+        invoice.id: safe_operational_error(
+            invoice.error_message,
+            fallback="Revisa el comprobante y la configuracion ARCA.",
+        )
+        for invoice, _ in rows
+        if invoice.error_message
+    }
     query_string = urlencode(
         {
             key: value
@@ -3186,6 +3198,7 @@ async def billing_arca_list(
         {
             "rows": rows,
             "delivery_states": delivery_states,
+            "fiscal_messages": fiscal_messages,
             "total_rows": total,
             "page": page,
             "total_pages": total_pages,
@@ -3242,6 +3255,10 @@ async def billing_arca_detail(
         consultation,
         email_logs[0] if email_logs else None,
     )
+    fiscal_message = safe_operational_error(
+        invoice.error_message,
+        fallback="Revisa el comprobante y la configuracion ARCA.",
+    )
     document_error = ""
     return _template(
         request,
@@ -3256,6 +3273,7 @@ async def billing_arca_detail(
             "delivery_status": delivery_status,
             "delivery_recipient": delivery_recipient,
             "delivery_error": delivery_error,
+            "fiscal_message": fiscal_message,
             "document_error": document_error,
         },
     )
@@ -3612,7 +3630,11 @@ async def billing_manual_invoice_emit(
         add_flash(request, "success", f"Factura manual #{result.invoice.cbte_nro} autorizada.")
         return RedirectResponse(f"/t/billing/invoices/{result.invoice.id}", status_code=303)
     except (ArcaConfigurationError, ArcaConnectivityError, ArcaEmissionError, InvalidOperation, ValueError) as exc:
-        add_flash(request, "error", f"No se pudo emitir la factura manual: {exc}")
+        message = safe_operational_error(
+            exc,
+            fallback="No se pudo emitir la factura manual. Revisa la configuracion e intenta nuevamente.",
+        )
+        add_flash(request, "error", f"No se pudo emitir la factura manual: {message}")
         return RedirectResponse("/t/billing/manual/new", status_code=303)
 
 
@@ -4920,7 +4942,11 @@ async def _emit_selected_consultations(
             add_flash(request, "warning", f"Consulta #{consultation.id}: {exc}")
         except (ArcaConfigurationError, ArcaConnectivityError, ArcaEmissionError) as exc:
             failed += 1
-            add_flash(request, "error", f"Consulta #{consultation.id}: {exc}")
+            message = safe_operational_error(
+                exc,
+                fallback="No se pudo completar la emision. Revisa el comprobante antes de volver a emitir.",
+            )
+            add_flash(request, "error", f"Consulta #{consultation.id}: {message}")
         else:
             success += 1
             suffix = " recuperada" if result.recovered else ""

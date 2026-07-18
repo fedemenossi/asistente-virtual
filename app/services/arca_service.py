@@ -14,6 +14,7 @@ import anyio
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.safe_errors import safe_operational_error
 from app.integrations.arca.config import ArcaWsSettings
 from app.integrations.arca.wsaa_client import AccessTicket, WsaaClient, WsaaError
 from app.integrations.arca.wsfe_client import WsfeClient, WsfeError
@@ -31,9 +32,16 @@ from app.services.billing_arca_settings_service import decrypt_secret
 
 
 logger = logging.getLogger(__name__)
+UNCERTAIN_ARCA_EMISSION_MESSAGE = (
+    "No se pudo confirmar si ARCA autorizo el comprobante. "
+    "Reconciliar antes de volver a emitir."
+)
 
 _fiscal_series_locks: dict[tuple[int, str, str, int, int], asyncio.Lock] = {}
 _fiscal_series_locks_guard = threading.Lock()
+_SENSITIVE_ARCA_FIELD = re.compile(
+    r"(?i)(?:token|sign|authorization|certificate|certificado|private[_ -]?key|clave privada|password|secret)"
+)
 
 
 @asynccontextmanager
@@ -341,17 +349,9 @@ class ArcaService:
                 consultation.status = "billed"
                 consultation.billed_at = datetime.now()
                 return ArcaEmissionResult(invoice=invoice, recovered=True)
-            invoice.status = ArcaInvoiceStatus.REJECTED
-            invoice.error_message = str(exc)
+            self._mark_invoice_uncertain(invoice)
             consultation.status = "error"
-            self._session.add(
-                ArcaInvoiceEvent(
-                    invoice_id=invoice.id,
-                    event_type="authorization_rejected",
-                    payload_json={"error": str(exc)},
-                )
-            )
-            raise ArcaEmissionError(str(exc)) from exc
+            raise ArcaEmissionError(invoice.error_message) from exc
         self._apply_authorization_response(invoice, response)
         if invoice.status != ArcaInvoiceStatus.AUTHORIZED:
             self._session.add(
@@ -463,15 +463,11 @@ class ArcaService:
         try:
             response = await anyio.to_thread.run_sync(lambda: wsfe.solicitar_cae(_soap_fe_cae_request(request)).data)
         except WsfeError as exc:
-            invoice.status = ArcaInvoiceStatus.REJECTED; invoice.error_message = str(exc)
-            self._session.add(
-                ArcaInvoiceEvent(
-                    invoice_id=invoice.id,
-                    event_type="authorization_rejected",
-                    payload_json={"error": str(exc), "origin": "manual"},
-                )
-            )
-            raise ArcaEmissionError(str(exc)) from exc
+            recovered = await self._recover_invoice(wsfe, invoice, pto_vta, 11, cbte_nro)
+            if recovered:
+                return ArcaEmissionResult(invoice=invoice, recovered=True)
+            self._mark_invoice_uncertain(invoice)
+            raise ArcaEmissionError(invoice.error_message) from exc
         self._apply_authorization_response(invoice, response)
         if invoice.status != ArcaInvoiceStatus.AUTHORIZED:
             self._session.add(
@@ -584,9 +580,25 @@ class ArcaService:
                 ArcaInvoiceEvent(
                     invoice_id=invoice.id,
                     event_type="document_generation_failed",
-                    payload_json={"error": str(exc)},
+                    payload_json={
+                        "error": safe_operational_error(
+                            exc,
+                            fallback="No se pudo generar el comprobante visual.",
+                        )
+                    },
                 )
             )
+
+    def _mark_invoice_uncertain(self, invoice: ArcaInvoice) -> None:
+        invoice.status = ArcaInvoiceStatus.NEEDS_RECONCILIATION
+        invoice.error_message = UNCERTAIN_ARCA_EMISSION_MESSAGE
+        self._session.add(
+            ArcaInvoiceEvent(
+                invoice_id=invoice.id,
+                event_type="authorization_uncertain",
+                payload_json={"reason": "wsfe_error"},
+            )
+        )
 
     def _build_fe_cae_request(
         self,
@@ -747,7 +759,7 @@ class ArcaService:
         cae = str(_get_any(det, "CAE", "Cae", "CodAutorizacion") or "")
         cae_vto = str(_get_any(det, "CAEFchVto", "FchVto") or "")
         result = str(_get_any(det, "Resultado") or _get_any(data.get("FeCabResp", {}) if isinstance(data, dict) else {}, "Resultado") or "")
-        invoice.response_json = data
+        invoice.response_json = _safe_arca_payload(data)
         invoice.cae = cae or None
         invoice.cae_fch_vto = _parse_arca_date(cae_vto)
         invoice.authorized_at = datetime.now()
@@ -773,7 +785,7 @@ class ArcaService:
         cae = str(_get_any(data, "CodAutorizacion", "CAE") or "")
         if not cae:
             return False
-        invoice.response_json = data
+        invoice.response_json = _safe_arca_payload(data)
         invoice.cae = cae
         invoice.cae_fch_vto = _parse_arca_date(str(_get_any(data, "FchVto") or ""))
         invoice.authorized_at = datetime.now()
@@ -797,6 +809,21 @@ def _extract_int(data: Any, key: str, default: int = 0) -> int:
         return int(value or default)
     except (TypeError, ValueError):
         return default
+
+
+def _safe_arca_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "dato protegido" if _SENSITIVE_ARCA_FIELD.search(str(key)) else _safe_arca_payload(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_safe_arca_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_safe_arca_payload(item) for item in value]
+    if isinstance(value, str):
+        return safe_operational_error(value, fallback="dato protegido")
+    return value
 
 
 def _soap_fe_cae_request(request: dict[str, Any]) -> dict[str, Any]:
@@ -887,7 +914,10 @@ def _arca_rejection_message(data: dict[str, Any], detail: dict[str, Any]) -> str
         messages.extend(_arca_message_items(container))
     unique = list(dict.fromkeys(item for item in messages if item))
     if unique:
-        return "ARCA rechazo la autorizacion: " + "; ".join(unique)
+        return safe_operational_error(
+            "ARCA rechazo la autorizacion: " + "; ".join(unique),
+            fallback="ARCA rechazo la autorizacion. Revisa los datos fiscales e inicia una nueva emision.",
+        )
     return "ARCA rechazo la autorizacion."
 
 

@@ -2375,7 +2375,7 @@ def test_arca_service_authorizes_with_fecae_detail_response_and_events(db_sessio
     assert consultation.status == "billed"
 
 
-def test_arca_service_persists_rejected_invoice_on_arca_error(db_session):
+def test_arca_service_marks_unconfirmed_emission_for_reconciliation_without_exposing_secrets(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Emit Error", "whatsapp:+627"))
     item_id, consultation_id = asyncio.run(_create_arca_emission_seed(db_session, tenant_id))
 
@@ -2387,7 +2387,7 @@ def test_arca_service_persists_rejected_invoice_on_arca_error(db_session):
             return WsfeResult(data={"CbteNro": 20})
 
         def solicitar_cae(self, request):
-            raise WsfeError("ARCA rechazo la solicitud")
+            raise WsfeError("token=supersecret ARCA no respondio")
 
         def consultar_comprobante(self, pto_vta, cbte_tipo, cbte_nro):
             raise WsfeError("Comprobante inexistente")
@@ -2411,7 +2411,7 @@ def test_arca_service_persists_rejected_invoice_on_arca_error(db_session):
             return message
 
     message = asyncio.run(_run())
-    assert "ARCA rechazo" in message
+    assert message == "No se pudo confirmar si ARCA autorizo el comprobante. Reconciliar antes de volver a emitir."
 
     async def _fetch():
         async with db_session() as session:
@@ -2419,13 +2419,53 @@ def test_arca_service_persists_rejected_invoice_on_arca_error(db_session):
                 select(ArcaInvoice).where(ArcaInvoice.tenant_id == tenant_id)
             )
             consultation = await session.get(BillingExternalConsultation, consultation_id)
-            return invoice, consultation.arca_invoice_id
+            events = list(
+                (
+                    await session.execute(
+                        select(ArcaInvoiceEvent).where(ArcaInvoiceEvent.invoice_id == invoice.id)
+                    )
+                ).scalars()
+            )
+            return invoice, consultation.arca_invoice_id, events
 
-    invoice, linked_invoice_id = asyncio.run(_fetch())
-    assert invoice.status == ArcaInvoiceStatus.REJECTED
+    invoice, linked_invoice_id, events = asyncio.run(_fetch())
+    assert invoice.status == ArcaInvoiceStatus.NEEDS_RECONCILIATION
     assert invoice.cbte_nro == 21
-    assert invoice.error_message == "ARCA rechazo la solicitud"
+    assert invoice.error_message == "No se pudo confirmar si ARCA autorizo el comprobante. Reconciliar antes de volver a emitir."
     assert linked_invoice_id is None
+    uncertain_events = [event for event in events if event.event_type == "authorization_uncertain"]
+    assert len(uncertain_events) == 1
+    assert uncertain_events[0].payload_json == {"reason": "wsfe_error"}
+
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-uncertain@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-uncertain@test.com", "secret-123")
+    detail = client.get(f"/t/billing-arca/{invoice.id}")
+
+    assert detail.status_code == 200
+    assert "A reconciliar" in detail.text
+    assert "Reconciliar antes de volver a emitir" in detail.text
+    assert "supersecret" not in detail.text
+
+    other_tenant_id = asyncio.run(create_tenant(db_session, "Tenant ajeno", "whatsapp:+628"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-uncertain-other@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            other_tenant_id,
+        )
+    )
+    login(client, "tenant-uncertain-other@test.com", "secret-123")
+    assert client.get(f"/t/billing-arca/{invoice.id}").status_code == 404
 
 
 def test_arca_service_surfaces_arca_observations_on_rejection(db_session):
@@ -2450,7 +2490,7 @@ def test_arca_service_surfaces_arca_observations_on_rejection(db_session):
                                 "Observaciones": [
                                     {
                                         "Code": 10246,
-                                        "Msg": "Campo Condicion Frente al IVA del receptor es obligatorio.",
+                                        "Msg": "Campo Condicion Frente al IVA del receptor es obligatorio. token=supersecret",
                                     }
                                 ]
                             },
@@ -2481,13 +2521,15 @@ def test_arca_service_surfaces_arca_observations_on_rejection(db_session):
             invoice = await session.scalar(
                 select(ArcaInvoice).where(ArcaInvoice.external_consultation_id == consultation_id)
             )
-            return message, invoice.error_message
+            return message, invoice.error_message, invoice.response_json
 
-    message, invoice_error = asyncio.run(_run())
+    message, invoice_error, response_json = asyncio.run(_run())
 
     assert "10246" in message
     assert "Condicion Frente al IVA" in message
+    assert "supersecret" not in message
     assert invoice_error == message
+    assert "supersecret" not in str(response_json)
 
 
 def test_arca_service_blocks_double_billing(db_session):
@@ -3147,6 +3189,8 @@ def test_billing_invoice_email_logs_failed_mailer(db_session):
     assert log.status == "failed"
     assert "SMTP no configurado" in log.error_message
     assert invoice.email_sent_at is None
+    assert invoice.status == ArcaInvoiceStatus.AUTHORIZED
+    assert invoice.cae == "12345678901234"
 
 
 def test_billing_invoice_send_email_route_uses_patient_email(client, db_session, monkeypatch):

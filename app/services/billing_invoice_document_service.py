@@ -14,6 +14,7 @@ from urllib.parse import quote
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.safe_errors import safe_operational_error
 from app.core.timezone import now_ba
 from app.models.arca_invoice import ArcaInvoice
 from app.models.arca_invoice_event import ArcaInvoiceEvent
@@ -215,8 +216,12 @@ class BillingInvoiceEmailService:
             )
         except Exception as exc:
             log.status = "failed"
-            log.error_message = str(exc)
-            raise BillingInvoiceDocumentError(str(exc)) from exc
+            message = safe_operational_error(
+                exc,
+                fallback="No se pudo enviar el email. Revisa la configuracion de entrega e intenta nuevamente.",
+            )
+            log.error_message = message
+            raise BillingInvoiceDocumentError(message) from exc
         log.status = "sent"
         log.sent_at = now_ba()
         invoice.email_to = recipient
