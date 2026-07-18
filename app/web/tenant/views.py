@@ -92,6 +92,10 @@ from app.services.billing_arca_settings_service import (
     public_arca_settings,
     validate_arca_settings,
 )
+from app.services.billing_fiscal_profile_service import (
+    RECEIVER_IVA_CONDITIONS,
+    normalize_receiver_iva_condition,
+)
 from app.services.billing_invoice_document_service import (
     BillingInvoiceDocumentError,
     BillingInvoiceDocumentService,
@@ -1214,7 +1218,11 @@ async def pacientes_new_get(
     request: Request,
     user: CurrentUser = Depends(require_permission("patient:write")),
 ) -> Response:
-    return _template(request, "tenant/paciente_form.html", {"paciente": None})
+    return _template(
+        request,
+        "tenant/paciente_form.html",
+        {"paciente": None, "iva_conditions": RECEIVER_IVA_CONDITIONS},
+    )
 
 
 async def pacientes_new_post(
@@ -1224,6 +1232,7 @@ async def pacientes_new_post(
     telefono: str = Form(""),
     dni: str = Form(...),
     email: str = Form(""),
+    iva_condition: str | None = Form(None),
     obra_social: str | None = Form(None),
     insurance_number: str | None = Form(None),
     fecha_nacimiento: str | None = Form(None),
@@ -1249,6 +1258,10 @@ async def pacientes_new_post(
     normalized_type = normalize_document_type(tipo_documento or "DNI")
     final_document = (numero_documento or dni).strip()
     normalized_document = normalize_document(final_document)
+    try:
+        normalized_iva_condition = normalize_receiver_iva_condition(iva_condition)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     duplicate_result = await session.execute(
         select(Paciente).where(
             Paciente.tenant_id == user.tenant_id,
@@ -1285,6 +1298,7 @@ async def pacientes_new_post(
         telefono=normalized_phone,
         dni=dni,
         email=email,
+        iva_condition=normalized_iva_condition,
         obra_social=obra_social,
         insurance_number=insurance_number,
         fecha_nacimiento=_parse_optional_date(fecha_nacimiento),
@@ -1327,7 +1341,11 @@ async def pacientes_edit_get(
     paciente = await get_tenant_entity_or_404(
         session, Paciente, paciente_id, user.tenant_id
     )
-    return _template(request, "tenant/paciente_form.html", {"paciente": paciente})
+    return _template(
+        request,
+        "tenant/paciente_form.html",
+        {"paciente": paciente, "iva_conditions": RECEIVER_IVA_CONDITIONS},
+    )
 
 
 async def pacientes_edit_post(
@@ -1338,6 +1356,7 @@ async def pacientes_edit_post(
     telefono: str = Form(""),
     dni: str = Form(...),
     email: str = Form(""),
+    iva_condition: str | None = Form(None),
     obra_social: str | None = Form(None),
     insurance_number: str | None = Form(None),
     fecha_nacimiento: str | None = Form(None),
@@ -1363,6 +1382,10 @@ async def pacientes_edit_post(
     normalized_type = normalize_document_type(tipo_documento or "DNI")
     final_document = (numero_documento or dni).strip()
     normalized_document = normalize_document(final_document)
+    try:
+        normalized_iva_condition = normalize_receiver_iva_condition(iva_condition)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     duplicate_result = await session.execute(
         select(Paciente).where(
             Paciente.tenant_id == user.tenant_id,
@@ -1402,6 +1425,7 @@ async def pacientes_edit_post(
         paciente.telefono = normalized_phone
         paciente.dni = dni
         paciente.email = email
+        paciente.iva_condition = normalized_iva_condition
         paciente.obra_social = obra_social
         paciente.insurance_number = insurance_number
         paciente.fecha_nacimiento = _parse_optional_date(fecha_nacimiento)
@@ -2734,13 +2758,7 @@ FISCAL_CONTACT_TYPE_LABELS = {
     "person": "Persona",
     "organization": "Organizacion",
 }
-FISCAL_CONTACT_IVA_CONDITIONS = {
-    "consumidor_final": "Consumidor final",
-    "responsable_inscripto": "Responsable inscripto",
-    "monotributista": "Monotributista",
-    "exento": "Exento",
-    "no_categorizado": "No categorizado",
-}
+FISCAL_CONTACT_IVA_CONDITIONS = RECEIVER_IVA_CONDITIONS
 
 
 def _fiscal_contact_form_context(

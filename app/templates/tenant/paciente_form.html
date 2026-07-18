@@ -44,6 +44,17 @@
         <label class="block text-sm font-medium text-slate-700">Email</label>
         <input class="input mt-1" type="email" name="email" value="{{ paciente.email if paciente else '' }}" />
       </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Condicion frente al IVA</label>
+        {% set selected_iva_condition = paciente.iva_condition if paciente and paciente.iva_condition else '' %}
+        <select class="select mt-1" name="iva_condition">
+          <option value="">Sin informar</option>
+          {% for value, label in iva_conditions.items() %}
+            <option value="{{ value }}" {% if selected_iva_condition == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <p class="mt-1 text-xs text-slate-500">Se preselecciona al facturar manualmente a este Paciente.</p>
+      </div>
     </div>
 
     <div class="border-t border-slate-200 pt-4">

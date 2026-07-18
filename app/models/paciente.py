@@ -18,6 +18,7 @@ class Paciente(Base, TimestampMixin, SoftDeleteMixin):
     apellido: Mapped[str] = mapped_column(String(100), nullable=False)
     dni: Mapped[str] = mapped_column(String(32), nullable=False)
     email: Mapped[str] = mapped_column(String(200), nullable=False)
+    iva_condition: Mapped[str | None] = mapped_column(String(50), nullable=True)
     obra_social: Mapped[str | None] = mapped_column(String(100))
     insurance_number: Mapped[str | None] = mapped_column(String(100))
     fecha_nacimiento: Mapped[date | None] = mapped_column(Date, nullable=True)

@@ -104,6 +104,7 @@ EXTRA_COLUMNS = {
     "pacientes": {
         "created_at": "DATETIME NULL",
         "updated_at": "DATETIME NULL",
+        "iva_condition": "VARCHAR(50) NULL",
         "insurance_number": "VARCHAR(100) NULL",
         "fecha_nacimiento": "DATE NULL",
         "tipo_documento": "VARCHAR(50) NULL",
