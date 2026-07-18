@@ -471,7 +471,7 @@ def _fiscal_pdf(
     qr_url = invoice.qr_url or build_arca_qr_url(invoice)
     qr_image = qrcode.make(qr_url).get_image().convert("RGB")
     qr_reader = ImageReader(qr_image)
-    copies = ("ORIGINAL", "DUPLICADO", "TRIPLICADO")
+    copies = ("ORIGINAL",)
 
     for copy_label in copies:
         _draw_invoice_page(
@@ -519,7 +519,7 @@ def _draw_invoice_page(
     title = f"FACTURA {letter}".strip()
     cbte_nro = int(invoice.cbte_nro or 0)
     pto_vta = int(invoice.pto_vta or 0)
-    patient_name = consultation.patient_name if consultation else "-"
+    patient_name = consultation.patient_name if consultation else (invoice.receiver_name_snapshot or "-")
     patient_document = consultation.patient_document if consultation else invoice.doc_nro
     description = _invoice_description(invoice)
     sale_condition = extract_sale_condition(invoice, consultation)

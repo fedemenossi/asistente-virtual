@@ -3110,6 +3110,9 @@ def test_billing_invoice_document_html_and_pdf_include_diagnosis(db_session):
     assert "Condicion de venta: Otros medios" in document.html
     assert document.pdf.startswith(b"%PDF")
     assert b"Diagnostico" in document.pdf
+    assert b"ORIGINAL" in document.pdf
+    assert b"DUPLICADO" not in document.pdf
+    assert b"TRIPLICADO" not in document.pdf
     assert document.patient_email == "paciente@example.com"
 
 
@@ -3332,6 +3335,53 @@ def test_billing_invoice_document_allows_missing_diagnosis(db_session):
     assert "No informado" in document.html
     assert document.pdf.startswith(b"%PDF")
     assert document.patient_email == "paciente@example.com"
+
+
+def test_manual_invoice_document_uses_receiver_snapshot_without_consultation(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Manual Document", "whatsapp:+6471"))
+
+    async def _build():
+        async with db_session() as session:
+            async with session.begin():
+                invoice = ArcaInvoice(
+                    tenant_id=tenant_id,
+                    origin="manual",
+                    receiver_name_snapshot="Paciente para reintegro",
+                    receiver_iva_condition_snapshot="Consumidor Final",
+                    represented_cuit="20123456789",
+                    environment="prod",
+                    pto_vta=6,
+                    cbte_tipo=11,
+                    cbte_nro=64,
+                    concepto=2,
+                    doc_tipo=96,
+                    doc_nro="28077008",
+                    cbte_fch=datetime(2026, 7, 18).date(),
+                    imp_total=Decimal("1000.00"),
+                    imp_tot_conc=Decimal("0.00"),
+                    imp_neto=Decimal("1000.00"),
+                    imp_op_ex=Decimal("0.00"),
+                    imp_trib=Decimal("0.00"),
+                    imp_iva=Decimal("0.00"),
+                    mon_id="PES",
+                    mon_cotiz=Decimal("1.000000"),
+                    status=ArcaInvoiceStatus.AUTHORIZED,
+                    cae="86294387160045",
+                    cae_fch_vto=datetime(2026, 7, 28).date(),
+                    request_json={"metadata": {"description": "Consulta medica"}},
+                )
+                session.add(invoice)
+                await session.flush()
+                tenant = await session.get(Tenant, tenant_id)
+                return await BillingInvoiceDocumentService(session).build_document(
+                    tenant,
+                    invoice,
+                    consultation=None,
+                )
+
+    document = asyncio.run(_build())
+    assert "Paciente para reintegro" in document.html
+    assert b"Paciente para reintegro" in document.pdf
 
 
 def test_billing_invoice_email_sends_pdf_and_logs(db_session):
