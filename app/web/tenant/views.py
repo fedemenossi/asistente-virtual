@@ -3624,8 +3624,16 @@ def _manual_invoice_line_description(item: ArcaBillableItem, patient: Paciente |
     return compose_invoice_line_description(item.name, insurance_name, insurance_number)
 
 
+def _manual_invoice_item_id(item_id: str, selected_item_id: int) -> tuple[int, bool]:
+    is_custom_amount = item_id.strip() == "custom"
+    try:
+        return (selected_item_id if is_custom_amount else int(item_id)), is_custom_amount
+    except (TypeError, ValueError):
+        return 0, is_custom_amount
+
+
 async def billing_manual_invoice_preview(
-    request: Request, patient_id: int = Form(0), contact_id: int = Form(0), receiver_type: str = Form("patient"), receiver_name: str = Form(""), receiver_document_type: str = Form("DNI"), receiver_document_number: str = Form(""), receiver_iva_condition: str = Form(""), receiver_email: str = Form(""), item_id: int = Form(...), amount_source_item_id: int = Form(0), amount: str = Form(""), diagnosis: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
+    request: Request, patient_id: int = Form(0), contact_id: int = Form(0), receiver_type: str = Form("patient"), receiver_name: str = Form(""), receiver_document_type: str = Form("DNI"), receiver_document_number: str = Form(""), receiver_iva_condition: str = Form(""), receiver_email: str = Form(""), item_id: str = Form(""), selected_item_id: int = Form(0), amount: str = Form(""), diagnosis: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     validate_csrf(request, csrf_token)
     source_exists = receiver_type == "provisional"
@@ -3636,34 +3644,33 @@ async def billing_manual_invoice_preview(
     elif receiver_type == "contact":
         source_exists = await session.scalar(select(BillingFiscalContact.id).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id, BillingFiscalContact.active.is_(True))) is not None
     receiver = _manual_invoice_receiver(int(user.tenant_id), name=receiver_name, document_type=receiver_document_type, document_number=receiver_document_number, iva_condition=receiver_iva_condition, email=receiver_email)
-    item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == item_id, ArcaBillableItem.tenant_id == user.tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2))
-    amount_source_item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == amount_source_item_id, ArcaBillableItem.tenant_id == user.tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2)) if amount_source_item_id else None
+    resolved_item_id, is_custom_amount = _manual_invoice_item_id(item_id, selected_item_id)
+    item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == resolved_item_id, ArcaBillableItem.tenant_id == user.tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2))
     try:
-        value = Decimal(str(amount_source_item.unit_price if amount_source_item else amount)).quantize(Decimal("0.01"))
+        value = Decimal(str(amount if is_custom_amount else item.unit_price if item else "")).quantize(Decimal("0.01"))
         start = date.fromisoformat(service_start)
         end = date.fromisoformat(service_end)
     except (InvalidOperation, ValueError): value = Decimal("0"); start = end = now_ba().date()
-    if item is None or receiver is None or not source_exists or (amount_source_item_id and amount_source_item is None) or value <= 0 or start > end or sale_condition not in SALE_CONDITION_OPTIONS:
+    if item is None or receiver is None or not source_exists or value <= 0 or start > end or sale_condition not in SALE_CONDITION_OPTIONS:
         add_flash(request, "error", "Revisa los datos fiscales del receptor, el item, el importe y el periodo de prestacion.")
         return RedirectResponse("/t/billing/manual/new", status_code=303)
-    return _template(request, "tenant/billing_manual_invoice_preview.html", {"receiver": receiver, "receiver_type": receiver_type, "patient_id": patient_id, "contact_id": contact_id, "item": item, "amount_source_item_id": amount_source_item.id if amount_source_item else 0, "line_description": _manual_invoice_line_description(item, patient), "amount": value, "diagnosis": diagnosis.strip(), "service_start": start, "service_end": end, "sale_condition": sale_condition, "send_email": bool(send_email)})
+    return _template(request, "tenant/billing_manual_invoice_preview.html", {"receiver": receiver, "receiver_type": receiver_type, "patient_id": patient_id, "contact_id": contact_id, "item": item, "custom_amount": is_custom_amount, "line_description": _manual_invoice_line_description(item, patient), "amount": value, "diagnosis": diagnosis.strip(), "service_start": start, "service_end": end, "sale_condition": sale_condition, "send_email": bool(send_email)})
 
 
 async def billing_manual_invoice_emit(
-    request: Request, patient_id: int = Form(0), contact_id: int = Form(0), receiver_type: str = Form("patient"), receiver_name: str = Form(""), receiver_document_type: str = Form("DNI"), receiver_document_number: str = Form(""), receiver_iva_condition: str = Form(""), receiver_email: str = Form(""), item_id: int = Form(...), amount_source_item_id: int = Form(0), amount: str = Form(""), diagnosis: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
+    request: Request, patient_id: int = Form(0), contact_id: int = Form(0), receiver_type: str = Form("patient"), receiver_name: str = Form(""), receiver_document_type: str = Form("DNI"), receiver_document_number: str = Form(""), receiver_iva_condition: str = Form(""), receiver_email: str = Form(""), item_id: int = Form(...), custom_amount: str | None = Form(None), amount: str = Form(""), diagnosis: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
     patient = await get_tenant_entity_or_404(session, Paciente, patient_id, user.tenant_id) if receiver_type == "patient" else None
     contact = await session.scalar(select(BillingFiscalContact).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id, BillingFiscalContact.active.is_(True))) if receiver_type == "contact" else None
     item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == item_id, ArcaBillableItem.tenant_id == user.tenant_id))
-    amount_source_item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == amount_source_item_id, ArcaBillableItem.tenant_id == user.tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2)) if amount_source_item_id else None
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
     try:
         receiver = _manual_invoice_receiver(int(user.tenant_id), name=receiver_name, document_type=receiver_document_type, document_number=receiver_document_number, iva_condition=receiver_iva_condition, email=receiver_email)
-        if item is None or receiver is None or (amount_source_item_id and amount_source_item is None) or receiver_type not in {"patient", "contact", "provisional"} or (receiver_type == "contact" and contact is None):
+        if item is None or receiver is None or receiver_type not in {"patient", "contact", "provisional"} or (receiver_type == "contact" and contact is None):
             raise ArcaEmissionError("Datos fiscales o item facturable invalidos.")
         line_description = _manual_invoice_line_description(item, patient)
-        value = Decimal(str(amount_source_item.unit_price if amount_source_item else amount)).quantize(Decimal("0.01"))
+        value = Decimal(str(amount if custom_amount else item.unit_price)).quantize(Decimal("0.01"))
         result = await ArcaService(session).emit_manual_invoice_for_contact(tenant, receiver, item, amount=value, service_start=date.fromisoformat(service_start), service_end=date.fromisoformat(service_end), sale_condition=sale_condition, send_email=bool(send_email), line_description=line_description, diagnosis=diagnosis.strip())
         if patient is not None:
             result.invoice.patient_id = patient.id

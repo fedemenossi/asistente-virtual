@@ -15,7 +15,7 @@
     <input type="hidden" name="receiver_document_number" value="{{ receiver.document_number }}" />
     <input type="hidden" name="receiver_iva_condition" value="{{ receiver.iva_condition }}" />
     <input type="hidden" name="receiver_email" value="{{ receiver.email or '' }}" />
-    <input type="hidden" name="item_id" value="{{ item.id }}" /><input type="hidden" name="amount_source_item_id" value="{{ amount_source_item_id }}" /><input type="hidden" name="amount" value="{{ amount }}" /><input type="hidden" name="diagnosis" value="{{ diagnosis }}" /><input type="hidden" name="service_start" value="{{ service_start }}" /><input type="hidden" name="service_end" value="{{ service_end }}" /><input type="hidden" name="sale_condition" value="{{ sale_condition }}" />
+    <input type="hidden" name="item_id" value="{{ item.id }}" />{% if custom_amount %}<input type="hidden" name="custom_amount" value="on" />{% endif %}<input type="hidden" name="amount" value="{{ amount }}" /><input type="hidden" name="diagnosis" value="{{ diagnosis }}" /><input type="hidden" name="service_start" value="{{ service_start }}" /><input type="hidden" name="service_end" value="{{ service_end }}" /><input type="hidden" name="sale_condition" value="{{ sale_condition }}" />
     {% if send_email %}<input type="hidden" name="send_email" value="on" />{% endif %}
     <button class="btn btn-primary">Confirmar y emitir Factura C</button><a class="btn btn-secondary" href="/t/billing/manual/new">Volver</a>
   </form>

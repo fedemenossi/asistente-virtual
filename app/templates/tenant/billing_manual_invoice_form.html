@@ -71,13 +71,8 @@
   <p class="text-xs text-slate-500">Los cambios se aplican solo a esta factura y no modifican el paciente ni el contacto fiscal guardado.</p>
 
   <label>Item facturable<select class="select" name="item_id" id="item_id" required>{% for item in items %}<option value="{{ item.id }}" data-item-name="{{ item.name }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
+  <input type="hidden" name="selected_item_id" id="selected_item_id" value="{{ items[0].id if items else '' }}" />
   <p class="text-sm text-slate-700"><span class="font-medium">Vista previa del detalle a facturar:</span> <span id="invoice_line_preview">Selecciona un item.</span></p>
-  <label>Valor de la consulta
-    <select class="select" name="amount_source_item_id" id="amount_source_item_id">
-      <option value="">Valor personalizado</option>
-      {% for item in items %}<option value="{{ item.id }}" data-amount="{{ item.unit_price }}">{{ item.name }} - $ {{ item.unit_price }}</option>{% endfor %}
-    </select>
-  </label>
   <label>Importe facturado<input class="input" name="amount" id="amount" inputmode="decimal" required /></label>
   <label>Diagnostico<textarea class="textarea" name="diagnosis" rows="3" placeholder="Diagnostico informado en la factura"></textarea></label>
   <div class="grid gap-4 md:grid-cols-2"><label>Desde<input class="input" type="date" name="service_start" value="{{ today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ today }}" required /></label></div>
@@ -94,10 +89,17 @@
     const patient = document.getElementById("patient_id");
     const contact = document.getElementById("contact_id");
     const item = document.getElementById("item_id");
-    const amountSource = document.getElementById("amount_source_item_id");
+    const selectedItemId = document.getElementById("selected_item_id");
     const amount = document.getElementById("amount");
     const linePreview = document.getElementById("invoice_line_preview");
     const receiverFields = ["name", "document_type", "document_number", "iva_condition", "email"];
+    const itemAmounts = {
+      {% for billable_item in items %}"{{ billable_item.id }}": "{{ billable_item.unit_price }}", {% endfor %}
+    };
+    const customItemOption = document.createElement("option");
+    customItemOption.value = "custom";
+    customItemOption.textContent = "Importe personalizado";
+    item.append(customItemOption);
 
     function syncReceiverFields() {
       const isPatient = source.value === "patient";
@@ -116,7 +118,9 @@
     }
 
     function updateInvoiceLinePreview() {
-      const selectedItem = item.options[item.selectedIndex];
+      const selectedItem = item.value === "custom"
+        ? [...item.options].find((option) => option.value === selectedItemId.value)
+        : item.options[item.selectedIndex];
       const selectedPatient = source.value === "patient" ? patient.options[patient.selectedIndex] : null;
       const parts = [selectedItem?.dataset.itemName || ""];
       if (selectedPatient?.dataset.insuranceName) parts.push(selectedPatient.dataset.insuranceName);
@@ -124,18 +128,14 @@
       linePreview.textContent = parts.filter(Boolean).join(" - ") || "Selecciona un item.";
     }
 
-    function syncAmount() {
-      const sourceItem = amountSource.options[amountSource.selectedIndex];
-      const selectedAmount = sourceItem?.dataset.amount;
-      const isCustomAmount = !selectedAmount;
+    function syncItemAmount() {
+      const isCustomAmount = item.value === "custom";
+      if (!isCustomAmount) {
+        selectedItemId.value = item.value;
+        amount.value = itemAmounts[item.value] || "";
+      }
       amount.readOnly = !isCustomAmount;
-      if (!isCustomAmount) amount.value = selectedAmount;
-    }
-
-    function selectItemAmount() {
-      const matchingOption = [...amountSource.options].find((option) => option.value === item.value);
-      if (matchingOption) amountSource.value = matchingOption.value;
-      syncAmount();
+      updateInvoiceLinePreview();
     }
 
     if (patient.options.length <= 1 && contact.options.length > 1) source.value = "contact";
@@ -143,13 +143,9 @@
     source.addEventListener("change", syncReceiverFields);
     patient.addEventListener("change", syncReceiverFields);
     contact.addEventListener("change", syncReceiverFields);
-    item.addEventListener("change", () => {
-      updateInvoiceLinePreview();
-      selectItemAmount();
-    });
-    amountSource.addEventListener("change", syncAmount);
+    item.addEventListener("change", syncItemAmount);
     syncReceiverFields();
-    selectItemAmount();
+    syncItemAmount();
   })();
 </script>
 {% endblock %}
