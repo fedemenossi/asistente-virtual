@@ -345,16 +345,16 @@ def build_invoice_html(
     <p>Condicion de venta: {html.escape(sale_condition)}</p>
   </div>
   <table>
-    <thead><tr><th>Descripcion</th>{'' if invoice.origin == 'manual' else '<th>Diagnostico</th>'}<th>Importe</th></tr></thead>
+    <thead><tr><th>Descripcion</th><th>Diagnostico</th><th>Importe</th></tr></thead>
     <tbody>
       <tr>
         <td>{html.escape(str(description))}</td>
-        {'' if invoice.origin == 'manual' else '<td class="diagnosis">' + html.escape(diagnosis or 'No informado') + '</td>'}
+        <td class="diagnosis">{html.escape(diagnosis or 'No informado')}</td>
         <td>{html.escape(_money(invoice.imp_total))} {html.escape(invoice.mon_id)}</td>
       </tr>
     </tbody>
   </table>
-  {'' if invoice.origin == 'manual' else '<div class="box"><p class="label">Diagnostico informado en factura</p><p class="diagnosis">' + html.escape(diagnosis or 'No informado') + '</p></div>'}
+  <div class="box"><p class="label">Diagnostico informado en factura</p><p class="diagnosis">{html.escape(diagnosis or 'No informado')}</p></div>
   <div class="box">
     <p class="label">QR ARCA</p>
     <p style="word-break: break-all;">{html.escape(qr_url)}</p>

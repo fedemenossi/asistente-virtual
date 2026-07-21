@@ -435,6 +435,7 @@ class ArcaService:
         sale_condition: str,
         send_email: bool,
         line_description: str | None = None,
+        diagnosis: str = "",
     ) -> ArcaEmissionResult:
         if patient.tenant_id != tenant.id or item.tenant_id != tenant.id or patient.deleted_at is not None:
             raise ArcaEmissionError("El paciente o el item no pertenecen al tenant.")
@@ -465,11 +466,13 @@ class ArcaService:
                 sale_condition=sale_condition,
                 send_email=send_email,
                 line_description=line_description,
+                diagnosis=diagnosis,
             )
 
     async def _emit_manual_invoice_for_patient_locked(
         self, tenant: Tenant, patient: Paciente, item: ArcaBillableItem, *, amount: Any,
         service_start, service_end, sale_condition: str, send_email: bool, line_description: str | None = None,
+        diagnosis: str = "",
     ) -> ArcaEmissionResult:
         if patient.tenant_id != tenant.id or item.tenant_id != tenant.id or patient.deleted_at is not None:
             raise ArcaEmissionError("El paciente o el item no pertenecen al tenant.")
@@ -505,12 +508,13 @@ class ArcaService:
         doc_type, doc_number = _document_for_arca(patient.numero_documento or patient.dni)
         today = datetime.now().date()
         description = (line_description or item.description or item.name).strip()
+        diagnosis = diagnosis.strip()
         detail = {"Concepto": 2, "DocTipo": doc_type, "DocNro": doc_number, "CbteDesde": cbte_nro, "CbteHasta": cbte_nro, "CbteFch": today.strftime("%Y%m%d"), "ImpTotal": float(value), "ImpTotConc": 0, "ImpNeto": float(value), "ImpOpEx": 0, "ImpTrib": 0, "ImpIVA": 0, "MonId": "PES", "MonCotiz": 1, "CondicionIVAReceptorId": _receiver_tax_condition_id(patient.iva_condition), "FchServDesde": service_start.strftime("%Y%m%d"), "FchServHasta": service_end.strftime("%Y%m%d"), "FchVtoPago": today.strftime("%Y%m%d")}
-        request = {"FeCabReq": {"CantReg": 1, "PtoVta": pto_vta, "CbteTipo": 11}, "FeDetReq": {"FECAEDetRequest": [detail]}, "metadata": {"origin": "manual", "patient_id": patient.id, "receiver_name": f"{patient.nombre} {patient.apellido}".strip(), "description": description, "sale_condition": sale_condition, "service_period_start": service_start.isoformat(), "service_period_end": service_end.isoformat()}}
-        invoice = ArcaInvoice(tenant_id=tenant.id, patient_id=patient.id, billing_item_id=item.id, origin="manual", receiver_name_snapshot=f"{patient.nombre} {patient.apellido}".strip(), receiver_iva_condition_snapshot=patient.iva_condition, service_period_start=service_start, service_period_end=service_end, sale_condition=sale_condition, represented_cuit=str(settings.represented_cuit), environment=settings.environment, pto_vta=pto_vta, cbte_tipo=11, cbte_nro=cbte_nro, concepto=2, doc_tipo=doc_type, doc_nro=str(doc_number), cbte_fch=today, imp_total=value, imp_tot_conc=Decimal("0"), imp_neto=value, imp_op_ex=Decimal("0"), imp_trib=Decimal("0"), imp_iva=Decimal("0"), mon_id="PES", mon_cotiz=Decimal("1"), status=ArcaInvoiceStatus.PENDING_AUTHORIZATION, diagnosis_original_snapshot=None, diagnosis_final_snapshot=None, send_email=send_email, email_to=patient.email, request_json=request)
+        request = {"FeCabReq": {"CantReg": 1, "PtoVta": pto_vta, "CbteTipo": 11}, "FeDetReq": {"FECAEDetRequest": [detail]}, "metadata": {"origin": "manual", "patient_id": patient.id, "receiver_name": f"{patient.nombre} {patient.apellido}".strip(), "description": description, "diagnosis": diagnosis, "sale_condition": sale_condition, "service_period_start": service_start.isoformat(), "service_period_end": service_end.isoformat()}}
+        invoice = ArcaInvoice(tenant_id=tenant.id, patient_id=patient.id, billing_item_id=item.id, origin="manual", receiver_name_snapshot=f"{patient.nombre} {patient.apellido}".strip(), receiver_iva_condition_snapshot=patient.iva_condition, service_period_start=service_start, service_period_end=service_end, sale_condition=sale_condition, represented_cuit=str(settings.represented_cuit), environment=settings.environment, pto_vta=pto_vta, cbte_tipo=11, cbte_nro=cbte_nro, concepto=2, doc_tipo=doc_type, doc_nro=str(doc_number), cbte_fch=today, imp_total=value, imp_tot_conc=Decimal("0"), imp_neto=value, imp_op_ex=Decimal("0"), imp_trib=Decimal("0"), imp_iva=Decimal("0"), mon_id="PES", mon_cotiz=Decimal("1"), status=ArcaInvoiceStatus.PENDING_AUTHORIZATION, diagnosis_original_snapshot=diagnosis, diagnosis_final_snapshot=diagnosis, send_email=send_email, email_to=patient.email, request_json=request)
         self._session.add(invoice); await self._session.flush()
         self._session.add(ArcaInvoiceEvent(invoice_id=invoice.id, event_type="authorization_requested", payload_json={"origin": "manual"}))
-        self._session.add(BillingInvoiceLine(invoice_id=invoice.id, item_code=item.code, description=description, diagnosis_text="", quantity=1, unit_price=value, subtotal=value, tax_rate=item.tax_rate, total=value))
+        self._session.add(BillingInvoiceLine(invoice_id=invoice.id, item_code=item.code, description=description, diagnosis_text=diagnosis, quantity=1, unit_price=value, subtotal=value, tax_rate=item.tax_rate, total=value))
         try:
             response = await anyio.to_thread.run_sync(lambda: wsfe.solicitar_cae(_soap_fe_cae_request(request)).data)
         except WsfeError as exc:
@@ -535,11 +539,12 @@ class ArcaService:
     async def emit_manual_invoice_for_contact(
         self, tenant: Tenant, contact: BillingFiscalContact, item: ArcaBillableItem, *, amount: Any,
         service_start, service_end, sale_condition: str, send_email: bool, line_description: str | None = None,
+        diagnosis: str = "",
     ) -> ArcaEmissionResult:
         if contact.tenant_id != tenant.id or not contact.active:
             raise ArcaEmissionError("El contacto fiscal no pertenece al tenant o esta inactivo.")
         proxy = Paciente(tenant_id=tenant.id, nombre=contact.name, apellido="", telefono="", dni=contact.document_number, email=contact.email or "", iva_condition=contact.iva_condition, numero_documento=contact.document_number)
-        result = await self.emit_manual_invoice_for_patient(tenant, proxy, item, amount=amount, service_start=service_start, service_end=service_end, sale_condition=sale_condition, send_email=send_email, line_description=line_description)
+        result = await self.emit_manual_invoice_for_patient(tenant, proxy, item, amount=amount, service_start=service_start, service_end=service_end, sale_condition=sale_condition, send_email=send_email, line_description=line_description, diagnosis=diagnosis)
         result.invoice.patient_id = None
         result.invoice.fiscal_contact_id = contact.id
         result.invoice.receiver_name_snapshot = contact.name
