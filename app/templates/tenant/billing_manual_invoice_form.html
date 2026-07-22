@@ -133,11 +133,13 @@
       linePreview.textContent = parts.filter(Boolean).join(" - ") || "Selecciona un item.";
     }
 
-    function syncItemAmount() {
+    function syncItemAmount(clearCustomAmount = false) {
       const isCustomAmount = item.value === "custom";
       if (!isCustomAmount) {
         selectedItemId.value = item.value;
         amount.value = itemAmounts[item.value] || "";
+      } else if (clearCustomAmount) {
+        amount.value = "";
       }
       amount.readOnly = !isCustomAmount;
       updateInvoiceLinePreview();
@@ -154,7 +156,7 @@
     source.addEventListener("change", syncReceiverFields);
     patient.addEventListener("change", syncReceiverFields);
     contact.addEventListener("change", syncReceiverFields);
-    item.addEventListener("change", syncItemAmount);
+    item.addEventListener("change", () => syncItemAmount(true));
     syncReceiverFields();
     if (Object.keys(restoredForm).length) {
       receiverFields.forEach((field) => {
