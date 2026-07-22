@@ -3661,6 +3661,58 @@ def _manual_invoice_item_id(item_id: str, selected_item_id: int) -> tuple[int, b
         return 0, is_custom_amount
 
 
+async def _register_manual_invoice_as_billed_consultation(
+    session: AsyncSession,
+    *,
+    invoice: ArcaInvoice,
+    tenant_id: int,
+    receiver: BillingFiscalContact,
+    patient: Paciente | None,
+    item: ArcaBillableItem,
+    amount: Decimal,
+    diagnosis: str,
+    service_end: date,
+    sale_condition: str,
+    send_email: bool,
+) -> BillingExternalConsultation:
+    existing = await session.scalar(
+        select(BillingExternalConsultation).where(
+            BillingExternalConsultation.tenant_id == tenant_id,
+            BillingExternalConsultation.arca_invoice_id == invoice.id,
+        )
+    )
+    if existing is not None:
+        return existing
+
+    consultation = BillingExternalConsultation(
+        tenant_id=tenant_id,
+        patient_id=patient.id if patient else None,
+        arca_invoice_id=invoice.id,
+        billing_item_id=item.id,
+        external_provider="manual_invoice",
+        external_id=f"manual-invoice-{invoice.id}",
+        attended_at=datetime.combine(service_end, datetime.min.time()),
+        patient_name=receiver.name,
+        patient_document=receiver.document_number,
+        patient_email=receiver.email,
+        insurance_name=(patient.obra_social or patient.financiador_seguro) if patient else None,
+        practice_name=item.name,
+        diagnosis_original=diagnosis or None,
+        diagnosis=diagnosis or None,
+        amount=amount,
+        sale_condition=sale_condition,
+        selected_for_billing=False,
+        send_email=send_email,
+        status="billed",
+        billed_at=datetime.now(),
+        raw_payload_json={"origin": "manual", "invoice_id": invoice.id},
+    )
+    session.add(consultation)
+    await session.flush()
+    invoice.external_consultation_id = consultation.id
+    return consultation
+
+
 async def billing_manual_invoice_preview(
     request: Request, patient_id: int = Form(0), contact_id: int = Form(0), receiver_type: str = Form("patient"), receiver_name: str = Form(""), receiver_document_type: str = Form("DNI"), receiver_document_number: str = Form(""), receiver_iva_condition: str = Form(""), receiver_email: str = Form(""), item_id: str = Form(""), selected_item_id: int = Form(0), amount: str = Form(""), diagnosis: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
 ) -> Response:
@@ -3708,6 +3760,19 @@ async def billing_manual_invoice_emit(
             result.invoice.fiscal_contact_id = contact.id
         else:
             session.add(receiver); await session.flush(); result.invoice.fiscal_contact_id = receiver.id
+        await _register_manual_invoice_as_billed_consultation(
+            session,
+            invoice=result.invoice,
+            tenant_id=int(user.tenant_id),
+            receiver=receiver,
+            patient=patient,
+            item=item,
+            amount=value,
+            diagnosis=diagnosis.strip(),
+            service_end=date.fromisoformat(service_end),
+            sale_condition=sale_condition,
+            send_email=bool(send_email),
+        )
         await BillingInvoiceDocumentService(session).generate_and_store_document(tenant, result.invoice, user_id=user.id)
         if send_email:
             document = await BillingInvoiceDocumentService(session).ensure_document(tenant, result.invoice)

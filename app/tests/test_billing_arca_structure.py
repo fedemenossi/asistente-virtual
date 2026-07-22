@@ -351,13 +351,21 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
     captured = {}
 
     class FakeArcaService:
+        next_invoice_id = 900
+
         def __init__(self, session):
             pass
 
         async def emit_manual_invoice_for_contact(self, tenant, receiver, item, **kwargs):
             captured["receiver"] = receiver
             captured["line_description"] = kwargs["line_description"]
-            invoice = SimpleNamespace(id=900, cbte_nro=81, patient_id=None, fiscal_contact_id=None)
+            invoice = SimpleNamespace(
+                id=type(self).next_invoice_id,
+                cbte_nro=81,
+                patient_id=None,
+                fiscal_contact_id=None,
+            )
+            type(self).next_invoice_id += 1
             captured["invoice"] = invoice
             return SimpleNamespace(invoice=invoice)
 
@@ -418,6 +426,15 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
     assert patient_emit_response.status_code == 303
     assert captured["line_description"] == "Prestacion manual - OSDE - Afiliado 12345"
     assert captured["invoice"].patient_id == patient_id
+
+    finalized_response = client.get("/t/billing/finalized")
+    assert finalized_response.status_code == 200
+    assert "Clinica Central Actualizada" in finalized_response.text
+    assert "Ana Fiscal" in finalized_response.text
+
+    dashboard_response = client.get("/t/billing/dashboard")
+    assert dashboard_response.status_code == 200
+    assert "$ 2.000" in dashboard_response.text
 
     async def _contact_name() -> str:
         async with db_session() as session:
