@@ -2,13 +2,14 @@
 {% set title = "Nueva factura manual" %}
 {% block content %}
 <div class="mb-6">
-  <h1 class="text-2xl font-semibold">Nueva Factura C manual</h1>
+  <h1 class="text-2xl font-semibold">Nueva factura manual</h1>
   <p class="text-sm text-slate-600">Servicios en pesos argentinos. La emision usa la configuracion ARCA de produccion.</p>
 </div>
 
-<form method="post" action="/t/billing/manual/preview" class="card max-w-3xl space-y-4 p-6">
+<form method="post" action="/t/billing/manual/preview" class="card max-w-4xl space-y-5 p-8">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
 
+  <div class="grid gap-4 md:grid-cols-2">
   <label>Fuente del receptor
     <select class="select" name="receiver_type" id="receiver_type">
       <option value="patient">Paciente</option>
@@ -50,8 +51,9 @@
       {% endfor %}
     </select>
   </label>
+  </div>
 
-  <div class="grid gap-2 md:grid-cols-2">
+  <div class="grid gap-4 md:grid-cols-2">
     <label>Nombre o razon social<input class="input" id="receiver_name" name="receiver_name" required /></label>
     <label>Tipo de documento
       <select class="select" id="receiver_document_type" name="receiver_document_type" required>
@@ -70,13 +72,15 @@
   </div>
   <p class="text-xs text-slate-500">Los cambios se aplican solo a esta factura y no modifican el paciente ni el contacto fiscal guardado.</p>
 
+  <div class="grid gap-4 md:grid-cols-2">
+
   <label>Item facturable<select class="select" name="item_id" id="item_id" required>{% for item in items %}<option value="{{ item.id }}" data-item-name="{{ item.name }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
   <input type="hidden" name="selected_item_id" id="selected_item_id" value="{{ form_data.get('selected_item_id') or (items[0].id if items else '') }}" />
-  <p class="text-sm text-slate-700"><span class="font-medium">Vista previa del detalle a facturar:</span> <span id="invoice_line_preview">Selecciona un item.</span></p>
+  <p class="text-sm text-slate-700 md:col-span-2"><span class="font-medium">Vista previa del detalle a facturar:</span> <span id="invoice_line_preview">Selecciona un item.</span></p>
   <label>Importe facturado<input class="input" name="amount" id="amount" value="{{ form_data.get('amount', '') }}" inputmode="decimal" required /></label>
+  </div>
   <label>Diagnostico<textarea class="textarea" name="diagnosis" rows="3" placeholder="Diagnostico informado en la factura">{{ form_data.get('diagnosis', '') }}</textarea></label>
-  <div class="grid gap-4 md:grid-cols-2"><label>Desde<input class="input" type="date" name="service_start" value="{{ form_data.get('service_start') or today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ form_data.get('service_end') or today }}" required /></label></div>
-  <label>Condicion de venta<select class="select" name="sale_condition">{% for value in sale_conditions %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+  <div class="grid gap-4 md:grid-cols-3"><label>Desde<input class="input" type="date" name="service_start" value="{{ form_data.get('service_start') or today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ form_data.get('service_end') or today }}" required /></label><label>Condicion de venta<select class="select" name="sale_condition">{% for value in sale_conditions %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label></div>
   <label><input type="checkbox" name="send_email" checked /> Enviar por email al autorizar</label>
   <div><button class="btn btn-primary">Previsualizar</button><a class="btn btn-secondary" href="/t/billing/invoices">Cancelar</a></div>
 </form>
