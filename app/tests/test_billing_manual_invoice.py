@@ -30,10 +30,10 @@ def test_manual_invoice_preview_is_transient_and_uses_patient_fiscal_profile(cli
     preview_data = {"patient_id": patient_id, "receiver_name": "Juan Perez", "receiver_document_type": "DNI", "receiver_document_number": "12345678", "receiver_iva_condition": "consumidor_final", "receiver_email": "juan@example.com", "item_id": "custom", "selected_item_id": item_id, "amount": "1250.50", "diagnosis": "Control clinico", "service_start": "2026-07-17", "service_end": "2026-07-18", "sale_condition": "Transferencia", "send_email": "on"}
     preview = client.post("/t/billing/manual/preview", data={"csrf_token": _csrf(form.text), **preview_data})
     assert preview.status_code == 200
-    assert "FACTURA C" in preview.text
+    assert "Factura C" in preview.text
     assert "1250.50" in preview.text
     assert "Control clinico" in preview.text
-    assert "se enviara el PDF a" in preview.text
+    assert "se enviará el PDF a" in preview.text
     assert ">Facturar<" in preview.text
 
     back = client.post("/t/billing/manual/new", data={"csrf_token": _csrf(preview.text), "receiver_type": "patient", "custom_amount": "on", **preview_data, "item_id": item_id})
