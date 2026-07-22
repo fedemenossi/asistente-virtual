@@ -3570,14 +3570,43 @@ async def billing_fiscal_contacts_list(
     )
 
 
+async def _manual_invoice_form_context(
+    session: AsyncSession,
+    tenant_id: int,
+    *,
+    form_data: dict[str, object] | None = None,
+) -> dict[str, object]:
+    patients = list((await session.execute(select(Paciente).where(Paciente.tenant_id == tenant_id, Paciente.deleted_at.is_(None)).order_by(Paciente.apellido, Paciente.nombre))).scalars())
+    items = list((await session.execute(select(ArcaBillableItem).where(ArcaBillableItem.tenant_id == tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2))).scalars())
+    today = now_ba().date().isoformat()
+    contacts = list((await session.execute(select(BillingFiscalContact).where(BillingFiscalContact.tenant_id == tenant_id, BillingFiscalContact.active.is_(True)).order_by(BillingFiscalContact.name))).scalars())
+    return {"patients": patients, "contacts": contacts, "items": items, "today": today, "sale_conditions": SALE_CONDITION_OPTIONS, "iva_conditions": FISCAL_CONTACT_IVA_CONDITIONS, "form_data": form_data or {}}
+
+
 async def billing_manual_invoice_new(
     request: Request, user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
 ) -> Response:
-    patients = list((await session.execute(select(Paciente).where(Paciente.tenant_id == user.tenant_id, Paciente.deleted_at.is_(None)).order_by(Paciente.apellido, Paciente.nombre))).scalars())
-    items = list((await session.execute(select(ArcaBillableItem).where(ArcaBillableItem.tenant_id == user.tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2))).scalars())
-    today = now_ba().date().isoformat()
-    contacts = list((await session.execute(select(BillingFiscalContact).where(BillingFiscalContact.tenant_id == user.tenant_id, BillingFiscalContact.active.is_(True)).order_by(BillingFiscalContact.name))).scalars())
-    return _template(request, "tenant/billing_manual_invoice_form.html", {"patients": patients, "contacts": contacts, "items": items, "today": today, "sale_conditions": SALE_CONDITION_OPTIONS, "iva_conditions": FISCAL_CONTACT_IVA_CONDITIONS})
+    return _template(request, "tenant/billing_manual_invoice_form.html", await _manual_invoice_form_context(session, int(user.tenant_id)))
+
+
+async def billing_manual_invoice_new_post(
+    request: Request,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("billing_arca:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    validate_csrf(request, csrf_token)
+    form = await request.form()
+    fields = (
+        "receiver_type", "patient_id", "contact_id", "receiver_name", "receiver_document_type",
+        "receiver_document_number", "receiver_iva_condition", "receiver_email", "amount",
+        "diagnosis", "service_start", "service_end", "sale_condition",
+    )
+    form_data: dict[str, object] = {field: str(form.get(field) or "") for field in fields}
+    form_data["item_id"] = "custom" if form.get("custom_amount") else str(form.get("item_id") or "")
+    form_data["selected_item_id"] = str(form.get("item_id") or "")
+    form_data["send_email"] = bool(form.get("send_email"))
+    return _template(request, "tenant/billing_manual_invoice_form.html", await _manual_invoice_form_context(session, int(user.tenant_id), form_data=form_data))
 
 
 def _manual_invoice_receiver(
@@ -3654,7 +3683,8 @@ async def billing_manual_invoice_preview(
     if item is None or receiver is None or not source_exists or value <= 0 or start > end or sale_condition not in SALE_CONDITION_OPTIONS:
         add_flash(request, "error", "Revisa los datos fiscales del receptor, el item, el importe y el periodo de prestacion.")
         return RedirectResponse("/t/billing/manual/new", status_code=303)
-    return _template(request, "tenant/billing_manual_invoice_preview.html", {"receiver": receiver, "receiver_type": receiver_type, "patient_id": patient_id, "contact_id": contact_id, "item": item, "custom_amount": is_custom_amount, "line_description": _manual_invoice_line_description(item, patient), "amount": value, "diagnosis": diagnosis.strip(), "service_start": start, "service_end": end, "sale_condition": sale_condition, "send_email": bool(send_email)})
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    return _template(request, "tenant/billing_manual_invoice_preview.html", {"tenant": tenant, "receiver": receiver, "receiver_type": receiver_type, "patient_id": patient_id, "contact_id": contact_id, "item": item, "custom_amount": is_custom_amount, "line_description": _manual_invoice_line_description(item, patient), "amount": value, "diagnosis": diagnosis.strip(), "service_start": start, "service_end": end, "sale_condition": sale_condition, "send_email": bool(send_email)})
 
 
 async def billing_manual_invoice_emit(

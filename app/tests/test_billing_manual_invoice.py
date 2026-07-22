@@ -27,10 +27,19 @@ def test_manual_invoice_preview_is_transient_and_uses_patient_fiscal_profile(cli
     asyncio.run(create_user(db_session, "manual@test.com", hash_password("secret"), UserRole.TENANT_ADMIN.value, tenant_id))
     login(client, "manual@test.com", "secret")
     form = client.get("/t/billing/manual/new")
-    preview = client.post("/t/billing/manual/preview", data={"csrf_token": _csrf(form.text), "patient_id": patient_id, "receiver_name": "Juan Perez", "receiver_document_type": "DNI", "receiver_document_number": "12345678", "receiver_iva_condition": "consumidor_final", "receiver_email": "juan@example.com", "item_id": "custom", "selected_item_id": item_id, "amount": "1250.50", "service_start": "2026-07-17", "service_end": "2026-07-18", "sale_condition": "Transferencia", "send_email": "on"})
+    preview_data = {"patient_id": patient_id, "receiver_name": "Juan Perez", "receiver_document_type": "DNI", "receiver_document_number": "12345678", "receiver_iva_condition": "consumidor_final", "receiver_email": "juan@example.com", "item_id": "custom", "selected_item_id": item_id, "amount": "1250.50", "diagnosis": "Control clinico", "service_start": "2026-07-17", "service_end": "2026-07-18", "sale_condition": "Transferencia", "send_email": "on"}
+    preview = client.post("/t/billing/manual/preview", data={"csrf_token": _csrf(form.text), **preview_data})
     assert preview.status_code == 200
-    assert "Previsualizacion temporal" in preview.text
+    assert "FACTURA C" in preview.text
     assert "1250.50" in preview.text
+    assert "Control clinico" in preview.text
+    assert "se enviara el PDF a" in preview.text
+    assert ">Facturar<" in preview.text
+
+    back = client.post("/t/billing/manual/new", data={"csrf_token": _csrf(preview.text), "receiver_type": "patient", "custom_amount": "on", **preview_data, "item_id": item_id})
+    assert back.status_code == 200
+    assert "Control clinico" in back.text
+    assert 'value="1250.50"' in back.text
     # The preview must not persist a fiscal record before explicit confirmation.
     async def invoices():
         from app.models.arca_invoice import ArcaInvoice

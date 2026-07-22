@@ -225,6 +225,7 @@ router.add_api_route(
     dependencies=[Depends(require_feature("billing_arca"))],
 )
 router.add_api_route("/billing/manual/new", views.billing_manual_invoice_new, methods=["GET"], response_class=HTMLResponse, dependencies=[Depends(require_feature("billing_arca"))])
+router.add_api_route("/billing/manual/new", views.billing_manual_invoice_new_post, methods=["POST"], response_class=HTMLResponse, dependencies=[Depends(require_feature("billing_arca"))])
 router.add_api_route("/billing/manual/preview", views.billing_manual_invoice_preview, methods=["POST"], response_class=HTMLResponse, dependencies=[Depends(require_feature("billing_arca"))])
 router.add_api_route("/billing/manual/emit", views.billing_manual_invoice_emit, methods=["POST"], dependencies=[Depends(require_feature("billing_arca"))])
 router.add_api_route(

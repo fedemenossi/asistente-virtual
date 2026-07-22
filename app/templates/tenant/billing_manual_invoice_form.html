@@ -71,11 +71,11 @@
   <p class="text-xs text-slate-500">Los cambios se aplican solo a esta factura y no modifican el paciente ni el contacto fiscal guardado.</p>
 
   <label>Item facturable<select class="select" name="item_id" id="item_id" required>{% for item in items %}<option value="{{ item.id }}" data-item-name="{{ item.name }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
-  <input type="hidden" name="selected_item_id" id="selected_item_id" value="{{ items[0].id if items else '' }}" />
+  <input type="hidden" name="selected_item_id" id="selected_item_id" value="{{ form_data.get('selected_item_id') or (items[0].id if items else '') }}" />
   <p class="text-sm text-slate-700"><span class="font-medium">Vista previa del detalle a facturar:</span> <span id="invoice_line_preview">Selecciona un item.</span></p>
-  <label>Importe facturado<input class="input" name="amount" id="amount" inputmode="decimal" required /></label>
-  <label>Diagnostico<textarea class="textarea" name="diagnosis" rows="3" placeholder="Diagnostico informado en la factura"></textarea></label>
-  <div class="grid gap-4 md:grid-cols-2"><label>Desde<input class="input" type="date" name="service_start" value="{{ today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ today }}" required /></label></div>
+  <label>Importe facturado<input class="input" name="amount" id="amount" value="{{ form_data.get('amount', '') }}" inputmode="decimal" required /></label>
+  <label>Diagnostico<textarea class="textarea" name="diagnosis" rows="3" placeholder="Diagnostico informado en la factura">{{ form_data.get('diagnosis', '') }}</textarea></label>
+  <div class="grid gap-4 md:grid-cols-2"><label>Desde<input class="input" type="date" name="service_start" value="{{ form_data.get('service_start') or today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ form_data.get('service_end') or today }}" required /></label></div>
   <label>Condicion de venta<select class="select" name="sale_condition">{% for value in sale_conditions %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
   <label><input type="checkbox" name="send_email" checked /> Enviar por email al autorizar</label>
   <div><button class="btn btn-primary">Previsualizar</button><a class="btn btn-secondary" href="/t/billing/invoices">Cancelar</a></div>
@@ -93,6 +93,7 @@
     const amount = document.getElementById("amount");
     const linePreview = document.getElementById("invoice_line_preview");
     const receiverFields = ["name", "document_type", "document_number", "iva_condition", "email"];
+    const restoredForm = {{ form_data | tojson }};
     const itemAmounts = {
       {% for billable_item in items %}"{{ billable_item.id }}": "{{ billable_item.unit_price }}", {% endfor %}
     };
@@ -138,13 +139,30 @@
       updateInvoiceLinePreview();
     }
 
-    if (patient.options.length <= 1 && contact.options.length > 1) source.value = "contact";
-    if (patient.options.length <= 1 && contact.options.length <= 1) source.value = "provisional";
+    if (Object.keys(restoredForm).length) {
+      source.value = restoredForm.receiver_type || "patient";
+      patient.value = restoredForm.patient_id || "";
+      contact.value = restoredForm.contact_id || "";
+    } else {
+      if (patient.options.length <= 1 && contact.options.length > 1) source.value = "contact";
+      if (patient.options.length <= 1 && contact.options.length <= 1) source.value = "provisional";
+    }
     source.addEventListener("change", syncReceiverFields);
     patient.addEventListener("change", syncReceiverFields);
     contact.addEventListener("change", syncReceiverFields);
     item.addEventListener("change", syncItemAmount);
     syncReceiverFields();
+    if (Object.keys(restoredForm).length) {
+      receiverFields.forEach((field) => {
+        document.getElementById(`receiver_${field}`).value = restoredForm[`receiver_${field}`] || "";
+      });
+      item.value = restoredForm.item_id || item.value;
+      selectedItemId.value = restoredForm.selected_item_id || selectedItemId.value;
+      amount.value = restoredForm.amount || "";
+      document.querySelector('[name="diagnosis"]').value = restoredForm.diagnosis || "";
+      document.querySelector('[name="sale_condition"]').value = restoredForm.sale_condition || "Contado";
+      document.querySelector('[name="send_email"]').checked = !!restoredForm.send_email;
+    }
     syncItemAmount();
   })();
 </script>
