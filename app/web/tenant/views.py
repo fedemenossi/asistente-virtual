@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 from fastapi import Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, or_, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -3743,6 +3744,7 @@ async def billing_manual_invoice_emit(
     request: Request, patient_id: int = Form(0), contact_id: int = Form(0), receiver_type: str = Form("patient"), receiver_name: str = Form(""), receiver_document_type: str = Form("DNI"), receiver_document_number: str = Form(""), receiver_iva_condition: str = Form(""), receiver_email: str = Form(""), item_id: int = Form(...), custom_amount: str | None = Form(None), amount: str = Form(""), diagnosis: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
+    invoice_id: int | None = None
     patient = await get_tenant_entity_or_404(session, Paciente, patient_id, user.tenant_id) if receiver_type == "patient" else None
     contact = await session.scalar(select(BillingFiscalContact).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id, BillingFiscalContact.active.is_(True))) if receiver_type == "contact" else None
     item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == item_id, ArcaBillableItem.tenant_id == user.tenant_id))
@@ -3754,6 +3756,7 @@ async def billing_manual_invoice_emit(
         line_description = _manual_invoice_line_description(item, patient)
         value = Decimal(str(amount if custom_amount else item.unit_price)).quantize(Decimal("0.01"))
         result = await ArcaService(session).emit_manual_invoice_for_contact(tenant, receiver, item, amount=value, service_start=date.fromisoformat(service_start), service_end=date.fromisoformat(service_end), sale_condition=sale_condition, send_email=bool(send_email), line_description=line_description, diagnosis=diagnosis.strip())
+        invoice_id = result.invoice.id
         if patient is not None:
             result.invoice.patient_id = patient.id
         elif contact is not None:
@@ -3788,8 +3791,27 @@ async def billing_manual_invoice_emit(
             tenant_id=int(user.tenant_id),
             metadata={"patient_id": patient.id if patient else None, "fiscal_contact_id": result.invoice.fiscal_contact_id},
         )
+        # Commit before returning the redirect.  Otherwise FastAPI commits in
+        # the dependency teardown, after the browser has already received a
+        # success redirect to an invoice that may be rolled back.
+        await session.commit()
         add_flash(request, "success", f"Factura manual #{result.invoice.cbte_nro} autorizada.")
         return RedirectResponse(f"/t/billing/invoices/{result.invoice.id}", status_code=303)
+    except SQLAlchemyError as exc:
+        logger.exception(
+            "manual_invoice_persistence_failed tenant_id=%s invoice_id=%s database_error=%s",
+            user.tenant_id,
+            invoice_id,
+            str(getattr(exc, "orig", None) or exc)[:800],
+        )
+        if session.in_transaction():
+            await session.rollback()
+        add_flash(
+            request,
+            "error",
+            "No se pudo guardar la factura emitida. No vuelvas a facturar hasta verificar el comprobante en ARCA.",
+        )
+        return RedirectResponse("/t/billing/manual/new", status_code=303)
     except (ArcaConfigurationError, ArcaConnectivityError, ArcaEmissionError, InvalidOperation, ValueError) as exc:
         message = safe_operational_error(
             exc,

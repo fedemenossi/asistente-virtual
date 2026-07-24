@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.security import hash_password
 from app.integrations.arca.wsaa_client import AccessTicket
@@ -426,6 +427,33 @@ def test_manual_invoice_is_a_sidebar_entry_and_autofills_existing_receivers(clie
     assert patient_emit_response.status_code == 303
     assert captured["line_description"] == "Prestacion manual - OSDE - Afiliado 12345"
     assert captured["invoice"].patient_id == patient_id
+
+    async def _failing_commit(self):
+        raise SQLAlchemyError("simulated manual invoice commit failure")
+
+    with monkeypatch.context() as commit_patch:
+        commit_patch.setattr("app.web.tenant.views.AsyncSession.commit", _failing_commit)
+        commit_failure_response = client.post(
+            "/t/billing/manual/emit",
+            data={
+                "csrf_token": _csrf(patient_preview_response.text),
+                "receiver_type": "patient",
+                "patient_id": str(patient_id),
+                "receiver_name": "Ana Fiscal",
+                "receiver_document_type": "CUIT",
+                "receiver_document_number": "27301112229",
+                "receiver_iva_condition": "monotributista",
+                "receiver_email": "ana.fiscal@example.com",
+                "item_id": str(item_id),
+                "amount": "1000.00",
+                "service_start": "2026-07-18",
+                "service_end": "2026-07-18",
+                "sale_condition": "Contado",
+            },
+            follow_redirects=False,
+        )
+    assert commit_failure_response.status_code == 303
+    assert commit_failure_response.headers["location"] == "/t/billing/manual/new"
 
     finalized_response = client.get("/t/billing/finalized")
     assert finalized_response.status_code == 200

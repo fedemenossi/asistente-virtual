@@ -60,14 +60,30 @@ engine = create_async_engine(database_url, **_engine_options(database_url))
 AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
 
 
+def _database_error_detail(exc: Exception) -> str:
+    """Return a compact driver error suitable for operational logs.
+
+    SQLAlchemy's complete exception can include a statement and bound values.
+    The underlying driver error normally contains the database code and the
+    failing constraint or column, which is what is useful in production logs.
+    """
+    original = getattr(exc, "orig", None) or exc
+    detail = " ".join(str(original).split())
+    return detail[:800] or type(original).__name__
+
+
 async def get_async_session() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         try:
             yield session
             if session.in_transaction():
                 await session.commit()
-        except Exception:
-            logger.exception("db_session_error_rolling_back")
+        except Exception as exc:
+            logger.exception(
+                "db_session_error_rolling_back error_type=%s database_error=%s",
+                type(exc).__name__,
+                _database_error_detail(exc),
+            )
             if session.in_transaction():
                 await session.rollback()
             raise
