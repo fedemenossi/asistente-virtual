@@ -79,7 +79,7 @@
   <p class="text-sm text-slate-700 md:col-span-2"><span class="font-medium">Vista previa del detalle a facturar:</span> <span id="invoice_line_preview">Selecciona un item.</span></p>
   <label>Importe facturado<input class="input" name="amount" id="amount" value="{{ form_data.get('amount', '') }}" inputmode="decimal" required readonly /></label>
   </div>
-  <label>Diagnostico<textarea class="textarea" name="diagnosis" rows="3" placeholder="Diagnostico informado en la factura">{{ form_data.get('diagnosis', '') }}</textarea></label>
+  <textarea class="textarea" name="diagnosis" rows="3" placeholder="Texto libre para esta factura">{{ form_data.get('diagnosis', '') }}</textarea>
   <div class="grid gap-4 md:grid-cols-3"><label>Desde<input class="input" type="date" name="service_start" value="{{ form_data.get('service_start') or today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ form_data.get('service_end') or today }}" required /></label><label>Condicion de venta<select class="select" name="sale_condition">{% for value in sale_conditions %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label></div>
   <label><input type="checkbox" name="send_email" checked /> Enviar por email al autorizar</label>
   <div><button class="btn btn-primary">Previsualizar</button><a class="btn btn-secondary" href="/t/billing/invoices">Cancelar</a></div>

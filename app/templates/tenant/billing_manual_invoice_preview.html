@@ -57,10 +57,11 @@
             <p class="text-xs text-slate-500">PES</p>
           </div>
         </div>
-        <div class="bg-slate-50 px-5 py-4">
-          <p class="text-xs font-bold uppercase tracking-wide text-slate-400">Diagnóstico</p>
-          <p class="mt-2 whitespace-pre-wrap text-sm text-slate-700">{{ diagnosis or 'No informado' }}</p>
-        </div>
+        {% if diagnosis %}
+          <div class="bg-slate-50 px-5 py-4">
+            <p class="whitespace-pre-wrap text-sm text-slate-700">{{ diagnosis }}</p>
+          </div>
+        {% endif %}
       </div>
       <div class="mt-5 flex items-center justify-between border-t border-slate-200 pt-5">
         <p class="text-sm font-semibold text-slate-500">Total a facturar</p>

@@ -29,6 +29,8 @@ def test_manual_invoice_preview_is_transient_and_uses_patient_fiscal_profile(cli
     form = client.get("/t/billing/manual/new")
     assert "Nuevo contacto: completa los datos fiscales debajo." in form.text
     assert 'id="contact_id" disabled required' not in form.text
+    assert "<label>Diagnostico" not in form.text
+    assert 'placeholder="Texto libre para esta factura"' in form.text
     preview_data = {"patient_id": patient_id, "receiver_name": "Juan Perez", "receiver_document_type": "DNI", "receiver_document_number": "12345678", "receiver_iva_condition": "consumidor_final", "receiver_email": "juan@example.com", "item_id": item_id, "custom_amount": "on", "amount": "1250.50", "diagnosis": "Control clinico", "service_start": "2026-07-17", "service_end": "2026-07-18", "sale_condition": "Transferencia", "send_email": "on"}
     first_contact_preview = client.post(
         "/t/billing/manual/preview",
@@ -47,6 +49,7 @@ def test_manual_invoice_preview_is_transient_and_uses_patient_fiscal_profile(cli
     assert "Factura C" in preview.text
     assert "1250.50" in preview.text
     assert "Control clinico" in preview.text
+    assert ">Diagnóstico<" not in preview.text
     assert "se enviará el PDF a" in preview.text
     assert ">Facturar<" in preview.text
 
