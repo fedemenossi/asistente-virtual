@@ -37,8 +37,8 @@
   </label>
 
   <label id="contact_selector" hidden>Contacto fiscal
-    <select class="select" name="contact_id" id="contact_id" disabled required>
-      <option value="">Seleccionar</option>
+    <select class="select" name="contact_id" id="contact_id" disabled>
+      <option value="">Nuevo contacto: completar datos debajo.</option>
       {% for contact in contacts %}
         <option value="{{ contact.id }}"
           data-receiver-name="{{ contact.name }}"
@@ -70,7 +70,7 @@
     </label>
     <label class="md:col-span-2">Email<input class="input" id="receiver_email" name="receiver_email" type="email" /></label>
   </div>
-  <p class="text-xs text-slate-500">Los cambios se aplican solo a esta factura y no modifican el paciente ni el contacto fiscal guardado.</p>
+  <p class="text-xs text-slate-500">Los cambios se aplican solo a esta factura y no modifican el paciente ni el contacto fiscal guardado. Si elegís Contacto fiscal sin seleccionar uno existente, se dará de alta al autorizar.</p>
 
   <div class="grid gap-4 md:grid-cols-2">
 
@@ -115,6 +115,7 @@
       contactSelector.hidden = !isContact;
       patient.disabled = !isPatient;
       contact.disabled = !isContact;
+      contact.required = false;
       receiverFields.forEach((field) => {
         const datasetKey = `receiver${field.split("_").map((part) => part[0].toUpperCase() + part.slice(1)).join("")}`;
         document.getElementById(`receiver_${field}`).value = selected?.dataset[datasetKey] || "";

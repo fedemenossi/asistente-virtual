@@ -3718,12 +3718,12 @@ async def billing_manual_invoice_preview(
     request: Request, patient_id: int = Form(0), contact_id: int = Form(0), receiver_type: str = Form("patient"), receiver_name: str = Form(""), receiver_document_type: str = Form("DNI"), receiver_document_number: str = Form(""), receiver_iva_condition: str = Form(""), receiver_email: str = Form(""), item_id: str = Form(""), selected_item_id: int = Form(0), amount: str = Form(""), diagnosis: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     validate_csrf(request, csrf_token)
-    source_exists = receiver_type == "provisional"
+    source_exists = receiver_type in {"provisional", "contact"}
     patient = None
     if receiver_type == "patient":
         patient = await get_tenant_entity_or_404(session, Paciente, patient_id, user.tenant_id)
         source_exists = True
-    elif receiver_type == "contact":
+    elif receiver_type == "contact" and contact_id:
         source_exists = await session.scalar(select(BillingFiscalContact.id).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id, BillingFiscalContact.active.is_(True))) is not None
     receiver = _manual_invoice_receiver(int(user.tenant_id), name=receiver_name, document_type=receiver_document_type, document_number=receiver_document_number, iva_condition=receiver_iva_condition, email=receiver_email)
     resolved_item_id, is_custom_amount = _manual_invoice_item_id(item_id, selected_item_id)
@@ -3746,12 +3746,12 @@ async def billing_manual_invoice_emit(
     validate_csrf(request, csrf_token)
     invoice_id: int | None = None
     patient = await get_tenant_entity_or_404(session, Paciente, patient_id, user.tenant_id) if receiver_type == "patient" else None
-    contact = await session.scalar(select(BillingFiscalContact).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id, BillingFiscalContact.active.is_(True))) if receiver_type == "contact" else None
+    contact = await session.scalar(select(BillingFiscalContact).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id, BillingFiscalContact.active.is_(True))) if receiver_type == "contact" and contact_id else None
     item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == item_id, ArcaBillableItem.tenant_id == user.tenant_id))
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
     try:
         receiver = _manual_invoice_receiver(int(user.tenant_id), name=receiver_name, document_type=receiver_document_type, document_number=receiver_document_number, iva_condition=receiver_iva_condition, email=receiver_email)
-        if item is None or receiver is None or receiver_type not in {"patient", "contact", "provisional"} or (receiver_type == "contact" and contact is None):
+        if item is None or receiver is None or receiver_type not in {"patient", "contact", "provisional"} or (receiver_type == "contact" and contact_id and contact is None):
             raise ArcaEmissionError("Datos fiscales o item facturable invalidos.")
         line_description = _manual_invoice_line_description(item, patient)
         value = Decimal(str(amount if custom_amount else item.unit_price)).quantize(Decimal("0.01"))

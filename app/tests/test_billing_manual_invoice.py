@@ -27,7 +27,21 @@ def test_manual_invoice_preview_is_transient_and_uses_patient_fiscal_profile(cli
     asyncio.run(create_user(db_session, "manual@test.com", hash_password("secret"), UserRole.TENANT_ADMIN.value, tenant_id))
     login(client, "manual@test.com", "secret")
     form = client.get("/t/billing/manual/new")
+    assert "Nuevo contacto: completa los datos fiscales debajo." in form.text
+    assert 'id="contact_id" disabled required' not in form.text
     preview_data = {"patient_id": patient_id, "receiver_name": "Juan Perez", "receiver_document_type": "DNI", "receiver_document_number": "12345678", "receiver_iva_condition": "consumidor_final", "receiver_email": "juan@example.com", "item_id": "custom", "selected_item_id": item_id, "amount": "1250.50", "diagnosis": "Control clinico", "service_start": "2026-07-17", "service_end": "2026-07-18", "sale_condition": "Transferencia", "send_email": "on"}
+    first_contact_preview = client.post(
+        "/t/billing/manual/preview",
+        data={
+            "csrf_token": _csrf(form.text),
+            **preview_data,
+            "receiver_type": "contact",
+            "contact_id": "",
+        },
+    )
+    assert first_contact_preview.status_code == 200
+    assert "Factura C" in first_contact_preview.text
+
     preview = client.post("/t/billing/manual/preview", data={"csrf_token": _csrf(form.text), **preview_data})
     assert preview.status_code == 200
     assert "Factura C" in preview.text
