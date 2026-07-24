@@ -62,7 +62,7 @@ class BillingInvoiceDocumentService:
         if consultation is None:
             consultation = await self.get_consultation(invoice)
         if invoice.origin == "manual":
-            include_diagnosis = False
+            include_diagnosis = True
         elif include_diagnosis is None:
             include_diagnosis = await self.include_diagnosis_in_pdf(invoice.tenant_id)
         diagnosis = extract_invoice_diagnosis(invoice, consultation) if include_diagnosis else ""
@@ -99,12 +99,22 @@ class BillingInvoiceDocumentService:
         if consultation is None:
             consultation = await self.get_consultation(invoice)
         patient_email = invoice.email_to if invoice.origin == "manual" else extract_patient_email(consultation)
-        include_diagnosis = False if invoice.origin == "manual" else await self.include_diagnosis_in_pdf(invoice.tenant_id)
+        include_diagnosis = True if invoice.origin == "manual" else await self.include_diagnosis_in_pdf(invoice.tenant_id)
         diagnosis = extract_invoice_diagnosis(invoice, consultation) if include_diagnosis else ""
+        manual_text_needs_regeneration = (
+            invoice.origin == "manual"
+            and bool(diagnosis)
+            and (
+                diagnosis not in (invoice.document_html or "")
+                or "<th>Diagnostico</th>" in (invoice.document_html or "")
+                or "Diagnostico informado en factura" in (invoice.document_html or "")
+            )
+        )
         if (
             not force
             and invoice.document_html
             and invoice.document_pdf
+            and not manual_text_needs_regeneration
             and not invoice_document_needs_regeneration(invoice, fiscal=tenant.arca_settings or {})
         ):
             return BillingInvoiceDocument(
@@ -301,6 +311,31 @@ def build_invoice_html(
     copy_label = "ORIGINAL"
     environment = str(invoice.environment or "").lower()
     title = f"Factura ARCA {invoice.pto_vta}-{invoice.cbte_tipo}-{invoice.cbte_nro}"
+    if invoice.origin == "manual":
+        table = f"""
+  <table>
+    <thead><tr><th>Descripcion</th><th>Importe</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>{html.escape(str(description))}</td>
+        <td>{html.escape(_money(invoice.imp_total))} {html.escape(invoice.mon_id)}</td>
+      </tr>
+    </tbody>
+  </table>
+  {f'<div class="box"><p class="free-text">{html.escape(diagnosis)}</p></div>' if diagnosis else ''}"""
+    else:
+        table = f"""
+  <table>
+    <thead><tr><th>Descripcion</th><th>Diagnostico</th><th>Importe</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>{html.escape(str(description))}</td>
+        <td class="diagnosis">{html.escape(diagnosis or 'No informado')}</td>
+        <td>{html.escape(_money(invoice.imp_total))} {html.escape(invoice.mon_id)}</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="box"><p class="label">Diagnostico informado en factura</p><p class="diagnosis">{html.escape(diagnosis or 'No informado')}</p></div>"""
     return f"""<!doctype html>
 <html lang="es">
 <head>
@@ -316,7 +351,7 @@ def build_invoice_html(
     table {{ border-collapse: collapse; width: 100%; margin-top: 18px; }}
     th, td {{ border: 1px solid #cbd5e1; padding: 10px; text-align: left; }}
     th {{ background: #f8fafc; }}
-    .diagnosis {{ white-space: pre-wrap; font-weight: 700; }}
+    .diagnosis, .free-text {{ white-space: pre-wrap; font-weight: 700; }}
   </style>
 </head>
 <body>
@@ -344,17 +379,7 @@ def build_invoice_html(
     <p>Documento: {html.escape(str(patient_document or "-"))}</p>
     <p>Condicion de venta: {html.escape(sale_condition)}</p>
   </div>
-  <table>
-    <thead><tr><th>Descripcion</th><th>Diagnostico</th><th>Importe</th></tr></thead>
-    <tbody>
-      <tr>
-        <td>{html.escape(str(description))}</td>
-        <td class="diagnosis">{html.escape(diagnosis or 'No informado')}</td>
-        <td>{html.escape(_money(invoice.imp_total))} {html.escape(invoice.mon_id)}</td>
-      </tr>
-    </tbody>
-  </table>
-  <div class="box"><p class="label">Diagnostico informado en factura</p><p class="diagnosis">{html.escape(diagnosis or 'No informado')}</p></div>
+  {table}
   <div class="box">
     <p class="label">QR ARCA</p>
     <p style="word-break: break-all;">{html.escape(qr_url)}</p>
@@ -375,7 +400,14 @@ def build_invoice_email_text(tenant: Tenant, invoice: ArcaInvoice, document: Bil
     context = _email_context(tenant, invoice, diagnosis=document.diagnosis)
     if template:
         return _render_template(template, context)
-    diagnosis_line = f"Diagnostico: {document.diagnosis}\n" if document.diagnosis else ""
+    if document.diagnosis:
+        diagnosis_line = (
+            f"{document.diagnosis}\n"
+            if invoice.origin == "manual"
+            else f"Diagnostico: {document.diagnosis}\n"
+        )
+    else:
+        diagnosis_line = ""
     return (
         f"Hola,\n\n"
         f"Adjuntamos la factura electronica {context['numero']} por {context['importe']} {context['moneda']}.\n\n"
@@ -390,12 +422,20 @@ def build_invoice_email_html(tenant: Tenant, invoice: ArcaInvoice, document: Bil
     context = _email_context(tenant, invoice, diagnosis=document.diagnosis)
     diagnosis_block = ""
     if document.diagnosis:
-        diagnosis_block = f"""
+        diagnosis_block = (
+            f"""
+          <tr>
+            <td colspan="2" style="padding:10px 0;color:#0f172a;white-space:pre-wrap;">{html.escape(document.diagnosis)}</td>
+          </tr>
+        """
+            if invoice.origin == "manual"
+            else f"""
           <tr>
             <td style="padding:10px 0;color:#64748b;">Diagnostico</td>
             <td style="padding:10px 0;text-align:right;font-weight:600;color:#0f172a;">{html.escape(document.diagnosis)}</td>
           </tr>
         """
+        )
     body_text = str((tenant.arca_settings or {}).get("email_body_template") or "").strip()
     intro = _render_template(body_text, context) if body_text else "Adjuntamos la factura electronica correspondiente."
     return f"""<!doctype html>
@@ -653,10 +693,14 @@ def _draw_invoice_page(
     pdf.drawCentredString((xs[0] + xs[1]) / 2, item_y, "")
     _draw_wrapped(pdf, description, xs[1] + 5, item_y, col_widths[1] - 10, 10, max_lines=2)
     if diagnosis:
-        pdf.setFont("Helvetica-Bold", 7.5)
-        pdf.drawString(xs[1] + 5, item_y - 28, "Diagnostico:")
-        pdf.setFont("Helvetica", 7.5)
-        _draw_wrapped(pdf, diagnosis, xs[1] + 55, item_y - 28, col_widths[1] - 61, 9, max_lines=2)
+        if invoice.origin == "manual":
+            pdf.setFont("Helvetica", 7.5)
+            _draw_wrapped(pdf, diagnosis, xs[1] + 5, item_y - 28, col_widths[1] - 10, 9, max_lines=2)
+        else:
+            pdf.setFont("Helvetica-Bold", 7.5)
+            pdf.drawString(xs[1] + 5, item_y - 28, "Diagnostico:")
+            pdf.setFont("Helvetica", 7.5)
+            _draw_wrapped(pdf, diagnosis, xs[1] + 55, item_y - 28, col_widths[1] - 61, 9, max_lines=2)
     pdf.setFont("Helvetica", 8.2)
     pdf.drawRightString(xs[3] - 4, item_y, "1,00")
     pdf.drawCentredString((xs[3] + xs[4]) / 2, item_y, "unidades")

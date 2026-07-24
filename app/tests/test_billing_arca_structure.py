@@ -3413,6 +3413,7 @@ def test_manual_invoice_document_uses_receiver_snapshot_without_consultation(db_
                     status=ArcaInvoiceStatus.AUTHORIZED,
                     cae="86294387160045",
                     cae_fch_vto=datetime(2026, 7, 28).date(),
+                    diagnosis_final_snapshot="Texto libre para reintegro",
                     request_json={"metadata": {"description": "Consulta medica"}},
                 )
                 session.add(invoice)
@@ -3426,7 +3427,10 @@ def test_manual_invoice_document_uses_receiver_snapshot_without_consultation(db_
 
     document = asyncio.run(_build())
     assert "Paciente para reintegro" in document.html
+    assert "Texto libre para reintegro" in document.html
+    assert "Diagnostico" not in document.html
     assert b"Paciente para reintegro" in document.pdf
+    assert b"Texto libre para reintegro" in document.pdf
 
 
 def test_billing_invoice_email_sends_pdf_and_logs(db_session):

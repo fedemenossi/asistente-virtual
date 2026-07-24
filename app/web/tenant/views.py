@@ -3309,14 +3309,24 @@ async def _regenerate_invoice_pdf_if_needed(
     user_id: int | None,
     pdf_path: Path | None,
 ) -> None:
-    if not invoice_document_needs_regeneration(invoice, pdf_path, fiscal=tenant.arca_settings or {}):
-        return
     consultation = await session.scalar(
         select(BillingExternalConsultation).where(
             BillingExternalConsultation.tenant_id == tenant.id,
             BillingExternalConsultation.arca_invoice_id == invoice.id,
         )
     )
+    manual_text = extract_invoice_diagnosis(invoice, consultation) if invoice.origin == "manual" else ""
+    manual_text_needs_regeneration = bool(manual_text) and (
+        manual_text not in (invoice.document_html or "")
+        or "<th>Diagnostico</th>" in (invoice.document_html or "")
+        or "Diagnostico informado en factura" in (invoice.document_html or "")
+    )
+    if not manual_text_needs_regeneration and not invoice_document_needs_regeneration(
+        invoice,
+        pdf_path,
+        fiscal=tenant.arca_settings or {},
+    ):
+        return
     await BillingInvoiceDocumentService(session).generate_and_store_document(
         tenant,
         invoice,
