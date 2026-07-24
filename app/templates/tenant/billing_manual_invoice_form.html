@@ -74,10 +74,10 @@
 
   <div class="grid gap-4 md:grid-cols-2">
 
-  <label>Item facturable<select class="select" name="item_id" id="item_id" required>{% for item in items %}<option value="{{ item.id }}" data-item-name="{{ item.name }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
-  <input type="hidden" name="selected_item_id" id="selected_item_id" value="{{ form_data.get('selected_item_id') or (items[0].id if items else '') }}" />
+  <label>Item facturable<select class="select" name="item_id" id="item_id" required><option value="">Seleccionar item facturable</option>{% for item in items %}<option value="{{ item.id }}" data-item-name="{{ item.name }}">{{ item.name }} — $ {{ item.unit_price }}</option>{% endfor %}</select></label>
+  <label class="flex items-center gap-2 pt-6"><input type="checkbox" name="custom_amount" id="custom_amount" /> Usar importe personalizado</label>
   <p class="text-sm text-slate-700 md:col-span-2"><span class="font-medium">Vista previa del detalle a facturar:</span> <span id="invoice_line_preview">Selecciona un item.</span></p>
-  <label>Importe facturado<input class="input" name="amount" id="amount" value="{{ form_data.get('amount', '') }}" inputmode="decimal" required /></label>
+  <label>Importe facturado<input class="input" name="amount" id="amount" value="{{ form_data.get('amount', '') }}" inputmode="decimal" required readonly /></label>
   </div>
   <label>Diagnostico<textarea class="textarea" name="diagnosis" rows="3" placeholder="Diagnostico informado en la factura">{{ form_data.get('diagnosis', '') }}</textarea></label>
   <div class="grid gap-4 md:grid-cols-3"><label>Desde<input class="input" type="date" name="service_start" value="{{ form_data.get('service_start') or today }}" required /></label><label>Hasta<input class="input" type="date" name="service_end" value="{{ form_data.get('service_end') or today }}" required /></label><label>Condicion de venta<select class="select" name="sale_condition">{% for value in sale_conditions %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label></div>
@@ -93,7 +93,7 @@
     const patient = document.getElementById("patient_id");
     const contact = document.getElementById("contact_id");
     const item = document.getElementById("item_id");
-    const selectedItemId = document.getElementById("selected_item_id");
+    const customAmount = document.getElementById("custom_amount");
     const amount = document.getElementById("amount");
     const linePreview = document.getElementById("invoice_line_preview");
     const receiverFields = ["name", "document_type", "document_number", "iva_condition", "email"];
@@ -101,11 +101,6 @@
     const itemAmounts = {
       {% for billable_item in items %}"{{ billable_item.id }}": "{{ billable_item.unit_price }}", {% endfor %}
     };
-    const customItemOption = document.createElement("option");
-    customItemOption.value = "custom";
-    customItemOption.textContent = "Importe personalizado";
-    item.append(customItemOption);
-
     function syncReceiverFields() {
       const isPatient = source.value === "patient";
       const isContact = source.value === "contact";
@@ -124,9 +119,7 @@
     }
 
     function updateInvoiceLinePreview() {
-      const selectedItem = item.value === "custom"
-        ? [...item.options].find((option) => option.value === selectedItemId.value)
-        : item.options[item.selectedIndex];
+      const selectedItem = item.options[item.selectedIndex];
       const selectedPatient = source.value === "patient" ? patient.options[patient.selectedIndex] : null;
       const parts = [selectedItem?.dataset.itemName || ""];
       if (selectedPatient?.dataset.insuranceName) parts.push(selectedPatient.dataset.insuranceName);
@@ -135,14 +128,16 @@
     }
 
     function syncItemAmount(clearCustomAmount = false) {
-      const isCustomAmount = item.value === "custom";
-      if (!isCustomAmount) {
-        selectedItemId.value = item.value;
-        amount.value = itemAmounts[item.value] || "";
-      } else if (clearCustomAmount) {
+      if (!item.value) {
         amount.value = "";
+        amount.readOnly = true;
+      } else if (customAmount.checked) {
+        if (clearCustomAmount) amount.value = "";
+        amount.readOnly = false;
+      } else {
+        amount.value = itemAmounts[item.value] || "";
+        amount.readOnly = true;
       }
-      amount.readOnly = !isCustomAmount;
       updateInvoiceLinePreview();
     }
 
@@ -157,14 +152,15 @@
     source.addEventListener("change", syncReceiverFields);
     patient.addEventListener("change", syncReceiverFields);
     contact.addEventListener("change", syncReceiverFields);
-    item.addEventListener("change", () => syncItemAmount(true));
+    item.addEventListener("change", () => syncItemAmount());
+    customAmount.addEventListener("change", () => syncItemAmount(customAmount.checked));
     syncReceiverFields();
     if (Object.keys(restoredForm).length) {
       receiverFields.forEach((field) => {
         document.getElementById(`receiver_${field}`).value = restoredForm[`receiver_${field}`] || "";
       });
       item.value = restoredForm.item_id || item.value;
-      selectedItemId.value = restoredForm.selected_item_id || selectedItemId.value;
+      customAmount.checked = !!restoredForm.custom_amount;
       amount.value = restoredForm.amount || "";
       document.querySelector('[name="diagnosis"]').value = restoredForm.diagnosis || "";
       document.querySelector('[name="sale_condition"]').value = restoredForm.sale_condition || "Contado";

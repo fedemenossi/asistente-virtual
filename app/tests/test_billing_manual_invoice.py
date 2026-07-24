@@ -29,7 +29,7 @@ def test_manual_invoice_preview_is_transient_and_uses_patient_fiscal_profile(cli
     form = client.get("/t/billing/manual/new")
     assert "Nuevo contacto: completa los datos fiscales debajo." in form.text
     assert 'id="contact_id" disabled required' not in form.text
-    preview_data = {"patient_id": patient_id, "receiver_name": "Juan Perez", "receiver_document_type": "DNI", "receiver_document_number": "12345678", "receiver_iva_condition": "consumidor_final", "receiver_email": "juan@example.com", "item_id": "custom", "selected_item_id": item_id, "amount": "1250.50", "diagnosis": "Control clinico", "service_start": "2026-07-17", "service_end": "2026-07-18", "sale_condition": "Transferencia", "send_email": "on"}
+    preview_data = {"patient_id": patient_id, "receiver_name": "Juan Perez", "receiver_document_type": "DNI", "receiver_document_number": "12345678", "receiver_iva_condition": "consumidor_final", "receiver_email": "juan@example.com", "item_id": item_id, "custom_amount": "on", "amount": "1250.50", "diagnosis": "Control clinico", "service_start": "2026-07-17", "service_end": "2026-07-18", "sale_condition": "Transferencia", "send_email": "on"}
     first_contact_preview = client.post(
         "/t/billing/manual/preview",
         data={
@@ -50,7 +50,7 @@ def test_manual_invoice_preview_is_transient_and_uses_patient_fiscal_profile(cli
     assert "se enviará el PDF a" in preview.text
     assert ">Facturar<" in preview.text
 
-    back = client.post("/t/billing/manual/new", data={"csrf_token": _csrf(preview.text), "receiver_type": "patient", "custom_amount": "on", **preview_data, "item_id": item_id})
+    back = client.post("/t/billing/manual/new", data={"csrf_token": _csrf(preview.text), "receiver_type": "patient", **preview_data})
     assert back.status_code == 200
     assert "Control clinico" in back.text
     assert 'value="1250.50"' in back.text
@@ -81,7 +81,7 @@ def test_manual_invoice_preview_uses_selected_catalog_value_and_keeps_diagnosis(
     login(client, "manual-catalog@test.com", "secret")
 
     form = client.get("/t/billing/manual/new")
-    assert "Importe personalizado" in form.text
+    assert "Usar importe personalizado" in form.text
     assert 'name="diagnosis"' in form.text
     preview = client.post(
         "/t/billing/manual/preview",
@@ -105,3 +105,48 @@ def test_manual_invoice_preview_uses_selected_catalog_value_and_keeps_diagnosis(
     assert preview.status_code == 200
     assert "1000.00" in preview.text
     assert "Control postoperatorio" in preview.text
+
+    custom_preview = client.post(
+        "/t/billing/manual/preview",
+        data={
+            "csrf_token": _csrf(form.text),
+            "patient_id": patient_id,
+            "receiver_name": "Juan Perez",
+            "receiver_document_type": "DNI",
+            "receiver_document_number": "12345678",
+            "receiver_iva_condition": "consumidor_final",
+            "receiver_email": "juan@example.com",
+            "item_id": procedure_id,
+            "custom_amount": "on",
+            "amount": "9999.99",
+            "service_start": "2026-07-17",
+            "service_end": "2026-07-18",
+            "sale_condition": "Transferencia",
+        },
+    )
+    assert custom_preview.status_code == 200
+    assert "Procedimiento" in custom_preview.text
+    assert "Consulta" not in custom_preview.text
+    assert "9999.99" in custom_preview.text
+
+    missing_item_preview = client.post(
+        "/t/billing/manual/preview",
+        data={
+            "csrf_token": _csrf(form.text),
+            "patient_id": patient_id,
+            "receiver_name": "Juan Perez",
+            "receiver_document_type": "DNI",
+            "receiver_document_number": "12345678",
+            "receiver_iva_condition": "consumidor_final",
+            "receiver_email": "juan@example.com",
+            "item_id": "",
+            "custom_amount": "on",
+            "amount": "9999.99",
+            "service_start": "2026-07-17",
+            "service_end": "2026-07-18",
+            "sale_condition": "Transferencia",
+        },
+        follow_redirects=False,
+    )
+    assert missing_item_preview.status_code == 303
+    assert missing_item_preview.headers["location"] == "/t/billing/manual/new"

@@ -3604,8 +3604,8 @@ async def billing_manual_invoice_new_post(
         "diagnosis", "service_start", "service_end", "sale_condition",
     )
     form_data: dict[str, object] = {field: str(form.get(field) or "") for field in fields}
-    form_data["item_id"] = "custom" if form.get("custom_amount") else str(form.get("item_id") or "")
-    form_data["selected_item_id"] = str(form.get("item_id") or "")
+    form_data["item_id"] = str(form.get("item_id") or "")
+    form_data["custom_amount"] = bool(form.get("custom_amount"))
     form_data["send_email"] = bool(form.get("send_email"))
     return _template(request, "tenant/billing_manual_invoice_form.html", await _manual_invoice_form_context(session, int(user.tenant_id), form_data=form_data))
 
@@ -3715,7 +3715,7 @@ async def _register_manual_invoice_as_billed_consultation(
 
 
 async def billing_manual_invoice_preview(
-    request: Request, patient_id: int = Form(0), contact_id: int = Form(0), receiver_type: str = Form("patient"), receiver_name: str = Form(""), receiver_document_type: str = Form("DNI"), receiver_document_number: str = Form(""), receiver_iva_condition: str = Form(""), receiver_email: str = Form(""), item_id: str = Form(""), selected_item_id: int = Form(0), amount: str = Form(""), diagnosis: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
+    request: Request, patient_id: int = Form(0), contact_id: int = Form(0), receiver_type: str = Form("patient"), receiver_name: str = Form(""), receiver_document_type: str = Form("DNI"), receiver_document_number: str = Form(""), receiver_iva_condition: str = Form(""), receiver_email: str = Form(""), item_id: str = Form(""), selected_item_id: int = Form(0), custom_amount: str | None = Form(None), amount: str = Form(""), diagnosis: str = Form(""), service_start: str = Form(""), service_end: str = Form(""), sale_condition: str = Form("Contado"), send_email: str | None = Form(None), csrf_token: str = Form(""), user: CurrentUser = Depends(require_permission("billing_arca:write")), session: AsyncSession = Depends(get_async_session),
 ) -> Response:
     validate_csrf(request, csrf_token)
     source_exists = receiver_type in {"provisional", "contact"}
@@ -3726,7 +3726,8 @@ async def billing_manual_invoice_preview(
     elif receiver_type == "contact" and contact_id:
         source_exists = await session.scalar(select(BillingFiscalContact.id).where(BillingFiscalContact.id == contact_id, BillingFiscalContact.tenant_id == user.tenant_id, BillingFiscalContact.active.is_(True))) is not None
     receiver = _manual_invoice_receiver(int(user.tenant_id), name=receiver_name, document_type=receiver_document_type, document_number=receiver_document_number, iva_condition=receiver_iva_condition, email=receiver_email)
-    resolved_item_id, is_custom_amount = _manual_invoice_item_id(item_id, selected_item_id)
+    resolved_item_id, legacy_custom_amount = _manual_invoice_item_id(item_id, selected_item_id)
+    is_custom_amount = bool(custom_amount) or legacy_custom_amount
     item = await session.scalar(select(ArcaBillableItem).where(ArcaBillableItem.id == resolved_item_id, ArcaBillableItem.tenant_id == user.tenant_id, ArcaBillableItem.active.is_(True), ArcaBillableItem.currency == "PES", ArcaBillableItem.concepto == 2))
     try:
         value = Decimal(str(amount if is_custom_amount else item.unit_price if item else "")).quantize(Decimal("0.01"))
