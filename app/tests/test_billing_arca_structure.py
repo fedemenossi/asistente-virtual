@@ -47,10 +47,46 @@ from app.services.billing_arca_settings_service import decrypt_secret, encrypt_s
 from app.services.billing_invoice_document_service import (
     BillingInvoiceDocumentService,
     BillingInvoiceEmailService,
+    _draw_total_row,
 )
 from app.services.messaging_service import MessagingService
 from app.services.tenant_feature_service import TenantFeatureService
 from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_user, login
+
+
+class _RecordedPdfCanvas:
+    def __init__(self) -> None:
+        self.font_name = "Helvetica"
+        self.font_size = 0.0
+        self.right_aligned_text: list[tuple[float, float, str, str, float]] = []
+
+    def setFont(self, name: str, size: float) -> None:
+        self.font_name = name
+        self.font_size = size
+
+    def drawRightString(self, x: float, y: float, text: str) -> None:
+        self.right_aligned_text.append((x, y, text, self.font_name, self.font_size))
+
+    def stringWidth(self, text: str, font_name: str, font_size: float) -> float:
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+
+        return stringWidth(text, font_name, font_size)
+
+
+def test_invoice_total_row_keeps_large_amount_and_currency_together() -> None:
+    from reportlab.lib.units import mm
+
+    pdf = _RecordedPdfCanvas()
+    left = 312.0
+    right = 561.0
+    _draw_total_row(pdf, left, right, 200.0, "Importe Total:", "9.999.999.999,99", total=True)
+
+    label, value = pdf.right_aligned_text
+    assert label[2] == "Importe Total:"
+    assert value[2] == "$ 9.999.999.999,99"
+
+    value_left = value[0] - pdf.stringWidth(value[2], value[3], value[4])
+    assert value_left >= left + 45 * mm + 4 * mm
 
 
 async def _create_invoice(db_session, tenant_id: int, *, cbte_nro: int, amount: Decimal) -> int:

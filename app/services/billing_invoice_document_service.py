@@ -711,7 +711,10 @@ def _draw_invoice_page(
 
     totals_top = table_top - table_h - 4 * mm
     totals_h = 30 * mm
-    totals_w = 72 * mm
+    # Reserve independent columns for the label and the monetary value.  Keeping
+    # the currency sign and amount together prevents a long amount from being
+    # drawn on top of the sign (as happened with amounts such as $363.796,00).
+    totals_w = 88 * mm
     totals_left = right - totals_w
     pdf.setLineWidth(0.6)
     pdf.setFillColor(colors.HexColor("#f2f2f2"))
@@ -927,11 +930,16 @@ def _money_ar(value: Any) -> str:
 
 
 def _draw_total_row(pdf: Any, left: float, right: float, y: float, label: str, amount: str, *, total: bool = False) -> None:
-    pdf.setFont("Helvetica-Bold", 10 if total else 9)
-    pdf.drawRightString(right - 72, y, label)
-    pdf.setFont("Helvetica", 10 if total else 9)
-    pdf.drawString(right - 62, y, "$")
-    pdf.drawRightString(right - 12, y, amount)
+    from reportlab.lib.units import mm
+
+    label_right = left + 45 * mm
+    value_right = right - 4 * mm
+    font_size = 10 if total else 9
+
+    pdf.setFont("Helvetica-Bold", font_size)
+    pdf.drawRightString(label_right, y, label)
+    pdf.setFont("Helvetica", font_size)
+    pdf.drawRightString(value_right, y, f"$ {amount}")
 
 
 def _draw_field(
