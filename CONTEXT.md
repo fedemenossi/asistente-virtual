@@ -135,3 +135,7 @@ _Evitar_: datos actuales del contacto
 **Diagnóstico facturable**:
 Dato clínico seleccionado para acompañar una Consulta atendida o un Comprobante ARCA cuando la operación de facturación lo requiere. No forma parte de una Factura manual.
 _Evitar_: nota interna
+
+**Texto libre del comprobante**:
+Observación opcional incorporada por el operador a una Factura manual. No representa necesariamente un diagnóstico clínico, aunque internamente todavía pueda persistirse en campos heredados con ese nombre.
+_Evitar_: diagnóstico, diagnóstico facturable
