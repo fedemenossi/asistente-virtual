@@ -1,6 +1,6 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
-SQLAlchemy>=2.0
+SQLAlchemy[asyncio]>=2.0
 aiomysql>=0.2
 pydantic>=2.5
 pydantic-settings>=2.1
