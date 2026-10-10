@@ -1570,7 +1570,7 @@ def test_billing_csv_import_deduplicates_by_date_and_patient_name_across_files(c
     assert rows[0].professional_name == "Otra profesional"
 
 
-def test_billing_pending_can_mark_selected_as_no_facturar(client, db_session):
+def test_billing_pending_no_facturar_saves_selected_item_and_zero_amount(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant No Facturar", "whatsapp:+6372"))
     asyncio.run(
         create_user(
@@ -1585,10 +1585,34 @@ def test_billing_pending_can_mark_selected_as_no_facturar(client, db_session):
     async def _seed():
         async with db_session() as session:
             async with session.begin():
+                default_item = ArcaBillableItem(
+                    tenant_id=tenant_id,
+                    code="CONSULTA",
+                    name="Consulta Ginecologica",
+                    unit_price=Decimal("60000.00"),
+                    currency="PES",
+                    concepto=2,
+                    active=True,
+                    default_item=True,
+                )
+                zero_item = ArcaBillableItem(
+                    tenant_id=tenant_id,
+                    code="HONORARIOS",
+                    name="Honorarios medicos",
+                    unit_price=Decimal("0.00"),
+                    currency="PES",
+                    concepto=2,
+                    active=True,
+                    default_item=False,
+                )
+                session.add_all([default_item, zero_item])
+                await session.flush()
                 row = BillingExternalConsultation(
                     tenant_id=tenant_id,
                     external_provider="csv_attended",
                     external_id="no-facturar-1",
+                    billing_item_id=default_item.id,
+                    amount=Decimal("60000.00"),
                     attended_at=datetime(2026, 6, 17, 3, 0),
                     patient_name="Andrea Blumtritt",
                     patient_document="30123456",
@@ -1598,14 +1622,19 @@ def test_billing_pending_can_mark_selected_as_no_facturar(client, db_session):
                 )
                 session.add(row)
                 await session.flush()
-                return row.id
+                return row.id, zero_item.id
 
-    row_id = asyncio.run(_seed())
+    row_id, zero_item_id = asyncio.run(_seed())
     login(client, "tenant-no-facturar@test.com", "secret-123")
     page = client.get("/t/billing/pending")
     response = client.post(
         "/t/billing/pending/no-facturar",
-        data={"csrf_token": _csrf(page.text), "consultation_ids": str(row_id)},
+        data={
+            "csrf_token": _csrf(page.text),
+            "consultation_ids": str(row_id),
+            f"item_id_{row_id}": str(zero_item_id),
+            f"amount_{row_id}": "0.00",
+        },
         follow_redirects=False,
     )
     assert response.status_code in (302, 303)
@@ -1621,6 +1650,9 @@ def test_billing_pending_can_mark_selected_as_no_facturar(client, db_session):
     listing = client.get("/t/billing/finalized?status=excluded")
     assert "No facturar" in listing.text
     assert "Andrea Blumtritt" in listing.text
+    assert "Honorarios medicos" in listing.text
+    assert "$ 0.00" in listing.text
+    assert "$ 60000.00" not in listing.text
 
 
 def test_billing_finalized_can_restore_excluded_consultation_to_pending(client, db_session):

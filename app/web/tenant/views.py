@@ -4999,8 +4999,8 @@ def _validate_preview_consultations(consultations: list[BillingExternalConsultat
             errors.append(f"La consulta #{row.id} no tiene DNI/documento. Revisá el match del paciente.")
         if not row.billing_item_id:
             errors.append(f"La consulta #{row.id} no tiene item facturable.")
-        if row.amount is None:
-            errors.append(f"La consulta #{row.id} no tiene importe.")
+        if row.amount is None or _money_value(row.amount) <= 0:
+            errors.append(f"La consulta #{row.id} debe tener un importe mayor a cero.")
     return errors
 
 
@@ -5012,7 +5012,7 @@ def _decimal_from_form(value: object) -> Decimal | None:
         amount = Decimal(text).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError):
         return None
-    return amount if amount > 0 else None
+    return amount if amount >= 0 else None
 
 
 async def _save_billing_grid_settings(
@@ -5197,9 +5197,9 @@ async def billing_pending_exclude_selected(
     if not ids:
         add_flash(request, "error", "Selecciona al menos una consulta.")
         return RedirectResponse(_pending_back_url(form), status_code=303)
-    consultations = await _load_pending_consultations(session, int(user.tenant_id), ids)
     updated = 0
     async with session.begin_nested():
+        consultations = await _save_billing_grid_settings(session, int(user.tenant_id), ids, form)
         for consultation in consultations:
             if consultation.arca_invoice_id is not None:
                 continue
