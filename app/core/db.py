@@ -12,6 +12,20 @@ logger = logging.getLogger(__name__)
 settings = get_database_settings()
 
 
+def _configure_aiomysql_bytes_escaping() -> None:
+    """Keep aiomysql 0.3.2 compatible with PyMySQL 1.2.3 bytes escaping."""
+    from aiomysql import connection as aiomysql_connection
+    from pymysql.converters import escape_bytes
+
+    # PyMySQL 1.2.3 keeps this name as a non-callable compatibility sentinel,
+    # while aiomysql still invokes it for every bytes parameter.
+    if not callable(aiomysql_connection.escape_bytes_prefixed):
+        aiomysql_connection.escape_bytes_prefixed = escape_bytes
+
+
+_configure_aiomysql_bytes_escaping()
+
+
 def _build_database_url() -> str:
     if settings.database_url:
         url = settings.database_url

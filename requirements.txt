@@ -1,7 +1,8 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 SQLAlchemy[asyncio]>=2.0
-aiomysql>=0.2
+aiomysql==0.3.2
+PyMySQL==1.2.3
 pydantic>=2.5
 pydantic-settings>=2.1
 email-validator>=2.1
