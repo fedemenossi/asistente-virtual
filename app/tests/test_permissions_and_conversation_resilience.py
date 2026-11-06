@@ -60,10 +60,10 @@ def test_timeout_restarts_registered_patient_flow(db_session):
             return reply, state
 
     reply, state = asyncio.run(seed_and_run())
-    assert "Hola Maria Lopez" in reply
-    assert "1) Turno presencial" in reply
+    assert "DNI del Paciente" in reply
+    assert "Maria Lopez" not in reply
     assert state is not None
-    assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+    assert state.estado_actual == ConversationState.ASK_PATIENT_DNI.value
 
 
 def test_cancelar_finishes_conversation_like_salir(db_session):

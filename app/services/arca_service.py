@@ -758,6 +758,7 @@ class ArcaService:
                 Paciente.tenant_id == tenant_id,
                 Paciente.deleted_at.is_(None),
                 or_(
+                    Paciente.dni_normalized == document_key,
                     Paciente.dni == document,
                     Paciente.numero_documento == document,
                     Paciente.document_number_normalized == document_key,

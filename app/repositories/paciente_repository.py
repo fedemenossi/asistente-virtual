@@ -7,6 +7,10 @@ from app.models.paciente import Paciente
 from app.repositories.conversacion_repository import normalize_phone, normalize_phone_expr
 
 
+def normalize_dni(value: str | None) -> str:
+    return "".join(character for character in str(value or "") if character.isdigit())
+
+
 class PacienteRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -22,9 +26,10 @@ class PacienteRepository:
         return result.scalar_one_or_none()
 
     async def get_by_dni(self, tenant_id: int, dni: str) -> Paciente | None:
+        normalized = normalize_dni(dni)
         stmt = select(Paciente).where(
             Paciente.tenant_id == tenant_id,
-            Paciente.dni == dni,
+            Paciente.dni_normalized == normalized,
             Paciente.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)

@@ -43,6 +43,11 @@ logger = logging.getLogger(__name__)
 
 
 class ConversationState(str, Enum):
+    ASK_PATIENT_DNI = "ask_patient_dni"
+    ASK_REGISTRATION_EMAIL = "ask_registration_email"
+    ASK_COVERAGE_TYPE = "ask_coverage_type"
+    ASK_COVERAGE_ENTITY = "ask_coverage_entity"
+    ASK_COVERAGE_NUMBER = "ask_coverage_number"
     ASK_FIRST_NAME = "ask_first_name"
     ASK_LAST_NAME = "ask_last_name"
     ASK_DNI = "ask_dni"
@@ -136,7 +141,13 @@ class ConversationService:
             # Treat them as no active session so a new flow can start.
             state = None
 
-        paciente = await self._paciente_repo.get_by_phone(tenant.id, normalized_phone)
+        paciente = None
+        if state is not None:
+            patient_id = (state.contexto_json or {}).get("patient_id")
+            if patient_id:
+                candidate = await self._session.get(Paciente, int(patient_id))
+                if candidate is not None and candidate.tenant_id == tenant.id and candidate.deleted_at is None:
+                    paciente = candidate
 
         if state is not None and (state.status or "").lower() == "pending" and lowered not in EXIT_COMMANDS:
             return (
@@ -152,22 +163,60 @@ class ConversationService:
             return "Conversacion finalizada. Escribi cualquier mensaje para comenzar una conversacion nueva."
 
         if state is None:
-            if paciente is None:
-                await self._conversacion_repo.upsert_state(
-                    tenant.id, normalized_phone, ConversationState.ASK_FIRST_NAME.value, {}
-                )
-                return self._assistant_registration_greeting(tenant)
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
-                ConversationState.MAIN_REASON_MENU.value,
-                {"patient_id": paciente.id},
+                ConversationState.ASK_PATIENT_DNI.value,
+                {},
             )
-            return self._known_patient_greeting(tenant, paciente.nombre, paciente.apellido)
+            return self._patient_identification_greeting(tenant)
 
         context = state.contexto_json or {}
         current_state = state.estado_actual
         ai_settings = get_effective_ai_settings(tenant)
+        identification_states = {
+            ConversationState.ASK_PATIENT_DNI.value,
+            ConversationState.ASK_FIRST_NAME.value,
+            ConversationState.ASK_LAST_NAME.value,
+            ConversationState.ASK_REGISTRATION_EMAIL.value,
+            ConversationState.ASK_COVERAGE_TYPE.value,
+            ConversationState.ASK_COVERAGE_ENTITY.value,
+            ConversationState.ASK_COVERAGE_NUMBER.value,
+            # Estados legacy de altas que ya estaban en curso al desplegar.
+            ConversationState.ASK_DNI.value,
+            ConversationState.ASK_INSURANCE.value,
+            ConversationState.ASK_INSURANCE_NUMBER.value,
+            ConversationState.ASK_EMAIL.value,
+        }
+        if paciente is None and current_state not in identification_states:
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_PATIENT_DNI.value,
+                {},
+            )
+            return self._patient_identification_greeting(tenant)
+
+        if current_state == ConversationState.ASK_PATIENT_DNI.value:
+            normalized_dni = self._normalize_dni(text)
+            if not self._is_valid_dni(normalized_dni):
+                return "DNI invalido. Debe contener entre 7 y 9 numeros."
+            existing = await self._paciente_repo.get_by_dni(tenant.id, normalized_dni)
+            if existing is not None:
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.MAIN_REASON_MENU.value,
+                    {"patient_id": existing.id, "dni": normalized_dni},
+                )
+                return self._known_patient_greeting(tenant, existing.nombre, existing.apellido)
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_FIRST_NAME.value,
+                {"dni": normalized_dni, "identification_started": True},
+            )
+            return "No encontre un Paciente con ese DNI. Para darte de alta, decime tu nombre."
 
         if current_state == ConversationState.ASK_FIRST_NAME.value:
             if not text:
@@ -182,10 +231,74 @@ class ConversationService:
             if not text:
                 return "Necesito tu apellido para continuar."
             context["last_name"] = text
+            if context.get("identification_started"):
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.ASK_REGISTRATION_EMAIL.value,
+                    context,
+                )
+                return "Perfecto. Indicame tu email."
             await self._conversacion_repo.upsert_state(
                 tenant.id, normalized_phone, ConversationState.ASK_DNI.value, context
             )
             return "Perfecto. Indicame tu DNI."
+
+        if current_state == ConversationState.ASK_REGISTRATION_EMAIL.value:
+            if not self._is_valid_email(text):
+                return "Email invalido. Ingresalo nuevamente."
+            context["email"] = text.strip()
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_COVERAGE_TYPE.value,
+                context,
+            )
+            return self._coverage_type_options()
+
+        if current_state == ConversationState.ASK_COVERAGE_TYPE.value:
+            coverage_type = self._detect_coverage_type(text)
+            if coverage_type is None:
+                return self._invalid_option_message(self._coverage_type_options())
+            context["coverage_type"] = coverage_type
+            if coverage_type == "particular":
+                context["insurance"] = "Particular"
+                context["insurance_number"] = None
+                return await self._complete_patient_registration(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    context=context,
+                )
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_COVERAGE_ENTITY.value,
+                context,
+            )
+            label = "obra social" if coverage_type == "obra_social" else "prepaga"
+            return f"Indicame la entidad de tu {label}."
+
+        if current_state == ConversationState.ASK_COVERAGE_ENTITY.value:
+            if not text:
+                return "La entidad de cobertura no puede estar vacia."
+            context["insurance"] = text.strip()
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_COVERAGE_NUMBER.value,
+                context,
+            )
+            return "Ahora indicame tu numero de afiliado."
+
+        if current_state == ConversationState.ASK_COVERAGE_NUMBER.value:
+            if not text:
+                return "El numero de afiliado no puede estar vacio."
+            context["insurance_number"] = text.strip()
+            return await self._complete_patient_registration(
+                tenant=tenant,
+                phone=normalized_phone,
+                context=context,
+            )
 
         if current_state == ConversationState.ASK_DNI.value:
             if not self._is_valid_dni(text):
@@ -252,7 +365,9 @@ class ConversationService:
             dni = (context.get("dni") or "").strip()
             insurance = (context.get("insurance") or context.get("obra_social") or "").strip()
 
-            existing = await self._paciente_repo.get_by_phone(tenant.id, normalized_phone)
+            # Compatibilidad con altas iniciadas antes de exigir el DNI al comienzo:
+            # la identidad sigue resolviendose por DNI y nunca por el telefono.
+            existing = await self._paciente_repo.get_by_dni(tenant.id, dni)
             if existing is not None:
                 existing.nombre = first_name
                 existing.apellido = last_name
@@ -1432,6 +1547,10 @@ class ConversationService:
         return bool(re.fullmatch(r"\d{7,9}", value.strip()))
 
     @staticmethod
+    def _normalize_dni(value: str | None) -> str:
+        return re.sub(r"\D+", "", value or "")
+
+    @staticmethod
     def _is_valid_email(value: str) -> bool:
         candidate = value.strip()
         return bool(candidate) and ("@" in candidate) and ("." in candidate.split("@")[-1])
@@ -1458,13 +1577,59 @@ class ConversationService:
             f"{self._main_reason_menu_message()}"
         )
 
-    def _assistant_registration_greeting(self, tenant: Tenant) -> str:
+    def _patient_identification_greeting(self, tenant: Tenant) -> str:
         tenant_name = self._tenant_display_name(tenant)
         return (
             f"Hola, te contactaste con la asistente de {tenant_name}. "
-            "Para continuar, primero necesito registrarte como paciente. "
-            "Decime tu nombre."
+            "Para continuar con cualquier gestion, indicame el DNI del Paciente."
         )
+
+    async def _complete_patient_registration(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        context: dict,
+    ) -> str:
+        normalized_dni = self._normalize_dni(context.get("dni"))
+        existing = await self._paciente_repo.get_by_dni(tenant.id, normalized_dni)
+        if existing is None:
+            paciente = Paciente(
+                tenant_id=tenant.id,
+                telefono=phone,
+                nombre=str(context.get("first_name") or "").strip(),
+                apellido=str(context.get("last_name") or "").strip(),
+                dni=normalized_dni,
+                email=str(context.get("email") or "").strip(),
+                health_coverage_type=context.get("coverage_type"),
+                obra_social=str(context.get("insurance") or "").strip(),
+                insurance_number=context.get("insurance_number"),
+            )
+            await self._paciente_repo.create(paciente)
+        else:
+            paciente = existing
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.MAIN_REASON_MENU.value,
+            {"patient_id": paciente.id, "dni": normalized_dni},
+        )
+        return self._known_patient_greeting(tenant, paciente.nombre, paciente.apellido)
+
+    @staticmethod
+    def _coverage_type_options() -> str:
+        return "Cual es tu cobertura de salud?\n1) Obra social\n2) Prepaga\n3) Particular"
+
+    @staticmethod
+    def _detect_coverage_type(value: str) -> str | None:
+        normalized = normalize_message(value)
+        if normalized in {"1", "obra social", "obra_social"}:
+            return "obra_social"
+        if normalized in {"2", "prepaga"}:
+            return "prepaga"
+        if normalized in {"3", "particular"}:
+            return "particular"
+        return None
 
     @staticmethod
     def _tenant_display_name(tenant: Tenant) -> str:

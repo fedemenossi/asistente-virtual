@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -105,6 +106,8 @@ EXTRA_COLUMNS = {
         "created_at": "DATETIME NULL",
         "updated_at": "DATETIME NULL",
         "iva_condition": "VARCHAR(50) NULL",
+        "dni_normalized": "VARCHAR(32) NULL",
+        "health_coverage_type": "VARCHAR(32) NULL",
         "insurance_number": "VARCHAR(100) NULL",
         "fecha_nacimiento": "DATE NULL",
         "tipo_documento": "VARCHAR(50) NULL",
@@ -232,6 +235,62 @@ async def _timestamp_column_exists(
     return await _column_exists(conn, db_name, table, "updated_at")
 
 
+@dataclass(frozen=True)
+class PatientDniMigrationResult:
+    backfilled: int
+    duplicates_cleared: int
+
+
+async def upgrade_patient_dni_identity(conn) -> PatientDniMigrationResult:
+    columns = await conn.run_sync(
+        lambda sync_conn: {column["name"] for column in inspect(sync_conn).get_columns("pacientes")}
+    )
+    if "dni_normalized" not in columns:
+        await conn.execute(text("ALTER TABLE pacientes ADD COLUMN dni_normalized VARCHAR(32) NULL"))
+
+    rows = list(
+        (
+            await conn.execute(text("SELECT id, tenant_id, dni FROM pacientes ORDER BY id"))
+        ).mappings().all()
+    )
+    seen: set[tuple[int, str]] = set()
+    updates: list[dict[str, object]] = []
+    backfilled = 0
+    duplicates_cleared = 0
+    for row in rows:
+        normalized = "".join(character for character in str(row["dni"] or "") if character.isdigit())
+        normalized_value: str | None = normalized or None
+        if normalized_value is not None:
+            identity = (int(row["tenant_id"]), normalized_value)
+            if identity in seen:
+                normalized_value = None
+                duplicates_cleared += 1
+            else:
+                seen.add(identity)
+                backfilled += 1
+        updates.append({"patient_id": int(row["id"]), "dni_normalized": normalized_value})
+    if updates:
+        await conn.execute(
+            text("UPDATE pacientes SET dni_normalized = :dni_normalized WHERE id = :patient_id"),
+            updates,
+        )
+
+    indexes = await conn.run_sync(
+        lambda sync_conn: {index["name"] for index in inspect(sync_conn).get_indexes("pacientes")}
+    )
+    if "uq_paciente_tenant_dni" not in indexes:
+        await conn.execute(
+            text(
+                "CREATE UNIQUE INDEX uq_paciente_tenant_dni "
+                "ON pacientes (tenant_id, dni_normalized)"
+            )
+        )
+    return PatientDniMigrationResult(
+        backfilled=backfilled,
+        duplicates_cleared=duplicates_cleared,
+    )
+
+
 async def upgrade(db_engine: AsyncEngine, *, dispose: bool = True) -> None:
     url = make_url(db_engine.url)
     db_name = url.database
@@ -256,6 +315,8 @@ async def upgrade(db_engine: AsyncEngine, *, dispose: bool = True) -> None:
                     if exists:
                         continue
                     await _add_column(conn, table, column, ddl)
+
+            await upgrade_patient_dni_identity(conn)
 
             invoice_series_index = "uq_arca_invoice_number_scope"
             if not await _index_exists(conn, db_name, "billing_invoices", invoice_series_index):

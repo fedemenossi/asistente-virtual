@@ -363,7 +363,7 @@ class PatientSyncService:
             select(Paciente).where(
                 Paciente.tenant_id == tenant_id,
                 Paciente.deleted_at.is_(None),
-                Paciente.dni == document_number_normalized,
+                Paciente.dni_normalized == document_number_normalized,
             )
         )
         return legacy.scalar_one_or_none()

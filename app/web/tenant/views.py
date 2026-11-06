@@ -1277,6 +1277,7 @@ async def pacientes_new_post(
     validate_csrf(request, csrf_token)
     normalized_phone = _sanitize_phone(telefono)
     normalized_type = normalize_document_type(tipo_documento or "DNI")
+    normalized_dni = normalize_document(dni)
     final_document = (numero_documento or dni).strip()
     normalized_document = normalize_document(final_document)
     try:
@@ -1295,7 +1296,7 @@ async def pacientes_new_post(
             p
             for p in duplicates
             if (normalized_phone and _sanitize_phone(p.telefono) == normalized_phone)
-            or (p.dni and p.dni == dni)
+            or (p.dni_normalized and p.dni_normalized == normalized_dni)
             or (
                 p.tipo_documento == normalized_type
                 and p.document_number_normalized
@@ -1401,6 +1402,7 @@ async def pacientes_edit_post(
     validate_csrf(request, csrf_token)
     normalized_phone = _sanitize_phone(telefono)
     normalized_type = normalize_document_type(tipo_documento or "DNI")
+    normalized_dni = normalize_document(dni)
     final_document = (numero_documento or dni).strip()
     normalized_document = normalize_document(final_document)
     try:
@@ -1420,7 +1422,7 @@ async def pacientes_edit_post(
             p
             for p in duplicates
             if (normalized_phone and _sanitize_phone(p.telefono) == normalized_phone)
-            or (p.dni and p.dni == dni)
+            or (p.dni_normalized and p.dni_normalized == normalized_dni)
             or (
                 p.tipo_documento == normalized_type
                 and p.document_number_normalized

@@ -4,6 +4,9 @@ import asyncio
 import importlib
 import os
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
 
 def test_lifespan_runs_schema_upgrade_outside_test(monkeypatch, tmp_path):
     db_path = tmp_path / "startup.db"
@@ -82,3 +85,56 @@ def test_lifespan_skips_schema_upgrade_in_test(monkeypatch):
             pass
 
     asyncio.run(_run())
+
+
+def test_patient_dni_migration_preserves_rows_and_controls_legacy_duplicates(tmp_path):
+    from scripts.upgrade_schema import upgrade_patient_dni_identity
+
+    db_path = tmp_path / "patient-identity.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+
+    async def run_migration():
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE pacientes (
+                        id INTEGER PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL,
+                        dni VARCHAR(32) NOT NULL
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO pacientes (id, tenant_id, dni) VALUES
+                        (1, 10, '30.123.456'),
+                        (2, 10, '30-123-456'),
+                        (3, 20, '30123456'),
+                        (4, 10, 'sin-dni')
+                    """
+                )
+            )
+            result = await upgrade_patient_dni_identity(conn)
+            rows = list(
+                (
+                    await conn.execute(
+                        text("SELECT id, tenant_id, dni, dni_normalized FROM pacientes ORDER BY id")
+                    )
+                ).mappings().all()
+            )
+            indexes = list((await conn.execute(text("PRAGMA index_list('pacientes')"))).mappings().all())
+            return result, rows, indexes
+
+    result, rows, indexes = asyncio.run(run_migration())
+    asyncio.run(engine.dispose())
+
+    assert len(rows) == 4
+    assert rows[0]["dni_normalized"] == "30123456"
+    assert rows[1]["dni_normalized"] is None
+    assert rows[2]["dni_normalized"] == "30123456"
+    assert rows[3]["dni_normalized"] is None
+    assert result.duplicates_cleared == 1
+    assert any(index["name"] == "uq_paciente_tenant_dni" and index["unique"] == 1 for index in indexes)

@@ -223,7 +223,7 @@ async def create_paciente(
     *,
     nombre: str = "Juan",
     apellido: str = "Perez",
-    dni: str = "12345678",
+    dni: str | None = None,
     email: str = "juan@example.com",
     obra_social: str | None = None,
     insurance_number: str | None = None,
@@ -233,12 +233,13 @@ async def create_paciente(
 
     async with db_session() as session:
         async with session.begin():
+            resolved_dni = dni or "".join(character for character in telefono if character.isdigit())[-8:]
             paciente = Paciente(
                 tenant_id=tenant_id,
                 telefono=telefono,
                 nombre=nombre,
                 apellido=apellido,
-                dni=dni,
+                dni=resolved_dni,
                 email=email,
                 obra_social=obra_social,
                 insurance_number=insurance_number,
