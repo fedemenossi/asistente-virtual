@@ -30,3 +30,4 @@ class Tenant(Base, TimestampMixin, SoftDeleteMixin):
     pacientes = relationship("Paciente", back_populates="tenant")
     turnos = relationship("Turno", back_populates="tenant")
     payments = relationship("Payment", back_populates="tenant")
+    whatsapp_contacts = relationship("WhatsappContact", back_populates="tenant")

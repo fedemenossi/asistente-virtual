@@ -1295,8 +1295,7 @@ async def pacientes_new_post(
         (
             p
             for p in duplicates
-            if (normalized_phone and _sanitize_phone(p.telefono) == normalized_phone)
-            or (p.dni_normalized and p.dni_normalized == normalized_dni)
+            if (p.dni_normalized and p.dni_normalized == normalized_dni)
             or (
                 p.tipo_documento == normalized_type
                 and p.document_number_normalized
@@ -1309,7 +1308,7 @@ async def pacientes_new_post(
         add_flash(
             request,
             "warning",
-            "Ya existe un paciente con ese telefono o DNI. Editalo en lugar de crearlo de nuevo.",
+            "Ya existe un paciente con ese DNI. Editalo en lugar de crearlo de nuevo.",
         )
         return RedirectResponse(f"/t/pacientes/{existing.id}/edit", status_code=303)
 
@@ -1421,8 +1420,7 @@ async def pacientes_edit_post(
         (
             p
             for p in duplicates
-            if (normalized_phone and _sanitize_phone(p.telefono) == normalized_phone)
-            or (p.dni_normalized and p.dni_normalized == normalized_dni)
+            if (p.dni_normalized and p.dni_normalized == normalized_dni)
             or (
                 p.tipo_documento == normalized_type
                 and p.document_number_normalized
@@ -1435,7 +1433,7 @@ async def pacientes_edit_post(
         add_flash(
             request,
             "warning",
-            "Ya existe otro paciente con ese telefono o DNI.",
+            "Ya existe otro paciente con ese DNI.",
         )
         return RedirectResponse(f"/t/pacientes/{paciente_id}/edit", status_code=303)
 
@@ -1623,9 +1621,24 @@ async def _conversation_listing_context(
     pacientes = list((await session.execute(paciente_stmt)).scalars().all())
     tenants = list((await session.execute(tenant_stmt)).scalars().all())
 
-    pacientes_by_phone = {(p.tenant_id, _sanitize_phone(p.telefono)): p for p in pacientes}
     pacientes_by_id = {p.id: p for p in pacientes}
+    pacientes_by_phone: dict[tuple[int, str], list[Paciente]] = {}
+    for paciente in pacientes:
+        phone_key = (paciente.tenant_id, _sanitize_phone(paciente.telefono))
+        pacientes_by_phone.setdefault(phone_key, []).append(paciente)
     tenants_by_id = {t.id: t for t in tenants}
+
+    def _patient_for_conversation(item) -> Paciente | None:
+        patient_id = getattr(item, "patient_id", None) or (getattr(item, "contexto_json", None) or {}).get(
+            "patient_id"
+        )
+        if patient_id:
+            return pacientes_by_id.get(int(patient_id))
+        phone_matches = pacientes_by_phone.get(
+            (item.tenant_id, _sanitize_phone(item.telefono)),
+            [],
+        )
+        return phone_matches[0] if len(phone_matches) == 1 else None
 
     unresolved_states = [state for state in states if (state.status or "active").lower() != "finished"]
 
@@ -1655,7 +1668,7 @@ async def _conversation_listing_context(
     rows = []
     if selected_status in {"pending", "all"}:
         for state in filtered_current:
-            paciente = pacientes_by_phone.get((state.tenant_id, _sanitize_phone(state.telefono)))
+            paciente = _patient_for_conversation(state)
             operational_category = _resolve_operational_category(
                 state.operational_category,
                 state.conversation_category,
@@ -1694,7 +1707,7 @@ async def _conversation_listing_context(
             )
     if selected_status in {"resolved", "all"}:
         for item in filtered_history:
-            paciente = pacientes_by_id.get(item.patient_id) if item.patient_id else pacientes_by_phone.get((item.tenant_id, _sanitize_phone(item.telefono)))
+            paciente = _patient_for_conversation(item)
             operational_category = _resolve_operational_category(
                 item.operational_category,
                 item.conversation_category,

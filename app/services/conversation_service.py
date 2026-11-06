@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timezone import get_ba_tz, now_ba
 from app.models.paciente import Paciente
+from app.models.patient_contact_link import PatientContactLinkStatus
 from app.models.tenant import Tenant
 from app.models.consultorio import Consultorio
 from app.models.turno import AppointmentStatus, Turno
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.paciente_repository import PacienteRepository
+from app.repositories.patient_contact_repository import PatientContactRepository
 from app.services.conversation_intents import (
     ConversationCategory,
     PrescriptionSubtype,
@@ -43,6 +45,9 @@ logger = logging.getLogger(__name__)
 
 
 class ConversationState(str, Enum):
+    ASK_MANAGED_FOR = "ask_managed_for"
+    ASK_ASSOCIATED_PATIENT = "ask_associated_patient"
+    AWAITING_CONTACT_APPROVAL = "awaiting_contact_approval"
     ASK_PATIENT_DNI = "ask_patient_dni"
     ASK_REGISTRATION_EMAIL = "ask_registration_email"
     ASK_COVERAGE_TYPE = "ask_coverage_type"
@@ -107,6 +112,7 @@ class ConversationService:
     ) -> None:
         self._session = session
         self._paciente_repo = paciente_repo
+        self._patient_contact_repo = PatientContactRepository(session)
         self._conversacion_repo = conversacion_repo
         self._notification_repo = notification_repo
         self._ai_intent_classifier = AIIntentClassifier()
@@ -123,6 +129,7 @@ class ConversationService:
         lowered = text.lower()
         media_items = list(media_items or [])
         has_media = bool(media_items)
+        contact = await self._patient_contact_repo.get_or_create_contact(tenant.id, normalized_phone)
 
         state = await self._conversacion_repo.get_state(tenant.id, normalized_phone)
         if state is None and normalized_phone != from_phone:
@@ -146,7 +153,14 @@ class ConversationService:
             patient_id = (state.contexto_json or {}).get("patient_id")
             if patient_id:
                 candidate = await self._session.get(Paciente, int(patient_id))
-                if candidate is not None and candidate.tenant_id == tenant.id and candidate.deleted_at is None:
+                link = await self._patient_contact_repo.get_link(contact, int(patient_id))
+                if (
+                    candidate is not None
+                    and candidate.tenant_id == tenant.id
+                    and candidate.deleted_at is None
+                    and link is not None
+                    and link.status == PatientContactLinkStatus.APPROVED.value
+                ):
                     paciente = candidate
 
         if state is not None and (state.status or "").lower() == "pending" and lowered not in EXIT_COMMANDS:
@@ -166,15 +180,18 @@ class ConversationService:
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
-                ConversationState.ASK_PATIENT_DNI.value,
-                {},
+                ConversationState.ASK_MANAGED_FOR.value,
+                {"contact_id": contact.id},
             )
-            return self._patient_identification_greeting(tenant)
+            return self._managed_for_greeting(tenant)
 
         context = state.contexto_json or {}
         current_state = state.estado_actual
         ai_settings = get_effective_ai_settings(tenant)
         identification_states = {
+            ConversationState.ASK_MANAGED_FOR.value,
+            ConversationState.ASK_ASSOCIATED_PATIENT.value,
+            ConversationState.AWAITING_CONTACT_APPROVAL.value,
             ConversationState.ASK_PATIENT_DNI.value,
             ConversationState.ASK_FIRST_NAME.value,
             ConversationState.ASK_LAST_NAME.value,
@@ -197,19 +214,116 @@ class ConversationService:
             )
             return self._patient_identification_greeting(tenant)
 
+        if current_state == ConversationState.ASK_MANAGED_FOR.value:
+            managed_for = self._detect_managed_for(text)
+            if managed_for is None:
+                return self._managed_for_options()
+            approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
+            if approved_patients:
+                if managed_for == "self" and len(approved_patients) == 1:
+                    return await self._select_patient(
+                        tenant=tenant,
+                        phone=normalized_phone,
+                        patient=approved_patients[0],
+                        contact_id=contact.id,
+                        managed_for=managed_for,
+                    )
+                patient_ids = [patient.id for patient in approved_patients]
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.ASK_ASSOCIATED_PATIENT.value,
+                    {
+                        "contact_id": contact.id,
+                        "managed_for": managed_for,
+                        "patient_options": patient_ids,
+                    },
+                )
+                return self._associated_patient_options(approved_patients, allow_new=managed_for == "other")
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_PATIENT_DNI.value,
+                {"contact_id": contact.id, "managed_for": managed_for},
+            )
+            return "Indicame el DNI del Paciente."
+
+        if current_state == ConversationState.ASK_ASSOCIATED_PATIENT.value:
+            patient_ids = [int(value) for value in context.get("patient_options") or []]
+            try:
+                option = int(text)
+            except ValueError:
+                option = 0
+            allow_new = context.get("managed_for") == "other"
+            if allow_new and option == len(patient_ids) + 1:
+                context.pop("patient_options", None)
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.ASK_PATIENT_DNI.value,
+                    context,
+                )
+                return "Indicame el DNI del Paciente que queres gestionar."
+            if option < 1 or option > len(patient_ids):
+                approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
+                return self._invalid_option_message(
+                    self._associated_patient_options(approved_patients, allow_new=allow_new)
+                )
+            patient = await self._session.get(Paciente, patient_ids[option - 1])
+            link = await self._patient_contact_repo.get_link(contact, patient_ids[option - 1])
+            if (
+                patient is None
+                or patient.tenant_id != tenant.id
+                or patient.deleted_at is not None
+                or link is None
+                or link.status != PatientContactLinkStatus.APPROVED.value
+            ):
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.ASK_MANAGED_FOR.value,
+                    {"contact_id": contact.id},
+                )
+                return "No pude validar ese Paciente. Volvamos a empezar: la gestion es para vos o para otra persona?"
+            return await self._select_patient(
+                tenant=tenant,
+                phone=normalized_phone,
+                patient=patient,
+                contact_id=contact.id,
+                managed_for=str(context.get("managed_for") or "other"),
+            )
+
+        if current_state == ConversationState.AWAITING_CONTACT_APPROVAL.value:
+            return self._pending_contact_approval_message()
+
         if current_state == ConversationState.ASK_PATIENT_DNI.value:
             normalized_dni = self._normalize_dni(text)
             if not self._is_valid_dni(normalized_dni):
                 return "DNI invalido. Debe contener entre 7 y 9 numeros."
             existing = await self._paciente_repo.get_by_dni(tenant.id, normalized_dni)
             if existing is not None:
+                link = await self._patient_contact_repo.get_link(contact, existing.id)
+                if link is not None and link.status == PatientContactLinkStatus.APPROVED.value:
+                    return await self._select_patient(
+                        tenant=tenant,
+                        phone=normalized_phone,
+                        patient=existing,
+                        contact_id=contact.id,
+                        managed_for=str(context.get("managed_for") or "self"),
+                    )
+                if link is None:
+                    link = await self._patient_contact_repo.link_patient(
+                        contact,
+                        existing,
+                        status=PatientContactLinkStatus.PENDING,
+                    )
                 await self._conversacion_repo.upsert_state(
                     tenant.id,
                     normalized_phone,
-                    ConversationState.MAIN_REASON_MENU.value,
-                    {"patient_id": existing.id, "dni": normalized_dni},
+                    ConversationState.AWAITING_CONTACT_APPROVAL.value,
+                    {"contact_id": contact.id, "contact_link_id": link.id},
                 )
-                return self._known_patient_greeting(tenant, existing.nombre, existing.apellido)
+                return self._pending_contact_approval_message()
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -368,15 +482,9 @@ class ConversationService:
             # Compatibilidad con altas iniciadas antes de exigir el DNI al comienzo:
             # la identidad sigue resolviendose por DNI y nunca por el telefono.
             existing = await self._paciente_repo.get_by_dni(tenant.id, dni)
+            created = existing is None
             if existing is not None:
-                existing.nombre = first_name
-                existing.apellido = last_name
-                existing.dni = dni
-                existing.obra_social = insurance
-                existing.email = email
-                existing.insurance_number = context.get("insurance_number")
                 paciente = existing
-                await self._session.flush()
             else:
                 paciente = Paciente(
                     tenant_id=tenant.id,
@@ -389,11 +497,40 @@ class ConversationService:
                     insurance_number=context.get("insurance_number"),
                 )
                 await self._paciente_repo.create(paciente)
+            contact = await self._patient_contact_repo.get_or_create_contact(
+                tenant.id,
+                normalized_phone,
+            )
+            link = await self._patient_contact_repo.get_link(contact, paciente.id)
+            if created:
+                link = await self._patient_contact_repo.link_patient(
+                    contact,
+                    paciente,
+                    status=PatientContactLinkStatus.APPROVED,
+                )
+            elif link is None:
+                link = await self._patient_contact_repo.link_patient(
+                    contact,
+                    paciente,
+                    status=PatientContactLinkStatus.PENDING,
+                )
+            if link.status != PatientContactLinkStatus.APPROVED.value:
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.AWAITING_CONTACT_APPROVAL.value,
+                    {"contact_id": contact.id, "contact_link_id": link.id},
+                )
+                return self._pending_contact_approval_message()
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
                 ConversationState.MAIN_REASON_MENU.value,
-                {"patient_id": paciente.id, "insurance_number": context.get("insurance_number")},
+                {
+                    "contact_id": contact.id,
+                    "patient_id": paciente.id,
+                    "insurance_number": context.get("insurance_number"),
+                },
             )
             return self._known_patient_greeting(tenant, paciente.nombre, paciente.apellido)
 
@@ -1584,6 +1721,66 @@ class ConversationService:
             "Para continuar con cualquier gestion, indicame el DNI del Paciente."
         )
 
+    def _managed_for_greeting(self, tenant: Tenant) -> str:
+        tenant_name = self._tenant_display_name(tenant)
+        return (
+            f"Hola, te contactaste con la asistente de {tenant_name}. "
+            f"{self._managed_for_options()}"
+        )
+
+    @staticmethod
+    def _managed_for_options() -> str:
+        return "La gestion es para vos o para otra persona?\n1) Para mi\n2) Otra persona"
+
+    @staticmethod
+    def _detect_managed_for(value: str) -> str | None:
+        normalized = normalize_message(value)
+        if normalized in {"1", "para mi", "para mí", "yo", "para vos"}:
+            return "self"
+        if normalized in {"2", "otra persona", "otro", "otra"}:
+            return "other"
+        return None
+
+    @staticmethod
+    def _associated_patient_options(patients: list[Paciente], *, allow_new: bool) -> str:
+        lines = ["Selecciona el Paciente para esta gestion:"]
+        lines.extend(
+            f"{index}) {patient.nombre} {patient.apellido}"
+            for index, patient in enumerate(patients, start=1)
+        )
+        if allow_new:
+            lines.append(f"{len(patients) + 1}) Otro Paciente")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _pending_contact_approval_message() -> str:
+        return (
+            "La vinculacion solicitada esta pendiente de revision por el consultorio. "
+            "Por seguridad, no podemos mostrar datos ni realizar gestiones hasta su aprobacion."
+        )
+
+    async def _select_patient(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        patient: Paciente,
+        contact_id: int,
+        managed_for: str,
+    ) -> str:
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.MAIN_REASON_MENU.value,
+            {
+                "contact_id": contact_id,
+                "patient_id": patient.id,
+                "dni": patient.dni_normalized,
+                "managed_for": managed_for,
+            },
+        )
+        return self._known_patient_greeting(tenant, patient.nombre, patient.apellido)
+
     async def _complete_patient_registration(
         self,
         *,
@@ -1593,6 +1790,7 @@ class ConversationService:
     ) -> str:
         normalized_dni = self._normalize_dni(context.get("dni"))
         existing = await self._paciente_repo.get_by_dni(tenant.id, normalized_dni)
+        created = existing is None
         if existing is None:
             paciente = Paciente(
                 tenant_id=tenant.id,
@@ -1608,11 +1806,38 @@ class ConversationService:
             await self._paciente_repo.create(paciente)
         else:
             paciente = existing
+        contact = await self._patient_contact_repo.get_or_create_contact(tenant.id, phone)
+        link = await self._patient_contact_repo.get_link(contact, paciente.id)
+        if created:
+            link = await self._patient_contact_repo.link_patient(
+                contact,
+                paciente,
+                status=PatientContactLinkStatus.APPROVED,
+            )
+        elif link is None:
+            link = await self._patient_contact_repo.link_patient(
+                contact,
+                paciente,
+                status=PatientContactLinkStatus.PENDING,
+            )
+        if link.status != PatientContactLinkStatus.APPROVED.value:
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                phone,
+                ConversationState.AWAITING_CONTACT_APPROVAL.value,
+                {"contact_id": contact.id, "contact_link_id": link.id},
+            )
+            return self._pending_contact_approval_message()
         await self._conversacion_repo.upsert_state(
             tenant.id,
             phone,
             ConversationState.MAIN_REASON_MENU.value,
-            {"patient_id": paciente.id, "dni": normalized_dni},
+            {
+                "contact_id": contact.id,
+                "patient_id": paciente.id,
+                "dni": normalized_dni,
+                "managed_for": context.get("managed_for"),
+            },
         )
         return self._known_patient_greeting(tenant, paciente.nombre, paciente.apellido)
 

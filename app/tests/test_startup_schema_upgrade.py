@@ -138,3 +138,104 @@ def test_patient_dni_migration_preserves_rows_and_controls_legacy_duplicates(tmp
     assert rows[3]["dni_normalized"] is None
     assert result.duplicates_cleared == 1
     assert any(index["name"] == "uq_paciente_tenant_dni" and index["unique"] == 1 for index in indexes)
+
+
+def test_patient_contact_migration_backfills_many_to_many_links_per_tenant_idempotently(tmp_path):
+    from scripts.upgrade_schema import upgrade_patient_contact_links
+
+    db_path = tmp_path / "patient-contacts.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+
+    async def run_migration():
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE pacientes (
+                        id INTEGER PRIMARY KEY,
+                        tenant_id INTEGER NOT NULL,
+                        telefono VARCHAR(32) NOT NULL,
+                        deleted_at DATETIME NULL
+                    );
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE whatsapp_contacts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tenant_id INTEGER NOT NULL,
+                        phone_normalized VARCHAR(32) NOT NULL,
+                        created_at DATETIME NULL,
+                        updated_at DATETIME NULL,
+                        UNIQUE (tenant_id, phone_normalized)
+                    );
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE patient_contact_links (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        tenant_id INTEGER NOT NULL,
+                        contact_id INTEGER NOT NULL,
+                        patient_id INTEGER NOT NULL,
+                        status VARCHAR(20) NOT NULL,
+                        created_at DATETIME NULL,
+                        updated_at DATETIME NULL,
+                        UNIQUE (tenant_id, contact_id, patient_id)
+                    );
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO pacientes (id, tenant_id, telefono, deleted_at) VALUES
+                        (1, 10, 'whatsapp:+54 9 11 7000-0001', NULL),
+                        (2, 10, '+5491170000001', NULL),
+                        (3, 20, '5491170000001', NULL),
+                        (4, 10, 'sin-telefono', NULL),
+                        (5, 10, '5491170000099', '2026-01-01');
+                    """
+                )
+            )
+            first = await upgrade_patient_contact_links(conn)
+            second = await upgrade_patient_contact_links(conn)
+            contacts = list(
+                (
+                    await conn.execute(
+                        text("SELECT id, tenant_id, phone_normalized FROM whatsapp_contacts ORDER BY id")
+                    )
+                ).mappings().all()
+            )
+            links = list(
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT tenant_id, contact_id, patient_id, status "
+                            "FROM patient_contact_links ORDER BY patient_id"
+                        )
+                    )
+                ).mappings().all()
+            )
+            return first, second, contacts, links
+
+    first, second, contacts, links = asyncio.run(run_migration())
+    asyncio.run(engine.dispose())
+
+    assert first.contacts_created == 2
+    assert first.links_created == 3
+    assert first.skipped_patients == 1
+    assert second.contacts_created == 0
+    assert second.links_created == 0
+    assert len(contacts) == 2
+    assert {(row["tenant_id"], row["phone_normalized"]) for row in contacts} == {
+        (10, "5491170000001"),
+        (20, "5491170000001"),
+    }
+    assert [row["status"] for row in links] == ["approved", "approved", "approved"]
+    assert links[0]["contact_id"] == links[1]["contact_id"]
+    assert links[2]["contact_id"] != links[0]["contact_id"]

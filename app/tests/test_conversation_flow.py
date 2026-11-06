@@ -20,6 +20,7 @@ from app.tests.conftest import create_consultorio, create_paciente, create_tenan
 from app.integrations.interfaces import CalendarSlot
 from app.models.consultorio import TipoConsultorio
 from app.models.paciente import Paciente
+from app.models.patient_contact_link import PatientContactLink
 from app.models.turno import AppointmentStatus, Turno
 
 
@@ -61,11 +62,16 @@ async def _fake_availability_slots(session, *, tenant_id, consultorio_type, pati
 
 
 class _IdentifiedPatientTestService(ConversationService):
-    """Test driver that completes the mandatory DNI step for legacy flow tests."""
+    """Test driver that selects the legacy patient for downstream flow tests."""
 
     async def process_message(self, tenant, from_phone, body, media_items=None):
         reply = await super().process_message(tenant, from_phone, body, media_items)
         state = await self._conversacion_repo.get_state(tenant.id, self._normalize_phone(from_phone))
+        if state is not None and state.estado_actual == ConversationState.ASK_MANAGED_FOR.value:
+            patient = await self._paciente_repo.get_by_phone(tenant.id, from_phone)
+            if patient is not None:
+                reply = await super().process_message(tenant, from_phone, "1", media_items)
+                state = await self._conversacion_repo.get_state(tenant.id, self._normalize_phone(from_phone))
         if state is not None and state.estado_actual == ConversationState.ASK_PATIENT_DNI.value:
             patient = await self._paciente_repo.get_by_phone(tenant.id, from_phone)
             if patient is not None:
@@ -417,7 +423,7 @@ def test_slot_selection_and_confirmation_do_not_book(monkeypatch, db_session):
     asyncio.run(run())
 
 
-def test_simulator_api_identifies_existing_patient_by_normalized_dni_before_menu(client, db_session):
+def test_simulator_api_identifies_existing_associated_patient_before_menu(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant DNI Existing", "whatsapp:+739"))
     phone = "5491173900001"
     paciente_id = asyncio.run(
@@ -433,12 +439,6 @@ def test_simulator_api_identifies_existing_patient_by_normalized_dni_before_menu
             insurance_number="A-123",
         )
     )
-
-
-async def _start_known_patient(service, tenant, phone: str, dni: str | None = None) -> str:
-    await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-    resolved_dni = dni or "".join(character for character in phone if character.isdigit())[-8:]
-    return await service.process_message(tenant, f"whatsapp:+{phone}", resolved_dni)
     asyncio.run(
         create_user(
             db_session,
@@ -458,7 +458,6 @@ async def _start_known_patient(service, tenant, phone: str, dni: str | None = No
             json={
                 "to_number": "whatsapp:+739",
                 "from_number": f"whatsapp:+{phone}",
-                "patient_id": paciente_id,
                 "message": message,
             },
         )
@@ -466,11 +465,11 @@ async def _start_known_patient(service, tenant, phone: str, dni: str | None = No
         return response.json()["reply"]
 
     first_reply = send("hola")
-    assert "DNI" in first_reply
+    assert "para vos" in first_reply.lower()
     assert "Ana Identificada" not in first_reply
     assert "Turno presencial" not in first_reply
 
-    identified_reply = send("30.111.222")
+    identified_reply = send("1")
     assert "Hola Ana Identificada" in identified_reply
     assert "1) Turno presencial" in identified_reply
 
@@ -492,6 +491,215 @@ async def _start_known_patient(service, tenant, phone: str, dni: str | None = No
     assert patients[0].obra_social == "OSDE"
     assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
     assert state.contexto_json["patient_id"] == paciente_id
+
+
+def test_simulator_api_lets_contact_choose_an_associated_patient_without_cross_tenant_exposure(
+    client,
+    db_session,
+):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Shared Contact", "whatsapp:+744"))
+    other_tenant_id = asyncio.run(create_tenant(db_session, "Tenant Hidden Contact", "whatsapp:+745"))
+    phone = "5491174400001"
+    first_patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            phone,
+            nombre="Ana",
+            apellido="Asociada",
+            dni="34111222",
+        )
+    )
+    second_patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            phone,
+            nombre="Beto",
+            apellido="Asociado",
+            dni="35222333",
+        )
+    )
+    asyncio.run(
+        create_paciente(
+            db_session,
+            other_tenant_id,
+            phone,
+            nombre="Paciente",
+            apellido="No Expuesto",
+            dni="36333444",
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "admin-shared-contact@test.com",
+            hash_password("secret-123"),
+            UserRole.SUPER_ADMIN.value,
+            None,
+        )
+    )
+    login(client, "admin-shared-contact@test.com", "secret-123")
+    csrf_token = _extract_csrf(client.get("/admin/chat-simulator").text)
+
+    def send(message: str, *, from_phone: str = phone) -> str:
+        response = client.post(
+            "/admin/chat-simulator/api",
+            headers={"X-CSRF-Token": csrf_token},
+            json={
+                "to_number": "whatsapp:+744",
+                "from_number": f"whatsapp:+{from_phone}",
+                "message": message,
+            },
+        )
+        assert response.status_code == 200
+        return response.json()["reply"]
+
+    first_reply = send("hola")
+    assert "para vos" in first_reply.lower()
+    assert "otra persona" in first_reply.lower()
+
+    patient_options = send("2")
+    assert "Ana Asociada" in patient_options
+    assert "Beto Asociado" in patient_options
+    assert "No Expuesto" not in patient_options
+
+    selected_reply = send("2")
+    assert "Hola Beto Asociado" in selected_reply
+
+    async def load_state():
+        async with db_session() as session:
+            return await ConversacionRepository(session).get_state(tenant_id, phone)
+
+    state = asyncio.run(load_state())
+    assert state.contexto_json["patient_id"] == second_patient_id
+    assert state.contexto_json["patient_id"] != first_patient_id
+
+
+def test_simulator_api_links_a_new_patient_to_the_contact_for_later_conversations(client, db_session):
+    asyncio.run(create_tenant(db_session, "Tenant New Association", "whatsapp:+746"))
+    phone = "5491174600001"
+    asyncio.run(
+        create_user(
+            db_session,
+            "admin-new-association@test.com",
+            hash_password("secret-123"),
+            UserRole.SUPER_ADMIN.value,
+            None,
+        )
+    )
+    login(client, "admin-new-association@test.com", "secret-123")
+    csrf_token = _extract_csrf(client.get("/admin/chat-simulator").text)
+
+    def send(message: str) -> str:
+        response = client.post(
+            "/admin/chat-simulator/api",
+            headers={"X-CSRF-Token": csrf_token},
+            json={
+                "to_number": "whatsapp:+746",
+                "from_number": f"whatsapp:+{phone}",
+                "message": message,
+            },
+        )
+        assert response.status_code == 200
+        return response.json()["reply"]
+
+    assert "otra persona" in send("hola").lower()
+    assert "DNI" in send("2")
+    assert "nombre" in send("37.444.555").lower()
+    assert "apellido" in send("Cecilia").lower()
+    assert "email" in send("Representada").lower()
+    assert "Particular" in send("cecilia.representada@example.com")
+    completed_reply = send("3")
+    assert "Hola Cecilia Representada" in completed_reply
+
+    send("salir")
+    assert "otra persona" in send("hola").lower()
+    associated_options = send("2")
+    assert "Cecilia Representada" in associated_options
+
+
+def test_simulator_api_keeps_an_existing_unassociated_patient_private_and_does_not_duplicate_it(
+    client,
+    db_session,
+):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Pending Association", "whatsapp:+747"))
+    patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491174700099",
+            nombre="Dario",
+            apellido="Protegido",
+            dni="38.555.666",
+        )
+    )
+    phone = "5491174700001"
+    asyncio.run(
+        create_user(
+            db_session,
+            "admin-pending-association@test.com",
+            hash_password("secret-123"),
+            UserRole.SUPER_ADMIN.value,
+            None,
+        )
+    )
+    login(client, "admin-pending-association@test.com", "secret-123")
+    csrf_token = _extract_csrf(client.get("/admin/chat-simulator").text)
+
+    def send(message: str, *, from_phone: str = phone) -> str:
+        response = client.post(
+            "/admin/chat-simulator/api",
+            headers={"X-CSRF-Token": csrf_token},
+            json={
+                "to_number": "whatsapp:+747",
+                "from_number": f"whatsapp:+{from_phone}",
+                "message": message,
+            },
+        )
+        assert response.status_code == 200
+        return response.json()["reply"]
+
+    send("hola", from_phone="5491174700099")
+    approved_reply = send("1", from_phone="5491174700099")
+    assert "Turno presencial" in approved_reply
+
+    send("hola")
+    send("2")
+    pending_reply = send("38.555.666")
+    assert "pendiente" in pending_reply.lower()
+    assert "Dario" not in pending_reply
+    assert "Protegido" not in pending_reply
+    assert "Turno presencial" not in pending_reply
+
+    repeated_reply = send("1")
+    assert "pendiente" in repeated_reply.lower()
+    assert "Dario" not in repeated_reply
+
+    async def load_result():
+        async with db_session() as session:
+            patients = list(
+                (
+                    await session.execute(select(Paciente).where(Paciente.tenant_id == tenant_id))
+                ).scalars().all()
+            )
+            state = await ConversacionRepository(session).get_state(tenant_id, phone)
+            links = list(
+                (
+                    await session.execute(
+                        select(PatientContactLink).where(
+                            PatientContactLink.tenant_id == tenant_id,
+                            PatientContactLink.patient_id == patient_id,
+                        )
+                    )
+                ).scalars().all()
+            )
+            return patients, state, links
+
+    patients, state, links = asyncio.run(load_result())
+    assert len(patients) == 1
+    assert "patient_id" not in state.contexto_json
+    assert sorted(link.status for link in links) == ["approved", "pending"]
 
 
 def test_simulator_api_registers_new_private_patient_without_insurance_number(client, db_session):
@@ -522,7 +730,8 @@ def test_simulator_api_registers_new_private_patient_without_insurance_number(cl
         assert response.status_code == 200
         return response.json()["reply"]
 
-    assert "DNI" in send("hola")
+    assert "otra persona" in send("hola").lower()
+    assert "DNI" in send("1")
     assert "nombre" in send("32.222.333").lower()
     assert "apellido" in send("Berta").lower()
     assert "email" in send("Nueva").lower()
@@ -598,6 +807,7 @@ def test_simulator_api_requires_entity_and_member_number_for_health_coverage(
         return response.json()["reply"]
 
     send("hola")
+    send("1")
     send("33.333.444")
     send("Carla")
     send("Cobertura")
@@ -676,9 +886,9 @@ def test_simulator_api_normalizes_dni_and_keeps_patient_identity_isolated_by_ten
         return response.json()["reply"]
 
     send("whatsapp:+742", "whatsapp:+5491174200001", "hola")
-    reply_a = send("whatsapp:+742", "whatsapp:+5491174200001", "30-555-666")
+    reply_a = send("whatsapp:+742", "whatsapp:+5491174200001", "1")
     send("whatsapp:+743", "whatsapp:+5491174300001", "hola")
-    reply_b = send("whatsapp:+743", "whatsapp:+5491174300001", "30.555.666")
+    reply_b = send("whatsapp:+743", "whatsapp:+5491174300001", "1")
 
     assert "Hola Paciente Tenant A" in reply_a
     assert "Tenant B" not in reply_a
@@ -789,7 +999,7 @@ def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(clie
         return response.json()["reply"]
 
     send("hola")
-    send("30.111.999")
+    send("1")
     send("2")
     send("1")
     offered_reply = send("2")
@@ -1378,13 +1588,13 @@ def test_first_message_unregistered_starts_signup_with_tenant_name(db_session):
             service = _service(session)
             reply = await service.process_message(tenant, "whatsapp:+5491172100001", "hola")
             assert "asistente de Consultorio Medico B" in reply
-            assert "DNI del Paciente" in reply
+            assert "para vos o para otra persona" in reply
             assert "1) Turno presencial" not in reply
 
             repo = ConversacionRepository(session)
             state = await repo.get_state(tenant.id, "5491172100001")
             assert state is not None
-            assert state.estado_actual == ConversationState.ASK_PATIENT_DNI.value
+            assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
 
     asyncio.run(run())
 
@@ -1397,6 +1607,7 @@ def test_new_patient_signup_completes_and_shows_main_menu(db_session):
         async with db_session() as session:
             service = _service(session)
             await service.process_message(tenant, "whatsapp:+5491172200001", "hola")
+            await service.process_message(tenant, "whatsapp:+5491172200001", "1")
             await service.process_message(tenant, "whatsapp:+5491172200001", "30123123")
             await service.process_message(tenant, "whatsapp:+5491172200001", "Lucia")
             await service.process_message(tenant, "whatsapp:+5491172200001", "Suarez")
@@ -1473,7 +1684,7 @@ def test_phone_isolation_between_tenants(db_session):
 
             state = await ConversacionRepository(session).get_state(tenant_b_obj.id, "5491172400001")
             assert state is not None
-            assert state.estado_actual == ConversationState.ASK_PATIENT_DNI.value
+            assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
 
     asyncio.run(run())
 
@@ -1673,7 +1884,7 @@ def test_recipe_media_sets_flags(db_session):
     asyncio.run(run())
 
 
-def test_web_patient_create_does_not_duplicate_by_phone(client, db_session):
+def test_web_patient_create_allows_multiple_patients_for_the_same_contact_phone(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Dedup", "whatsapp:+706"))
     asyncio.run(create_paciente(db_session, tenant_id, "5491170600001"))
     asyncio.run(
@@ -1705,8 +1916,7 @@ def test_web_patient_create_does_not_duplicate_by_phone(client, db_session):
         follow_redirects=False,
     )
     assert response.status_code in (302, 303)
-    assert "/t/pacientes/" in response.headers["location"]
-    assert response.headers["location"].endswith("/edit")
+    assert response.headers["location"] == "/t/pacientes"
 
     async def count_patients():
         async with db_session() as session:
@@ -1715,4 +1925,4 @@ def test_web_patient_create_does_not_duplicate_by_phone(client, db_session):
             )
             return len(list(result.scalars().all()))
 
-    assert asyncio.run(count_patients()) == 1
+    assert asyncio.run(count_patients()) == 2

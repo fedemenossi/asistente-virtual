@@ -21,7 +21,7 @@ class PacienteRepository:
             Paciente.tenant_id == tenant_id,
             Paciente.deleted_at.is_(None),
             normalize_phone_expr(Paciente.telefono) == normalized,
-        )
+        ).order_by(Paciente.id).limit(1)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 

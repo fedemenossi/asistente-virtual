@@ -12,6 +12,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.db import engine
+from app.core.timezone import now_ba
 from app.models import (  # noqa: F401
     AuditLog,
     BillingEmailLog,
@@ -241,6 +242,13 @@ class PatientDniMigrationResult:
     duplicates_cleared: int
 
 
+@dataclass(frozen=True)
+class PatientContactMigrationResult:
+    contacts_created: int
+    links_created: int
+    skipped_patients: int
+
+
 async def upgrade_patient_dni_identity(conn) -> PatientDniMigrationResult:
     columns = await conn.run_sync(
         lambda sync_conn: {column["name"] for column in inspect(sync_conn).get_columns("pacientes")}
@@ -291,6 +299,100 @@ async def upgrade_patient_dni_identity(conn) -> PatientDniMigrationResult:
     )
 
 
+async def upgrade_patient_contact_links(conn) -> PatientContactMigrationResult:
+    patients = list(
+        (
+            await conn.execute(
+                text(
+                    "SELECT id, tenant_id, telefono FROM pacientes "
+                    "WHERE deleted_at IS NULL ORDER BY id"
+                )
+            )
+        ).mappings().all()
+    )
+    contact_rows = list(
+        (
+            await conn.execute(
+                text("SELECT id, tenant_id, phone_normalized FROM whatsapp_contacts")
+            )
+        ).mappings().all()
+    )
+    contacts = {
+        (int(row["tenant_id"]), str(row["phone_normalized"])): int(row["id"])
+        for row in contact_rows
+    }
+    link_rows = list(
+        (
+            await conn.execute(
+                text("SELECT tenant_id, contact_id, patient_id FROM patient_contact_links")
+            )
+        ).mappings().all()
+    )
+    links = {
+        (int(row["tenant_id"]), int(row["contact_id"]), int(row["patient_id"]))
+        for row in link_rows
+    }
+    contacts_created = 0
+    links_created = 0
+    skipped_patients = 0
+    timestamp = now_ba()
+
+    for patient in patients:
+        phone_normalized = "".join(
+            character for character in str(patient["telefono"] or "") if character.isdigit()
+        )
+        if not phone_normalized:
+            skipped_patients += 1
+            continue
+        tenant_id = int(patient["tenant_id"])
+        patient_id = int(patient["id"])
+        contact_key = (tenant_id, phone_normalized)
+        contact_id = contacts.get(contact_key)
+        if contact_id is None:
+            result = await conn.execute(
+                text(
+                    "INSERT INTO whatsapp_contacts "
+                    "(tenant_id, phone_normalized, created_at, updated_at) "
+                    "VALUES (:tenant_id, :phone_normalized, :created_at, :updated_at)"
+                ),
+                {
+                    "tenant_id": tenant_id,
+                    "phone_normalized": phone_normalized,
+                    "created_at": timestamp,
+                    "updated_at": timestamp,
+                },
+            )
+            contact_id = int(result.lastrowid)
+            contacts[contact_key] = contact_id
+            contacts_created += 1
+
+        link_key = (tenant_id, contact_id, patient_id)
+        if link_key in links:
+            continue
+        await conn.execute(
+            text(
+                "INSERT INTO patient_contact_links "
+                "(tenant_id, contact_id, patient_id, status, created_at, updated_at) "
+                "VALUES (:tenant_id, :contact_id, :patient_id, 'approved', :created_at, :updated_at)"
+            ),
+            {
+                "tenant_id": tenant_id,
+                "contact_id": contact_id,
+                "patient_id": patient_id,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            },
+        )
+        links.add(link_key)
+        links_created += 1
+
+    return PatientContactMigrationResult(
+        contacts_created=contacts_created,
+        links_created=links_created,
+        skipped_patients=skipped_patients,
+    )
+
+
 async def upgrade(db_engine: AsyncEngine, *, dispose: bool = True) -> None:
     url = make_url(db_engine.url)
     db_name = url.database
@@ -317,6 +419,7 @@ async def upgrade(db_engine: AsyncEngine, *, dispose: bool = True) -> None:
                     await _add_column(conn, table, column, ddl)
 
             await upgrade_patient_dni_identity(conn)
+            await upgrade_patient_contact_links(conn)
 
             invoice_series_index = "uq_arca_invoice_number_scope"
             if not await _index_exists(conn, db_name, "billing_invoices", invoice_series_index):

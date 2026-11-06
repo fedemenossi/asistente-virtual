@@ -51,6 +51,7 @@ class Paciente(Base, TimestampMixin, SoftDeleteMixin):
     tenant = relationship("Tenant", back_populates="pacientes")
     turnos = relationship("Turno", back_populates="paciente")
     payments = relationship("Payment", back_populates="patient")
+    contact_links = relationship("PatientContactLink", back_populates="patient")
 
     @validates("dni")
     def _set_normalized_dni(self, _key: str, value: str) -> str:
