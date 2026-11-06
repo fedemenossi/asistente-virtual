@@ -92,7 +92,13 @@ async def _get_virtual_slots(
             end_at=slot.end_at,
             timezone=slot.timezone or tz_name,
             provider=slot.provider or "google_calendar",
-            metadata={"calendar_id_hash": _hash_value(slot.calendar_id)},
+            metadata={
+                "calendar_id_hash": _hash_value(slot.calendar_id),
+                # La referencia autoritativa queda solamente en el estado del
+                # servidor; el paciente selecciona el identificador opaco.
+                "consultorio_id": consultorio.id,
+                "external_event_id": slot.slot_id,
+            },
         )
         for slot in slots[:limit]
     ]

@@ -73,6 +73,114 @@ class AppointmentService:
         await self._session.flush()
         return turno
 
+    async def reserve_without_payment(
+        self,
+        *,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        paciente: Paciente,
+        slot_id: str,
+        start_at: datetime,
+        end_at: datetime,
+        timezone_name: str,
+    ) -> tuple[Turno, dict]:
+        existing_result = await self._session.execute(
+            select(Turno).where(
+                Turno.tenant_id == tenant.id,
+                Turno.consultorio_id == consultorio.id,
+                Turno.paciente_id == paciente.id,
+                Turno.external_event_id == slot_id,
+                Turno.status == AppointmentStatus.CONFIRMED,
+                Turno.deleted_at.is_(None),
+            )
+        )
+        existing = existing_result.scalar_one_or_none()
+        if existing is not None:
+            return existing, {
+                "event_id": existing.external_event_id,
+                "calendar_id": existing.external_calendar_id,
+                "meet_link": existing.referencia_externa,
+                "idempotent": True,
+            }
+
+        tipo_turno = (
+            TipoTurno.VIRTUAL if consultorio.tipo == TipoConsultorio.VIRTUAL else TipoTurno.PRESENCIAL
+        )
+        provider_name = self._calendar.resolve_provider_name(consultorio)
+        turno = await self.create_local_turno(
+            tenant=tenant,
+            consultorio=consultorio,
+            paciente=paciente,
+            tipo=tipo_turno,
+            start_at=start_at,
+            end_at=end_at,
+            timezone_name=timezone_name,
+            provider=provider_name,
+            external_id=slot_id,
+            external_status="reserving",
+            status=AppointmentStatus.DRAFT,
+            estado=EstadoTurno.DRAFT,
+            notes="Reserva solicitada desde el Asistente.",
+        )
+        try:
+            result = await self._calendar.reserve_slot(
+                tenant,
+                consultorio,
+                slot_id,
+                paciente,
+                {"tenant_id": tenant.id},
+            )
+        except Exception:
+            turno.status = AppointmentStatus.CANCELLED
+            turno.estado = EstadoTurno.CANCELADO
+            turno.external_status = "sync_failed"
+            turno.cancelled_at = now_ba()
+            turno.cancellation_reason = "slot_unavailable"
+            await audit_log(
+                self._session,
+                None,
+                None,
+                action="slot_unavailable",
+                entity="turno",
+                entity_id=turno.id,
+                tenant_id=tenant.id,
+            )
+            await self._session.flush()
+            raise
+
+        turno.external_calendar_id = result.get("calendar_id") or turno.external_calendar_id
+        turno.external_event_id = result.get("event_id") or slot_id
+        turno.external_id = turno.external_event_id
+        turno.external_status = "reserved"
+        turno.status = AppointmentStatus.CONFIRMED
+        turno.estado = EstadoTurno.CONFIRMADO
+        turno.referencia_externa = result.get("meet_link")
+        if result.get("start_at"):
+            turno.start_at = datetime.fromisoformat(result["start_at"].replace("Z", "+00:00"))
+            turno.fecha_hora = turno.start_at
+        if result.get("end_at"):
+            turno.end_at = datetime.fromisoformat(result["end_at"].replace("Z", "+00:00"))
+        turno.timezone = result.get("timezone") or turno.timezone
+        await audit_log(
+            self._session,
+            None,
+            None,
+            action="confirm",
+            entity="turno",
+            entity_id=turno.id,
+            tenant_id=tenant.id,
+            metadata={"source": "assistant", "payment_required": False},
+        )
+        await create_notification(
+            self._session,
+            title="Turno confirmado",
+            message=f"Turno #{turno.id} confirmado desde el Asistente.",
+            notif_type="success",
+            tenant_id=tenant.id,
+        )
+        await self._session.flush()
+        return turno, result
+
     async def list_turnos_by_tenant_and_date(
         self,
         tenant_id: int,

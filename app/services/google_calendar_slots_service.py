@@ -30,7 +30,7 @@ WEEKDAY_LABELS = {
 }
 
 DEFAULT_AVAILABLE_TAG = "[TURNO DISPONIBLE]"
-DEFAULT_RESERVED_TAG_TEMPLATE = "[TURNO {patient_full_name}]"
+DEFAULT_RESERVED_TAG_TEMPLATE = "TURNO [{patient_full_name}]"
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
 
 

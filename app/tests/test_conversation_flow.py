@@ -16,7 +16,10 @@ from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.services.conversation_service import ConversationService, ConversationState
 from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_turno, create_user, get_tenant, login
+from app.integrations.interfaces import CalendarSlot
+from app.models.consultorio import TipoConsultorio
 from app.models.paciente import Paciente
+from app.models.turno import AppointmentStatus, Turno
 
 
 def _tools_ai_settings(**overrides):
@@ -398,6 +401,239 @@ def test_slot_selection_and_confirmation_do_not_book(monkeypatch, db_session):
             assert "reserva_real=no" in state.pending_message
 
     asyncio.run(run())
+
+
+def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Google Booking",
+            "whatsapp:+737",
+            ai_settings=_tools_ai_settings(),
+            calendar_settings={"default_timezone": "America/Argentina/Buenos_Aires"},
+        )
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Google",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": {"calendar_id": "calendar-1"}},
+        )
+    )
+    phone = "5491173700001"
+    paciente_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            phone,
+            nombre="Ana",
+            apellido="Gomez",
+            obra_social="OSDE",
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "admin-google-booking@test.com",
+            hash_password("secret-123"),
+            UserRole.SUPER_ADMIN.value,
+            None,
+        )
+    )
+    login(client, "admin-google-booking@test.com", "secret-123")
+
+    start = now_ba() + timedelta(days=2)
+    end = start + timedelta(minutes=30)
+    reservation_calls = []
+
+    async def controlled_slots(self, tenant, consultorio, window_start, window_end):
+        return [
+            CalendarSlot(
+                slot_id="google-event-1",
+                start_at=start,
+                end_at=end,
+                timezone="America/Argentina/Buenos_Aires",
+                provider="google_calendar",
+                calendar_id="calendar-1",
+            )
+        ]
+
+    async def controlled_reservation(self, tenant, consultorio, slot_id, patient, metadata):
+        reservation_calls.append((tenant.id, consultorio.id, slot_id, patient.id, metadata))
+        return {
+            "event_id": slot_id,
+            "calendar_id": "calendar-1",
+            "start_at": start.isoformat(),
+            "end_at": end.isoformat(),
+            "timezone": "America/Argentina/Buenos_Aires",
+            "html_link": "https://calendar.google.com/event?eid=google-event-1",
+            "meet_link": "https://meet.google.com/abc-defg-hij",
+        }
+
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.list_available_slots", controlled_slots)
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.reserve_slot", controlled_reservation)
+
+    simulator_page = client.get("/admin/chat-simulator")
+    csrf_token = _extract_csrf(simulator_page.text)
+    assert "puede modificar el Google Calendar configurado" in simulator_page.text
+
+    def send(message: str):
+        response = client.post(
+            "/admin/chat-simulator/api",
+            headers={"X-CSRF-Token": csrf_token},
+            json={
+                "to_number": "whatsapp:+737",
+                "from_number": f"whatsapp:+{phone}",
+                "patient_id": paciente_id,
+                "message": message,
+            },
+        )
+        assert response.status_code == 200
+        return response.json()["reply"]
+
+    send("hola")
+    send("2")
+    send("1")
+    offered_reply = send("2")
+    assert "turnos virtuales disponibles" in offered_reply
+
+    selection_reply = send("1")
+    assert "Confirmas que queres reservarlo" in selection_reply
+    assert reservation_calls == []
+
+    confirmation_reply = send("1")
+    assert "Turno confirmado" in confirmation_reply
+    assert "https://calendar.google.com/event?eid=google-event-1" in confirmation_reply
+    assert "https://meet.google.com/abc-defg-hij" in confirmation_reply
+    assert reservation_calls == [
+        (tenant_id, consultorio_id, "google-event-1", paciente_id, {"tenant_id": tenant_id})
+    ]
+
+    send("1")
+    assert len(reservation_calls) == 1
+
+    async def load_turnos():
+        async with db_session() as session:
+            result = await session.execute(select(Turno).where(Turno.tenant_id == tenant_id))
+            return list(result.scalars().all())
+
+    turnos = asyncio.run(load_turnos())
+    assert len(turnos) == 1
+    assert turnos[0].status == AppointmentStatus.CONFIRMED
+    assert turnos[0].external_event_id == "google-event-1"
+    assert turnos[0].external_calendar_id == "calendar-1"
+    assert turnos[0].referencia_externa == "https://meet.google.com/abc-defg-hij"
+
+
+def test_simulator_api_does_not_confirm_when_google_rejects_the_slot(client, db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Google Conflict",
+            "whatsapp:+738",
+            ai_settings=_tools_ai_settings(),
+        )
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Conflict",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": {"calendar_id": "calendar-conflict"}},
+        )
+    )
+    phone = "5491173800001"
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, phone, obra_social="OSDE"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "admin-google-conflict@test.com",
+            hash_password("secret-123"),
+            UserRole.SUPER_ADMIN.value,
+            None,
+        )
+    )
+    login(client, "admin-google-conflict@test.com", "secret-123")
+
+    start = now_ba() + timedelta(days=3)
+    end = start + timedelta(minutes=30)
+
+    async def seed_confirmation_state():
+        async with db_session() as session:
+            repo = ConversacionRepository(session)
+            await repo.upsert_state(
+                tenant_id,
+                phone,
+                ConversationState.ASK_AI_BOOKING_CONFIRMATION.value,
+                {
+                    "patient_id": paciente_id,
+                    "reason": "turno_virtual",
+                    "for_whom": "self",
+                    "first_time": False,
+                    "appointment": {
+                        "type": "virtual",
+                        "awaiting_booking_confirmation": True,
+                        "selected_slot": {
+                            "option": 1,
+                            "label": "Viernes 30/05 a las 10:00",
+                            "start_at": start.isoformat(),
+                            "end_at": end.isoformat(),
+                            "timezone": "America/Argentina/Buenos_Aires",
+                            "provider": "google_calendar",
+                            "metadata": {
+                                "consultorio_id": consultorio_id,
+                                "external_event_id": "google-event-conflict",
+                            },
+                        },
+                    },
+                },
+            )
+            await session.commit()
+
+    asyncio.run(seed_confirmation_state())
+
+    async def rejected_reservation(self, tenant, consultorio, slot_id, patient, metadata):
+        raise RuntimeError("Slot no disponible")
+
+    async def no_more_slots(self, tenant, consultorio, window_start, window_end):
+        return []
+
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.reserve_slot", rejected_reservation)
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.list_available_slots", no_more_slots)
+
+    simulator_page = client.get("/admin/chat-simulator")
+    response = client.post(
+        "/admin/chat-simulator/api",
+        headers={"X-CSRF-Token": _extract_csrf(simulator_page.text)},
+        json={
+            "to_number": "whatsapp:+738",
+            "from_number": f"whatsapp:+{phone}",
+            "patient_id": paciente_id,
+            "message": "1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "No pude reservar ese horario" in response.json()["reply"]
+    assert "No confirme ningun turno" in response.json()["reply"]
+    assert "Turno confirmado" not in response.json()["reply"]
+
+    async def load_result():
+        async with db_session() as session:
+            turnos_result = await session.execute(select(Turno).where(Turno.tenant_id == tenant_id))
+            state = await ConversacionRepository(session).get_state(tenant_id, phone)
+            return list(turnos_result.scalars().all()), state
+
+    turnos, state = asyncio.run(load_result())
+    assert len(turnos) == 1
+    assert turnos[0].status == AppointmentStatus.CANCELLED
+    assert not any(turno.status == AppointmentStatus.CONFIRMED for turno in turnos)
+    assert state.status == "active"
 
 
 def test_tools_high_urgency_does_not_lookup(monkeypatch, db_session):

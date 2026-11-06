@@ -453,6 +453,15 @@ class ConversationService:
                 )
             appointment = context.setdefault("appointment", {})
             appointment["awaiting_booking_confirmation"] = False
+            if context.get("for_whom") == "self" and not self._appointment_requires_payment(context, paciente):
+                return await self._reserve_selected_appointment(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    paciente=paciente,
+                    context=context,
+                    original_text=text,
+                    has_media=has_media,
+                )
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -1092,6 +1101,7 @@ class ConversationService:
                     "label": slot.get("label"),
                     "start_at": slot.get("start_at"),
                     "end_at": slot.get("end_at"),
+                    "timezone": slot.get("timezone"),
                     "provider": slot.get("provider"),
                     "metadata": slot.get("metadata") or {},
                 }
@@ -1113,6 +1123,122 @@ class ConversationService:
         lines.extend(f"{slot['option']}) {slot['label']}" for slot in offered)
         lines.append("Responde con el numero de opcion que preferis.")
         return "\n".join(lines)
+
+    async def _reserve_selected_appointment(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        paciente: Paciente | None,
+        context: dict,
+        original_text: str,
+        has_media: bool,
+    ) -> str:
+        appointment = context.setdefault("appointment", {})
+        selected = appointment.get("selected_slot") or {}
+        metadata = selected.get("metadata") or {}
+        consultorio_id = metadata.get("consultorio_id")
+        external_event_id = metadata.get("external_event_id")
+        if paciente is None or not consultorio_id or not external_event_id:
+            return await self._booking_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+            )
+        consultorio = await self._session.get(Consultorio, int(consultorio_id))
+        if consultorio is None or consultorio.tenant_id != tenant.id:
+            return await self._booking_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+            )
+        try:
+            start_at = datetime.fromisoformat(str(selected["start_at"]).replace("Z", "+00:00"))
+            end_at = datetime.fromisoformat(str(selected["end_at"]).replace("Z", "+00:00"))
+            turno, reservation = await AppointmentService(self._session).reserve_without_payment(
+                tenant=tenant,
+                consultorio=consultorio,
+                paciente=paciente,
+                slot_id=str(external_event_id),
+                start_at=start_at,
+                end_at=end_at,
+                timezone_name=str(selected.get("timezone") or "America/Argentina/Buenos_Aires"),
+            )
+        except Exception:
+            logger.exception(
+                "chat_google_booking_failed tenant_id=%s phone=%s consultorio_id=%s",
+                tenant.id,
+                phone,
+                consultorio_id,
+            )
+            return await self._booking_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+            )
+
+        appointment["booking_result"] = {
+            "turno_id": turno.id,
+            "external_event_id": turno.external_event_id,
+            "html_link": reservation.get("html_link"),
+            "meet_link": reservation.get("meet_link"),
+        }
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.ASK_AI_BOOKING_CONFIRMATION.value,
+            context,
+            conversation_category=self._appointment_category_from_context(context),
+            last_patient_message=original_text,
+            has_media=has_media,
+        )
+        await self._conversacion_repo.mark_resolved(
+            tenant.id,
+            phone,
+            close_reason="appointment_confirmed",
+        )
+        lines = [f"Turno confirmado para el {selected.get('label')}."]
+        if reservation.get("html_link"):
+            lines.append(f"Evento de Google Calendar: {reservation['html_link']}")
+        if reservation.get("meet_link"):
+            lines.append(f"Google Meet: {reservation['meet_link']}")
+        return "\n".join(lines)
+
+    async def _booking_failure_reply(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        context: dict,
+        original_text: str,
+        has_media: bool,
+    ) -> str:
+        appointment = context.setdefault("appointment", {})
+        appointment["selected_slot"] = None
+        appointment["awaiting_booking_confirmation"] = False
+        appointment["awaiting_slot_selection"] = False
+        follow_up = await self._offer_appointment_slots_if_available(
+            tenant=tenant,
+            phone=phone,
+            context=context,
+            original_text=original_text,
+            has_media=has_media,
+            media_items=[],
+            force_manual_on_unavailable=False,
+        )
+        return f"No pude reservar ese horario porque ya no esta disponible. No confirme ningun turno.\n{follow_up}"
+
+    @staticmethod
+    def _appointment_requires_payment(context: dict, paciente: Paciente | None) -> bool:
+        first_time = bool(context.get("first_time"))
+        coverage = str(getattr(paciente, "obra_social", "") or "").strip().lower()
+        return first_time and coverage in {"", "particular", "sin cobertura"}
 
     async def _ask_missing_before_availability(
         self,
