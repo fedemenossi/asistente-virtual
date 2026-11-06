@@ -1,46 +1,222 @@
 # Asistente Virtual Médico
 
-SaaS para consultorios médicos que concentra la atención por WhatsApp y la operación clínica y administrativa de cada organización. Cada tenant opera sus datos, configuraciones y procesos de manera aislada.
+SaaS para profesionales médicos que concentra la atención de Pacientes por WhatsApp y administra la operación clínica y administrativa de cada Tenant de manera aislada.
 
 ## Organización y atención
 
 **Tenant**:
-La organización o profesional que contrata y opera el sistema. Es el límite de aislamiento para la información, la configuración y la operación.
-_Evitar_: cliente, cuenta, consultorio
+El profesional que contrata y opera el sistema. Es el límite de aislamiento para su información, configuración y operación; dos profesionales distintos siempre pertenecen a Tenants separados, aunque trabajen en una misma institución.
+_Evitar_: clínica, organización, cliente, cuenta, consultorio
+
+**Operador**:
+Persona que gestiona un Tenant en nombre del profesional. En la primera versión, el profesional y su secretaria comparten una única identidad operativa y el sistema no distingue cuál de ellos realiza cada acción.
+_Evitar_: paciente, profesional autenticado, rol de secretaria
 
 **Consultorio**:
-Unidad de atención de un Tenant en la que se realizan turnos presenciales o virtuales. Puede apoyarse en un proveedor externo de agenda.
+Unidad de atención de un Tenant en la que el profesional realiza turnos presenciales o virtuales. Un profesional puede tener varios Consultorios y cada Consultorio mantiene su propia agenda, que puede apoyarse en un proveedor externo.
 _Evitar_: tenant, sede (salvo que se incorpore como concepto propio)
 
+**Agenda del Consultorio**:
+Conjunto de días, horarios, Disponibilidades y Turnos propios de un Consultorio. Dos Consultorios del mismo Tenant mantienen agendas independientes, aunque compartan modalidad de atención.
+_Evitar_: agenda del tenant, calendario global, consultorio
+
+**Franja de atención**:
+Período semanal recurrente en el que un Consultorio puede ofrecer atención, definido por día de la semana y horario. Un Consultorio puede tener varias franjas y cada una limita las Disponibilidades que pueden ofrecerse.
+_Evitar_: disponibilidad, turno, horario excepcional
+
+**Modalidad de atención**:
+Forma en la que se realiza una atención, presencial o virtual. La modalidad solicitada determina qué Consultorios y Agendas del Consultorio pueden evaluarse antes de aplicar las Reglas de elegibilidad.
+_Evitar_: consultorio, fuente de agenda, tipo de calendario
+
+**Fuente de agenda**:
+Origen autorizado desde el que se obtienen y reservan las Disponibilidades de una Agenda del Consultorio. Cada Consultorio define su propia Fuente de agenda y esa fuente conserva la autoridad sobre sus horarios, ya sea DrApp o Google Calendar.
+_Evitar_: disponibilidad, turno, agenda global
+
+**Agenda automatizable**:
+Agenda del Consultorio cuya Fuente de agenda permite al sistema consultar y reservar Disponibilidades de forma segura. El Asistente de WhatsApp solo puede ofrecer horarios de Agendas automatizables.
+_Evitar_: agenda consultable, agenda visible, integración de solo lectura
+
+**Generación automática de disponibilidades**:
+Creación masiva de Disponibilidades en Google Calendar, iniciada por el Operador desde la interfaz y calculada a partir de las Franjas de atención configuradas. Abastece las agendas basadas en Google Calendar sin reemplazar las Disponibilidades propias de DrApp.
+_Evitar_: reserva automática, turno confirmado, carga manual de turnos
+
 **Paciente**:
-Persona que recibe atención dentro de un Tenant. Sus datos de contacto, identificación y condición frente al IVA se gestionan de forma aislada por Tenant y esta última se preselecciona al facturarle manualmente.
+Persona que recibe atención dentro de un Tenant, identificada de manera única por su DNI dentro de ese Tenant. Puede vincularse a uno o más Contactos de WhatsApp, y cada Contacto puede representar a varios Pacientes.
 _Evitar_: usuario, cliente
+
+**Paciente asociado**:
+Paciente previamente vinculado a un Contacto de WhatsApp. Forma parte de la nómina que el Solicitante puede reutilizar para identificar a quién corresponde una nueva atención, sin crear un Paciente duplicado.
+_Evitar_: contacto, solicitante, paciente nuevo
+
+**Identificación del Paciente**:
+Paso obligatorio de una Conversación que determina a qué Paciente corresponde la gestión, mediante la selección de un Paciente asociado o el Alta de uno nuevo. Debe completarse antes de iniciar cualquier Solicitud operativa.
+_Evitar_: identificación por teléfono solamente, solicitante asumido, paciente implícito
+
+**Perfil mínimo del Paciente**:
+Conjunto de datos obligatorios para dar de alta a un Paciente: nombre, apellido, DNI, email y Cobertura de salud. La entidad de cobertura y el número de afiliado son obligatorios cuando la atención se gestiona por obra social o prepaga y pueden solicitarse a un particular como Datos de cobertura para facturación. Si el Paciente ya existe y se identifica por DNI, sus datos registrados se reutilizan sin volver a solicitarlos.
+_Evitar_: datos del solicitante, contexto transitorio de la conversación
+
+**Cobertura de salud**:
+Condición bajo la cual se gestiona la atención del Paciente, clasificada como obra social, prepaga o particular e identificada por la entidad específica cuando corresponde. Participa en las Reglas de elegibilidad y el Requisito de pago; un particular no deja de serlo por informar una prepaga para facturación o reintegro.
+_Evitar_: medio de pago, condición fiscal, número de afiliado
+
+**Datos de cobertura para facturación**:
+Prepaga u obra social y número de afiliado que se solicitan para emitir una factura o facilitar un reintegro, incluso cuando la Cobertura de salud del Turno sea particular. Ante una atención particular, el Asistente pregunta si el Paciente necesita factura para reintegro y solo solicita estos datos cuando la respuesta es afirmativa. Son datos administrativos y no modifican las Reglas de elegibilidad ni el Requisito de pago de la Solicitud de turno.
+_Evitar_: cobertura de atención, cambio de consultorio, exención del pago previo
+
+**Alta de Paciente**:
+Creación de un Paciente nuevo dentro de un Tenant después de comprobar que su DNI no está registrado y completar su Perfil mínimo. No corresponde realizar un Alta cuando el DNI ya identifica a un Paciente existente.
+_Evitar_: vinculación de contacto, actualización de paciente, registro duplicado
+
+**Primera consulta**:
+Condición de una Solicitud de turno que indica que el Paciente todavía no fue atendido por el profesional del Tenant. No forma parte de la identidad del Paciente, participa en las Reglas de elegibilidad y solo requiere pago previo cuando la Cobertura de salud es particular.
+_Evitar_: paciente nuevo, dato de identidad permanente
+
+**Requisito de pago**:
+Condición de una Primera consulta con Cobertura de salud particular que exige recibir un Pago aprobado antes de confirmar el Turno. No se aplica a obra social, prepaga ni a Pacientes ya atendidos por el profesional.
+_Evitar_: precio de consulta, pago opcional, requisito universal
+
+**Tarifa de primera consulta**:
+Importe y moneda configurados por el Operador en Pagos para cobrar las Solicitudes de turno con Requisito de pago. Pertenece al Tenant y no debe confundirse con el precio de un Ítem facturable ni con el importe de un Comprobante ARCA.
+_Evitar_: importe facturado, tarifa del consultorio, precio de facturación
+
+**Regla de elegibilidad**:
+Restricción parametrizable que determina si una Solicitud de turno puede utilizar un Consultorio, considerando al menos la Modalidad de atención, la condición de Primera consulta y la Cobertura de salud. Solo las agendas elegibles pueden aportar opciones a la Oferta de disponibilidad.
+_Evitar_: preferencia, sugerencia, filtro visual, regla codificada para un profesional
+
+**Contacto de WhatsApp**:
+Número desde el que una persona conversa con un Tenant. Puede corresponder al propio Paciente o a un familiar o representante que gestiona la atención de uno o más Pacientes.
+_Evitar_: paciente, usuario, identidad del paciente
+
+**Vinculación de contacto**:
+Asociación autorizada entre un Contacto de WhatsApp y un Paciente. Si un Contacto nuevo informa el DNI de un Paciente existente, la Vinculación requiere aprobación del Operador antes de exponer datos o permitir operaciones sobre ese Paciente.
+_Evitar_: coincidencia por DNI, asociación automática, autenticación por DNI
+
+**Solicitante**:
+Persona que utiliza un Contacto de WhatsApp para pedir atención. Puede solicitarla para sí misma o actuar en representación del Paciente que recibirá la atención.
+_Evitar_: paciente asumido, usuario del sistema
 
 **Turno**:
 Reserva operativa de atención para un Paciente en un Consultorio, con fecha, duración y estado propios. Puede estar sincronizado con un proveedor externo, pero el registro local conserva su trazabilidad operativa.
 _Evitar_: evento de calendario, slot
 
+**Turno pendiente de pago**:
+Turno de Primera consulta particular todavía no confirmado que conserva la Disponibilidad elegida mediante una Retención de disponibilidad mientras espera el resultado del cobro. Solo puede pasar a confirmado después de recibir un Pago aprobado y completar la reserva en la Fuente de agenda.
+_Evitar_: turno confirmado, disponibilidad libre, pago aprobado
+
+**Retención de disponibilidad**:
+Bloqueo temporal y exclusivo de una Disponibilidad de Primera consulta particular durante una hora mientras el Turno espera el pago. Impide ofrecer el mismo horario a otra persona y no equivale a una confirmación.
+_Evitar_: turno confirmado, reserva definitiva, disponibilidad libre
+
+**Expiración de reserva**:
+Finalización de un Turno pendiente de pago cuando no se recibe un Pago aprobado dentro de una hora. Libera la Disponibilidad retenida para que pueda volver a ofrecerse; un pago que se acredite después no recupera ese horario y se convierte en Saldo a favor del mismo Paciente.
+_Evitar_: cancelación de turno confirmado, rechazo de pago, confirmación tardía
+
+**Reserva automática**:
+Confirmación de una Disponibilidad mediante escritura exitosa en su Fuente de agenda y actualización del Turno correspondiente. Cuando existe un Requisito de pago solo se completa después de recibir un Pago aprobado; en los demás casos no exige pago previo.
+_Evitar_: selección de horario, solicitud pendiente, confirmación verbal
+
+**Confirmación de turno**:
+Respuesta posterior a una Reserva automática exitosa que informa al Solicitante que el Turno quedó reservado. Cuando existe un Requisito de pago requiere además un Pago aprobado y, cuando corresponde, incluye el enlace del evento de calendario y el acceso a la videollamada.
+_Evitar_: selección, solicitud recibida, intento de reserva
+
 **Disponibilidad**:
 Opción de horario que un proveedor de agenda informa como reservable. No es un Turno hasta que se confirma la reserva.
 _Evitar_: turno, reserva
 
-## Conversaciones
+**Oferta de disponibilidad**:
+Conjunto ordenado de Disponibilidades que el Asistente de WhatsApp combina desde DrApp y Google Calendar. Solo incluye Agendas automatizables de Consultorios cuyas Reglas de elegibilidad y Franjas de atención admiten la Solicitud de turno.
+_Evitar_: agenda, turno confirmado, disponibilidad de una única fuente
+
+**Oferta parcial**:
+Oferta de disponibilidad construida con las Fuentes de agenda que respondieron correctamente cuando otra fuente está temporalmente indisponible. Una falla de DrApp no impide ofrecer horarios elegibles de Google Calendar, ni viceversa.
+_Evitar_: oferta completa, ausencia de disponibilidad, error global de agenda
+
+**Derivación por falta de disponibilidad**:
+Conversión de una Solicitud de turno en una Solicitud operativa pendiente cuando ninguna Fuente de agenda ofrece horarios elegibles. Conserva al Paciente, sus respuestas y las reglas aplicadas para que el Operador la resuelva desde la Bandeja operativa.
+_Evitar_: conversación cerrada, turno rechazado, oferta vacía sin seguimiento
+
+**Ronda de disponibilidad**:
+Grupo de hasta cinco opciones de una Oferta de disponibilidad, cada una correspondiente a un día diferente y ordenadas desde la fecha más cercana. Si ninguna resulta adecuada, la siguiente ronda presenta opciones nuevas sin repetir las ya ofrecidas.
+_Evitar_: listado completo, repetición de horarios, agenda completa del profesional
+
+**Solicitud de turno**:
+Pedido de un Solicitante para reservar una atención a un Paciente identificado durante la Conversación. Mientras no se confirme una Disponibilidad, no constituye un Turno.
+_Evitar_: turno, reserva, evento de calendario
+
+**Cancelación de turno**:
+Finalización de un Turno confirmado que el Paciente selecciona entre sus propios Turnos cancelables. Libera el slot en Google Calendar y conserva la trazabilidad; si se realiza con al menos 24 horas de anticipación, el Pago aprobado asociado se convierte en Saldo a favor.
+_Evitar_: eliminación de turno, expiración de reserva, ausencia, reembolso monetario
+
+**Pago no reembolsable**:
+Pago aprobado de un Turno cancelado con menos de 24 horas de anticipación. No se devuelve ni genera Saldo a favor, aunque la Cancelación de turno libere el horario.
+_Evitar_: saldo a favor, devolución automática, pago anulado
+
+**Saldo a favor**:
+Crédito originado por la cancelación de un Turno pagado con al menos 24 horas de anticipación o por la acreditación tardía de un pago después de una Expiración de reserva. Solo puede aplicarse durante los siete días siguientes a una nueva reserva del mismo Paciente identificado por DNI; no es transferible ni representa una devolución de dinero.
+_Evitar_: reembolso, pago pendiente, cupón promocional
+
+**Reprogramación de turno**:
+Cambio de un Turno confirmado a una nueva Disponibilidad que cumple el mismo Contexto de elegibilidad. El Asistente lista los Turnos futuros, exige seleccionar y confirmar el Turno de origen, asegura primero la nueva reserva y luego libera la anterior; si existía un Pago aprobado, lo conserva sin volver a cobrar.
+_Evitar_: cancelación seguida de alta sin relación, edición de fecha sin reserva, nuevo cobro
+
+**Contexto de elegibilidad**:
+Instantánea de las condiciones con las que un Turno obtuvo acceso a una agenda, incluidas la Cobertura de salud, la condición de Primera consulta y la Modalidad de atención aplicable. Se conserva para que una Reprogramación busque horarios bajo las mismas reglas.
+_Evitar_: perfil actual del paciente, configuración actual del consultorio, contexto técnico de conversación
+
+## Conversaciones y gestión
+
+**Asistente de WhatsApp**:
+Canal automatizado de un Tenant que recibe mensajes de un Contacto de WhatsApp, conduce la Conversación y ejecuta las operaciones habilitadas. Es el canal real de atención para Pacientes.
+_Evitar_: simulador, operador humano, portal del paciente
 
 **Conversación**:
-Interacción por WhatsApp entre un Paciente y un Tenant, identificada por el teléfono dentro de ese Tenant. Mantiene su estado mientras está activa y se archiva al resolverse.
-_Evitar_: chat, ticket
+Interacción guiada entre un Contacto de WhatsApp y el Asistente de WhatsApp de un Tenant. Conserva su estado, identifica al Paciente y conduce a una Solicitud operativa o a una operación automática.
+_Evitar_: chat sin estado, ticket, simulación
+
+**Simulador de conversación**:
+Interfaz interna para probar el mismo flujo y estado del Asistente de WhatsApp sin enviar mensajes reales por WhatsApp. Sus operaciones de agenda modifican el Google Calendar configurado, pero no ejecuta cobros reales ni constituye un canal de atención.
+_Evitar_: segundo bot, entorno aislado de agenda, portal del paciente, flujo alternativo
+
+**Pago simulado**:
+Aprobación de prueba disponible exclusivamente en el Simulador de conversación para hacer avanzar un Turno pendiente de pago sin generar una transacción monetaria. Debe identificarse y auditarse como simulación y nunca estar disponible en el canal real.
+_Evitar_: pago aprobado real, cobro de prueba al proveedor, omisión silenciosa del pago
 
 **Solicitud operativa**:
-Pedido surgido en una Conversación que requiere gestión del consultorio, como un turno, una receta u otra consulta. Puede permanecer pendiente de revisión humana.
+Pedido surgido en una Conversación y asociado obligatoriamente a un Paciente identificado, como un turno, una receta u otra consulta. Puede permanecer pendiente de revisión humana.
 _Evitar_: conversación pendiente, ticket (salvo que se adopte formalmente)
+
+**Categoría operativa**:
+Clasificación de una Solicitud operativa según el motivo que debe gestionar el Operador, como turno no automatizable, receta, otra consulta o pedido explícito de atención humana. Determina qué información debe recopilarse antes de la derivación.
+_Evitar_: estado de conversación, intención técnica, nota libre
+
+**Solicitud de receta u orden**:
+Solicitud operativa asociada obligatoriamente a un Paciente para que el profesional emita, renueve o reescriba una receta u orden médica. Puede incluir una descripción o una fotografía del documento anterior como respaldo y siempre requiere intervención del Operador.
+_Evitar_: receta emitida, prescripción automática, adjunto sin solicitud
+
+**Solicitud de factura para reintegro**:
+Solicitud operativa que el Asistente registra para un Paciente particular que indicó necesitar factura y para la cual recopila los Datos de cobertura para facturación. Queda pendiente para emisión manual por el Operador; el Asistente no genera ni autoriza comprobantes fiscales.
+_Evitar_: factura emitida, facturación automática, requisito para reservar
+
+**Reescritura de receta**:
+Solicitud de receta u orden basada en una receta anterior aportada mediante una fotografía. La imagen documenta el pedido, pero no sustituye la revisión ni la nueva emisión por el profesional.
+_Evitar_: renovación automática, copia de receta, receta vigente
 
 **Bandeja operativa**:
 Vista de Solicitudes operativas pendientes y resueltas de un Tenant, desde la que el equipo las clasifica, revisa y cierra.
 _Evitar_: bandeja global, inbox
 
+**Respuesta del Operador**:
+Respuesta humana que el Operador envía al abrir el Contacto mediante el enlace de WhatsApp de la Bandeja operativa. El sistema conserva la gestión y el estado de la Solicitud operativa, pero no el contenido de esa respuesta.
+_Evitar_: respuesta automática, mensaje del bot, nota interna
+
+**Resolución operativa**:
+Cierre manual de una Solicitud operativa en la Bandeja operativa después de que el Operador completó su gestión y, cuando corresponde, envió la Respuesta del Operador.
+_Evitar_: respuesta enviada, apertura de WhatsApp, cierre automático
+
 **Derivación humana**:
-Decisión de no continuar una Solicitud mediante automatización y dejarla para intervención del equipo del consultorio.
-_Evitar_: resolución automática
+Transferencia de una Solicitud operativa al Operador cuando requiere intervención humana. Conserva su Categoría operativa y puede producirse por una limitación de automatización, por el tipo de pedido o porque el Solicitante pide hablar con una persona.
+_Evitar_: categoría operativa, resolución automática, cierre de conversación
 
 ## Cobros y facturación
 
