@@ -40,6 +40,8 @@ class AppointmentService:
         status: AppointmentStatus = AppointmentStatus.DRAFT,
         estado: EstadoTurno = EstadoTurno.DRAFT,
         notes: str | None = None,
+        eligibility_context: dict | None = None,
+        rescheduled_from_id: int | None = None,
     ) -> Turno:
         # La DB local es la fuente operativa. La sincronizacion externa se refleja
         # despues sobre el mismo registro, sin crear una entidad paralela.
@@ -57,6 +59,8 @@ class AppointmentService:
             external_id=external_id,
             external_status=external_status,
             notes=notes,
+            eligibility_context=eligibility_context,
+            rescheduled_from_id=rescheduled_from_id,
             reminder_24h_sent=False,
             reminder_2h_sent=False,
             estado=estado,
@@ -86,6 +90,8 @@ class AppointmentService:
         start_at: datetime,
         end_at: datetime,
         timezone_name: str,
+        eligibility_context: dict | None = None,
+        rescheduled_from_id: int | None = None,
     ) -> tuple[Turno, dict]:
         existing_result = await self._session.execute(
             select(Turno).where(
@@ -124,6 +130,8 @@ class AppointmentService:
             status=AppointmentStatus.DRAFT,
             estado=EstadoTurno.DRAFT,
             notes="Reserva solicitada desde el Asistente.",
+            eligibility_context=eligibility_context,
+            rescheduled_from_id=rescheduled_from_id,
         )
         try:
             result = await self._calendar.reserve_slot(
@@ -139,6 +147,7 @@ class AppointmentService:
             turno.external_status = "sync_failed"
             turno.cancelled_at = now_ba()
             turno.cancellation_reason = "slot_unavailable"
+            turno.rescheduled_from_id = None
             await audit_log(
                 self._session,
                 None,
@@ -183,6 +192,146 @@ class AppointmentService:
         )
         await self._session.flush()
         return turno, result
+
+    async def reschedule_turno(
+        self,
+        request: Request | None,
+        tenant: Tenant,
+        paciente: Paciente,
+        origin: Turno,
+        consultorio: Consultorio,
+        *,
+        slot_id: str,
+        start_at: datetime,
+        end_at: datetime,
+        timezone_name: str,
+    ) -> tuple[Turno, dict]:
+        if (
+            tenant.id != paciente.tenant_id
+            or tenant.id != consultorio.tenant_id
+            or origin.tenant_id != tenant.id
+            or origin.paciente_id != paciente.id
+        ):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turno no encontrado")
+        existing = (
+            await self._session.execute(
+                select(Turno).where(
+                    Turno.tenant_id == tenant.id,
+                    Turno.paciente_id == paciente.id,
+                    Turno.rescheduled_from_id == origin.id,
+                    Turno.status == AppointmentStatus.CONFIRMED,
+                    Turno.deleted_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing, {
+                "event_id": existing.external_event_id,
+                "calendar_id": existing.external_calendar_id,
+                "meet_link": existing.referencia_externa,
+                "idempotent": True,
+            }
+
+        locked_origin = (
+            await self._session.execute(
+                select(Turno)
+                .where(
+                    Turno.id == origin.id,
+                    Turno.tenant_id == tenant.id,
+                    Turno.paciente_id == paciente.id,
+                    Turno.status == AppointmentStatus.CONFIRMED,
+                    Turno.deleted_at.is_(None),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if locked_origin is None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Turno no reprogramable")
+        origin_consultorio = await self._session.get(Consultorio, locked_origin.consultorio_id)
+        if origin_consultorio is None or origin_consultorio.tenant_id != tenant.id:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agenda de origen no disponible")
+
+        replacement, reservation = await self.reserve_without_payment(
+            tenant=tenant,
+            consultorio=consultorio,
+            paciente=paciente,
+            slot_id=slot_id,
+            start_at=start_at,
+            end_at=end_at,
+            timezone_name=timezone_name,
+            eligibility_context=dict(locked_origin.eligibility_context or {}),
+            rescheduled_from_id=locked_origin.id,
+        )
+        if replacement.id == locked_origin.id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La nueva disponibilidad coincide con el turno de origen",
+            )
+        replacement.rescheduled_from_id = locked_origin.id
+        replacement.eligibility_context = dict(locked_origin.eligibility_context or {})
+
+        try:
+            if locked_origin.external_calendar_provider and locked_origin.external_event_id:
+                await self._calendar.cancel_slot(
+                    tenant,
+                    origin_consultorio,
+                    locked_origin.external_calendar_provider,
+                    locked_origin.external_event_id,
+                )
+        except Exception:
+            if replacement.external_calendar_provider and replacement.external_event_id:
+                try:
+                    await self._calendar.cancel_slot(
+                        tenant,
+                        consultorio,
+                        replacement.external_calendar_provider,
+                        replacement.external_event_id,
+                    )
+                except Exception:
+                    pass
+            replacement.status = AppointmentStatus.CANCELLED
+            replacement.estado = EstadoTurno.CANCELADO
+            replacement.external_status = "reschedule_rollback"
+            replacement.cancelled_at = now_ba()
+            replacement.cancellation_reason = "origin_release_failed"
+            replacement.rescheduled_from_id = None
+            await self._session.flush()
+            raise
+
+        locked_origin.status = AppointmentStatus.CANCELLED
+        locked_origin.estado = EstadoTurno.CANCELADO
+        locked_origin.cancelled_at = now_ba()
+        locked_origin.cancellation_reason = "rescheduled"
+        locked_origin.external_status = "cancelled"
+
+        payments = (
+            await self._session.execute(
+                select(Payment).where(
+                    Payment.tenant_id == tenant.id,
+                    Payment.patient_id == paciente.id,
+                    Payment.appointment_id == locked_origin.id,
+                    Payment.status == PaymentStatus.APPROVED,
+                )
+            )
+        ).scalars().all()
+        for payment in payments:
+            payment.appointment_id = replacement.id
+
+        await audit_log(
+            self._session,
+            request,
+            None,
+            action="reschedule",
+            entity="turno",
+            entity_id=locked_origin.id,
+            tenant_id=tenant.id,
+            metadata={
+                "origin_turno_id": locked_origin.id,
+                "replacement_turno_id": replacement.id,
+            },
+        )
+        await self._session.commit()
+        return replacement, reservation
 
     async def list_turnos_by_tenant_and_date(
         self,

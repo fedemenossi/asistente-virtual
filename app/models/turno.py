@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import Enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, ForeignKey, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, SoftDeleteMixin, TimestampMixin
@@ -65,6 +65,10 @@ class Turno(Base, TimestampMixin, SoftDeleteMixin):
     )
     status: Mapped[AppointmentStatus] = mapped_column(
         SqlEnum(AppointmentStatus, native_enum=False), default=AppointmentStatus.DRAFT
+    )
+    eligibility_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    rescheduled_from_id: Mapped[int | None] = mapped_column(
+        ForeignKey("turnos.id"), nullable=True, unique=True
     )
 
     tenant = relationship("Tenant", back_populates="turnos")

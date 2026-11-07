@@ -152,6 +152,17 @@ def classify_main_intent(value: str | None) -> IntentResult:
             pending_reason="cancelar_turno",
             category=ConversationCategory.OTHER_QUERY,
         )
+    if text in {"7", "g"}:
+        return IntentResult(
+            pending_reason="reprogramar_turno",
+            category=ConversationCategory.OTHER_QUERY,
+        )
+
+    if "reprogram" in text:
+        return IntentResult(
+            pending_reason="reprogramar_turno",
+            category=ConversationCategory.OTHER_QUERY,
+        )
 
     human_keywords = ("humano", "persona", "secretaria", "doctora", "doctor", "asesor")
     if any(token in text for token in human_keywords):

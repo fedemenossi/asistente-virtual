@@ -108,6 +108,8 @@ EXTRA_COLUMNS = {
         "external_event_id": "VARCHAR(200) NULL",
         "reminder_sent_at": "DATETIME NULL",
         "status": "VARCHAR(32) NULL",
+        "eligibility_context": "JSON NULL",
+        "rescheduled_from_id": "INT NULL",
     },
     "payments": {
         "reuse_status": "VARCHAR(32) NULL",
@@ -429,6 +431,20 @@ async def upgrade(db_engine: AsyncEngine, *, dispose: bool = True) -> None:
 
             await upgrade_patient_dni_identity(conn)
             await upgrade_patient_contact_links(conn)
+
+            reschedule_index = "uq_turnos_rescheduled_from_id"
+            if (
+                await _column_exists(conn, db_name, "turnos", "rescheduled_from_id")
+                and not await _index_exists(conn, db_name, "turnos", reschedule_index)
+            ):
+                await conn.execute(
+                    text(
+                        """
+                        CREATE UNIQUE INDEX uq_turnos_rescheduled_from_id
+                        ON turnos (rescheduled_from_id)
+                        """
+                    )
+                )
 
             invoice_series_index = "uq_arca_invoice_number_scope"
             if not await _index_exists(conn, db_name, "billing_invoices", invoice_series_index):

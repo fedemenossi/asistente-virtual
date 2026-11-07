@@ -43,6 +43,7 @@ class AvailabilityHoldService:
         end_at: datetime,
         timezone_name: str,
         payment_provider: str = "simulator",
+        eligibility_context: dict | None = None,
     ) -> tuple[AvailabilityHold, Turno, Payment]:
         existing = await self._find_slot_hold(tenant.id, consultorio.id, external_slot_id)
         current = now_ba()
@@ -81,6 +82,7 @@ class AvailabilityHoldService:
             status=AppointmentStatus.WAITING_PAYMENT,
             estado=EstadoTurno.WAITING_PAYMENT,
             notes="Disponibilidad retenida por una hora; pendiente de pago.",
+            eligibility_context=eligibility_context,
         )
         amount, currency = self.first_consultation_fee(tenant)
         payment = Payment(

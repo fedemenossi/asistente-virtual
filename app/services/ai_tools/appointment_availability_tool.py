@@ -307,6 +307,11 @@ async def _resolve_patient_coverage(
     tenant_id: int,
     patient_context: dict,
 ) -> tuple[str, str]:
+    preserved = patient_context.get("eligibility_context") or {}
+    preserved_coverage = preserved.get("coverage") or {}
+    if preserved_coverage:
+        entity = str(preserved_coverage.get("entity") or "").strip()
+        return _infer_coverage_type(preserved_coverage.get("type"), entity), entity
     if patient_context.get("for_whom") == "other":
         entity = str(patient_context.get("other_insurance") or "").strip()
         return _infer_coverage_type(None, entity), entity

@@ -92,6 +92,8 @@ class ConversationState(str, Enum):
     ASK_REAL_PAYMENT = "ask_real_payment"
     ASK_CANCEL_APPOINTMENT_SELECTION = "ask_cancel_appointment_selection"
     ASK_CANCEL_APPOINTMENT_CONFIRMATION = "ask_cancel_appointment_confirmation"
+    ASK_RESCHEDULE_APPOINTMENT_SELECTION = "ask_reschedule_appointment_selection"
+    ASK_RESCHEDULE_APPOINTMENT_CONFIRMATION = "ask_reschedule_appointment_confirmation"
 
     # Legacy states kept for backwards compatibility
     MAIN_MENU = "main_menu"
@@ -701,6 +703,13 @@ class ConversationService:
                     paciente=paciente,
                     context=context,
                 )
+            if reason == "reprogramar_turno":
+                return await self._start_reschedule_appointment_flow(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    paciente=paciente,
+                    context=context,
+                )
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -760,6 +769,15 @@ class ConversationService:
                 )
             appointment = context.setdefault("appointment", {})
             appointment["awaiting_booking_confirmation"] = False
+            if appointment.get("reschedule_origin_id"):
+                return await self._reschedule_selected_appointment(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    paciente=paciente,
+                    context=context,
+                    original_text=text,
+                    has_media=has_media,
+                )
             requires_payment = context.get("for_whom") == "self" and self._appointment_requires_payment(
                 context, paciente
             )
@@ -814,6 +832,87 @@ class ConversationService:
             return (
                 "El turno sigue retenido y pendiente de pago. "
                 "Usa el enlace de pago enviado anteriormente."
+            )
+
+        if current_state == ConversationState.ASK_RESCHEDULE_APPOINTMENT_SELECTION.value:
+            selected = self._select_reschedulable_turno(context, text)
+            if selected is None:
+                return self._invalid_reschedule_selection_message(context)
+            context["reschedule_appointment"]["selected"] = selected
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_RESCHEDULE_APPOINTMENT_CONFIRMATION.value,
+                context,
+            )
+            return (
+                f"Seleccionaste reprogramar el turno {selected.get('label')}.\n"
+                "Confirmas la reprogramacion antes de buscar alternativas?\n"
+                "1) Si, buscar nuevos horarios\n"
+                "2) No"
+            )
+
+        if current_state == ConversationState.ASK_RESCHEDULE_APPOINTMENT_CONFIRMATION.value:
+            confirmation = detect_yes_no(text)
+            if confirmation is None:
+                return "Debe seleccionar una opcion valida.\n1) Si, buscar nuevos horarios\n2) No"
+            if confirmation is False:
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.MAIN_REASON_MENU.value,
+                    {"patient_id": getattr(paciente, "id", None)},
+                )
+                return "Reprogramacion descartada. Volves al menu principal.\n" + self._main_reason_menu_message()
+            selected = (context.get("reschedule_appointment") or {}).get("selected") or {}
+            origin = (
+                await self._session.execute(
+                    select(Turno).where(
+                        Turno.id == int(selected.get("turno_id") or 0),
+                        Turno.tenant_id == tenant.id,
+                        Turno.paciente_id == getattr(paciente, "id", None),
+                        Turno.status == AppointmentStatus.CONFIRMED,
+                        Turno.fecha_hora >= now_ba().replace(tzinfo=None),
+                    )
+                )
+            ).scalar_one_or_none()
+            if origin is None:
+                return "Ese turno ya no esta disponible para reprogramar."
+            eligibility = dict(origin.eligibility_context or {})
+            coverage = dict(eligibility.get("coverage") or {})
+            modality = eligibility.get("modality") or (
+                "virtual" if str(origin.tipo.value) == "virtual" else "presential"
+            )
+            first_consultation = bool(eligibility.get("first_consultation", False))
+            if not coverage:
+                coverage = {
+                    "type": getattr(paciente, "health_coverage_type", None),
+                    "entity": getattr(paciente, "obra_social", None),
+                }
+            eligibility = {
+                "coverage": coverage,
+                "first_consultation": first_consultation,
+                "modality": modality,
+            }
+            context["eligibility_context"] = eligibility
+            context["for_whom"] = "self"
+            context["first_time"] = first_consultation
+            context["coverage_type"] = coverage.get("type")
+            context["insurance"] = coverage.get("entity")
+            context["reason"] = "turno_virtual" if modality == "virtual" else "turno_presencial"
+            context["appointment"] = {
+                "type": modality,
+                "is_first_time": first_consultation,
+                "reschedule_origin_id": origin.id,
+            }
+            return await self._offer_appointment_slots_if_available(
+                tenant=tenant,
+                phone=normalized_phone,
+                context=context,
+                original_text=text,
+                has_media=has_media,
+                media_items=media_items,
+                force_manual_on_unavailable=False,
             )
 
         if current_state == ConversationState.ASK_CANCEL_APPOINTMENT_SELECTION.value:
@@ -1582,6 +1681,7 @@ class ConversationService:
                 start_at=start_at,
                 end_at=end_at,
                 timezone_name=str(selected.get("timezone") or "America/Argentina/Buenos_Aires"),
+                eligibility_context=self._eligibility_snapshot(context),
             )
         except Exception:
             logger.exception(
@@ -1619,6 +1719,101 @@ class ConversationService:
             close_reason="appointment_confirmed",
         )
         lines = [f"Turno confirmado para el {selected.get('label')}."]
+        if reservation.get("html_link"):
+            lines.append(f"Evento de Google Calendar: {reservation['html_link']}")
+        if reservation.get("meet_link"):
+            lines.append(f"Google Meet: {reservation['meet_link']}")
+        return "\n".join(lines)
+
+    async def _reschedule_selected_appointment(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        paciente: Paciente | None,
+        context: dict,
+        original_text: str,
+        has_media: bool,
+    ) -> str:
+        appointment = context.setdefault("appointment", {})
+        selected = appointment.get("selected_slot") or {}
+        metadata = selected.get("metadata") or {}
+        consultorio_id = metadata.get("consultorio_id")
+        external_event_id = metadata.get("external_event_id")
+        origin_id = appointment.get("reschedule_origin_id")
+        if paciente is None or not consultorio_id or not external_event_id or not origin_id:
+            return await self._booking_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+            )
+        consultorio = await self._session.get(Consultorio, int(consultorio_id))
+        origin = await self._session.get(Turno, int(origin_id))
+        if (
+            consultorio is None
+            or consultorio.tenant_id != tenant.id
+            or origin is None
+            or origin.tenant_id != tenant.id
+            or origin.paciente_id != paciente.id
+        ):
+            return await self._booking_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+            )
+        try:
+            start_at = datetime.fromisoformat(str(selected["start_at"]).replace("Z", "+00:00"))
+            end_at = datetime.fromisoformat(str(selected["end_at"]).replace("Z", "+00:00"))
+            replacement, reservation = await AppointmentService(self._session).reschedule_turno(
+                request=None,
+                tenant=tenant,
+                paciente=paciente,
+                origin=origin,
+                consultorio=consultorio,
+                slot_id=str(external_event_id),
+                start_at=start_at,
+                end_at=end_at,
+                timezone_name=str(selected.get("timezone") or "America/Argentina/Buenos_Aires"),
+            )
+        except Exception:
+            logger.exception(
+                "chat_reschedule_failed tenant_id=%s phone=%s origin_id=%s",
+                tenant.id,
+                phone,
+                origin_id,
+            )
+            return await self._booking_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+            )
+
+        appointment["booking_result"] = {
+            "turno_id": replacement.id,
+            "origin_turno_id": origin.id,
+            "external_event_id": replacement.external_event_id,
+        }
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.ASK_AI_BOOKING_CONFIRMATION.value,
+            context,
+            conversation_category=self._appointment_category_from_context(context),
+            last_patient_message=original_text,
+            has_media=has_media,
+        )
+        await self._conversacion_repo.mark_resolved(
+            tenant.id,
+            phone,
+            close_reason="appointment_rescheduled",
+        )
+        lines = [f"Turno reprogramado para el {selected.get('label')}."]
         if reservation.get("html_link"):
             lines.append(f"Evento de Google Calendar: {reservation['html_link']}")
         if reservation.get("meet_link"):
@@ -1673,6 +1868,7 @@ class ConversationService:
                     selected.get("timezone") or "America/Argentina/Buenos_Aires"
                 ),
                 payment_provider="simulator" if simulated else "mercadopago",
+                eligibility_context=self._eligibility_snapshot(context),
             )
         except SlotAlreadyHeldError:
             return await self._booking_failure_reply(
@@ -1815,6 +2011,31 @@ class ConversationService:
         coverage = str(getattr(paciente, "obra_social", "") or "").strip().lower()
         return first_time and coverage in {"", "particular", "sin cobertura"}
 
+    @staticmethod
+    def _eligibility_snapshot(context: dict) -> dict:
+        appointment = context.get("appointment") or {}
+        availability = appointment.get("availability_context") or {}
+        selected = appointment.get("selected_slot") or {}
+        coverage = availability.get("coverage") or {
+            "type": context.get("coverage_type"),
+            "entity": context.get("insurance"),
+        }
+        first_consultation = availability.get("first_consultation")
+        if first_consultation is None:
+            first_consultation = bool(context.get("first_time"))
+        return {
+            "coverage": {
+                "type": coverage.get("type"),
+                "entity": coverage.get("entity"),
+            },
+            "first_consultation": bool(first_consultation),
+            "modality": (
+                selected.get("consultorio_type")
+                or availability.get("modality")
+                or appointment.get("type")
+            ),
+        }
+
     async def _ask_missing_before_availability(
         self,
         *,
@@ -1842,6 +2063,32 @@ class ConversationService:
             conversation_category=self._appointment_category_from_context(context),
         )
         return message
+
+    async def _start_reschedule_appointment_flow(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        paciente: Paciente | None,
+        context: dict,
+    ) -> str:
+        if paciente is None:
+            return "No pude identificar tus turnos. Elegi hablar con una persona para continuar."
+        options = await self._list_cancellable_turnos(tenant.id, paciente.id)
+        if not options:
+            return "No encontre turnos activos futuros para reprogramar."
+        context = dict(context or {})
+        context["reschedule_appointment"] = {"options": options, "selected": None}
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.ASK_RESCHEDULE_APPOINTMENT_SELECTION.value,
+            context,
+        )
+        lines = ["Estos son tus turnos activos:"]
+        lines.extend(f"{item['option']}) {item['label']}" for item in options)
+        lines.append("Responde con el numero del turno que queres reprogramar.")
+        return "\n".join(lines)
 
     async def _start_cancel_appointment_flow(
         self,
@@ -2050,8 +2297,10 @@ class ConversationService:
         patient_label = " ".join(
             part.strip() for part in (patient.nombre or "", patient.apellido or "") if part and part.strip()
         ).strip()
+        has_future_turnos = await self._has_cancellable_turnos(tenant.id, patient.id)
         menu = self._main_reason_menu_message(
-            can_cancel=await self._has_cancellable_turnos(tenant.id, patient.id)
+            can_cancel=has_future_turnos,
+            can_reschedule=has_future_turnos,
         )
         if patient_label:
             return (
@@ -2091,6 +2340,25 @@ class ConversationService:
         if normalized in {"2", "otra persona", "otro", "otra"}:
             return "other"
         return None
+
+    @staticmethod
+    def _select_reschedulable_turno(context: dict, text: str) -> dict | None:
+        try:
+            selected = int(normalize_message(text))
+        except ValueError:
+            return None
+        options = (context.get("reschedule_appointment") or {}).get("options") or []
+        for item in options:
+            if int(item.get("option") or 0) == selected:
+                return item
+        return None
+
+    @staticmethod
+    def _invalid_reschedule_selection_message(context: dict) -> str:
+        options = (context.get("reschedule_appointment") or {}).get("options") or []
+        lines = ["Debe seleccionar una opcion valida:"]
+        lines.extend(f"{item.get('option')}) {item.get('label')}" for item in options)
+        return "\n".join(lines)
 
     @staticmethod
     def _associated_patient_options(patients: list[Paciente], *, allow_new: bool) -> str:
@@ -2232,7 +2500,9 @@ class ConversationService:
         return (tenant.nombre or "el consultorio").strip() or "el consultorio"
 
     @staticmethod
-    def _main_reason_menu_message(*, can_cancel: bool = False) -> str:
+    def _main_reason_menu_message(
+        *, can_cancel: bool = False, can_reschedule: bool = False
+    ) -> str:
         menu = (
             "1) Turno presencial\n"
             "2) Turno virtual\n"
@@ -2242,6 +2512,8 @@ class ConversationService:
         )
         if can_cancel:
             menu += "\n6) Cancelar un turno"
+        if can_reschedule:
+            menu += "\n7) Reprogramar un turno"
         return menu
 
     def _main_reason_retry_message(self) -> str:
@@ -2475,7 +2747,10 @@ class ConversationService:
 
     @staticmethod
     def _is_direct_main_menu_option(value: str | None) -> bool:
-        return normalize_message(value) in {"1", "2", "3", "4", "5", "6", "a", "b", "c", "d", "e", "f"}
+        return normalize_message(value) in {
+            "1", "2", "3", "4", "5", "6", "7",
+            "a", "b", "c", "d", "e", "f", "g",
+        }
 
     def _intent_from_ai_result(self, result: AIIntentResult, *, min_confidence: float):
         from app.services.conversation_intents import IntentResult
@@ -2494,6 +2769,8 @@ class ConversationService:
             return IntentResult("humano", ConversationCategory.HUMAN_HANDOFF)
         if result.intent == AIIntent.CANCEL_APPOINTMENT:
             return IntentResult("cancelar_turno", ConversationCategory.OTHER_QUERY)
+        if result.intent == AIIntent.RESCHEDULE_APPOINTMENT:
+            return IntentResult("reprogramar_turno", ConversationCategory.OTHER_QUERY)
         return IntentResult(None, None)
 
     @staticmethod

@@ -1031,6 +1031,11 @@ def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(clie
     assert turnos[0].external_event_id == "google-event-1"
     assert turnos[0].external_calendar_id == "calendar-1"
     assert turnos[0].referencia_externa == "https://meet.google.com/abc-defg-hij"
+    assert turnos[0].eligibility_context == {
+        "coverage": {"type": "obra_social", "entity": "OSDE"},
+        "first_consultation": False,
+        "modality": "virtual",
+    }
 
 
 def test_simulator_api_does_not_confirm_when_google_rejects_the_slot(client, db_session, monkeypatch):
@@ -1506,6 +1511,145 @@ def test_identified_patient_menu_offers_cancellation_for_future_confirmed_turno(
             assert "Estos son tus turnos activos" in selection
 
     asyncio.run(run())
+
+
+def test_chat_reschedule_confirms_origin_and_reuses_original_eligibility_context(
+    db_session, monkeypatch
+):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Reprogramacion Chat",
+            "whatsapp:+824",
+            ai_settings=_tools_ai_settings(),
+            calendar_settings={"default_timezone": "America/Argentina/Buenos_Aires"},
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491182400024"
+    paciente_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            phone,
+            health_coverage_type="particular",
+            obra_social="Particular",
+        )
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Palermo Prepaga",
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {"calendar_id": "calendar-reschedule"},
+                "eligibility": {
+                    "accepts_first_consultation": True,
+                    "coverage_types": ["prepaga"],
+                    "coverage_entities": ["OSDE"],
+                    "weekly_ranges": [],
+                },
+            },
+        )
+    )
+    origin_id = asyncio.run(
+        create_turno(
+            db_session,
+            paciente_id,
+            consultorio_id,
+            fecha_hora=now_ba().replace(tzinfo=None) + timedelta(days=2),
+            tipo=TipoTurno.PRESENCIAL,
+            status=AppointmentStatus.CONFIRMED,
+            external_calendar_provider="google",
+            external_calendar_id="calendar-reschedule",
+            external_event_id="origin-chat-24",
+            external_status="reserved",
+            eligibility_context={
+                "coverage": {"type": "prepaga", "entity": "OSDE"},
+                "first_consultation": False,
+                "modality": "presential",
+            },
+        )
+    )
+    slot_start = now_ba() + timedelta(days=4)
+    effects: list[tuple[str, str]] = []
+
+    async def available_slots(self, tenant, consultorio, window_start, window_end):
+        return [
+            CalendarSlot(
+                slot_id="replacement-chat-24",
+                start_at=slot_start,
+                end_at=slot_start + timedelta(minutes=30),
+                timezone="America/Argentina/Buenos_Aires",
+                provider="google",
+                calendar_id="calendar-reschedule",
+            )
+        ]
+
+    async def reserve_slot(self, tenant, consultorio, slot_id, patient, metadata):
+        effects.append(("reserve", slot_id))
+        return {
+            "event_id": slot_id,
+            "calendar_id": "calendar-reschedule",
+            "start_at": slot_start.isoformat(),
+            "end_at": (slot_start + timedelta(minutes=30)).isoformat(),
+            "timezone": "America/Argentina/Buenos_Aires",
+        }
+
+    async def cancel_slot(self, tenant, consultorio, provider, event_id):
+        effects.append(("cancel", event_id))
+
+    monkeypatch.setattr(
+        "app.services.calendar_service.CalendarService.list_available_slots", available_slots
+    )
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.reserve_slot", reserve_slot)
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.cancel_slot", cancel_slot)
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            greeting = await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            assert "7) Reprogramar un turno" in greeting
+
+            listing = await service.process_message(tenant, f"whatsapp:+{phone}", "7")
+            assert "turno que queres reprogramar" in listing
+
+            confirmation = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "Confirmas la reprogramacion" in confirmation
+
+            offered = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "Encontre estos turnos presenciales disponibles" in offered
+            assert "replacement-chat-24" not in offered
+
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            eligibility = state.contexto_json["appointment"]["availability_context"]
+            assert eligibility["coverage"] == {"type": "prepaga", "entity": "OSDE"}
+            assert eligibility["first_consultation"] is False
+
+            selected = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "Confirmas que queres reservarlo" in selected
+
+            completed = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "Turno reprogramado" in completed
+
+            origin = await session.get(Turno, origin_id)
+            replacements = list(
+                (
+                    await session.execute(
+                        select(Turno).where(Turno.rescheduled_from_id == origin_id)
+                    )
+                ).scalars().all()
+            )
+            assert origin.status == AppointmentStatus.CANCELLED
+            assert len(replacements) == 1
+            assert replacements[0].eligibility_context == origin.eligibility_context
+
+    asyncio.run(run())
+    assert effects == [
+        ("reserve", "replacement-chat-24"),
+        ("cancel", "origin-chat-24"),
+    ]
 
 
 def test_cancellation_lists_only_patient_turnos_with_modality_and_consultorio(db_session):
