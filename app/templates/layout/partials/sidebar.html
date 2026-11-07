@@ -85,6 +85,7 @@
       {% if features.get("dashboard", true) %}{{ nav_item("/t/dashboard", "Dashboard", "/t/dashboard", "dashboard", "sidebar-tone-sky") }}{% endif %}
       {% if features.get("consultorios", true) %}{{ nav_item("/t/consultorios", "Consultorios", "/t/consultorios", "clinic", "sidebar-tone-violet") }}{% endif %}
       {% if features.get("pacientes", true) %}{{ nav_item("/t/pacientes", "Pacientes", "/t/pacientes", "patients", "sidebar-tone-mint") }}{% endif %}
+      {% if features.get("pacientes", true) %}{{ nav_item("/t/contact-links", "Vinculaciones", "/t/contact-links", "audit", "sidebar-tone-sky") }}{% endif %}
 
       {{ section_title("Operacion") }}
       {% if features.get("appointments", true) %}{{ nav_item("/t/appointments", "Turnos", "/t/appointments", "calendar", "sidebar-tone-amber") }}{% endif %}

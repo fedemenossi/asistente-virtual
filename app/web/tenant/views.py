@@ -44,11 +44,13 @@ from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.conversation_history import ConversationHistory
 from app.models.conversacion import EstadoConversacion
 from app.models.paciente import Paciente
+from app.models.patient_contact_link import PatientContactLink, PatientContactLinkStatus
 from app.models.tenant import Tenant
 from app.models.turno import AppointmentStatus, EstadoTurno, TipoTurno, Turno
 from app.models.notification import Notification
 from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
+from app.models.whatsapp_contact import WhatsappContact
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.integrations.consultorio_movil import (
     CabildoConfigError,
@@ -1232,6 +1234,142 @@ async def pacientes_list(
             "total_pages": total_pages,
             "query_string": query_string,
         },
+    )
+
+
+async def contact_links_list(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("patient:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    status = request.query_params.get("status", PatientContactLinkStatus.PENDING.value).strip()
+    valid_statuses = {item.value for item in PatientContactLinkStatus}
+    if status not in valid_statuses:
+        status = PatientContactLinkStatus.PENDING.value
+    result = await session.execute(
+        select(PatientContactLink, WhatsappContact, Paciente)
+        .join(WhatsappContact, WhatsappContact.id == PatientContactLink.contact_id)
+        .join(Paciente, Paciente.id == PatientContactLink.patient_id)
+        .where(
+            PatientContactLink.tenant_id == user.tenant_id,
+            WhatsappContact.tenant_id == user.tenant_id,
+            Paciente.tenant_id == user.tenant_id,
+            PatientContactLink.status == status,
+        )
+        .order_by(PatientContactLink.created_at.desc())
+    )
+    rows = [
+        SimpleNamespace(link=link, contact=contact, patient=patient)
+        for link, contact, patient in result.all()
+    ]
+    return _template(
+        request,
+        "tenant/contact_links_list.html",
+        {"rows": rows, "status": status},
+    )
+
+
+async def contact_link_detail(
+    request: Request,
+    link_id: int,
+    user: CurrentUser = Depends(require_permission("patient:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    result = await session.execute(
+        select(PatientContactLink, WhatsappContact, Paciente)
+        .join(WhatsappContact, WhatsappContact.id == PatientContactLink.contact_id)
+        .join(Paciente, Paciente.id == PatientContactLink.patient_id)
+        .where(
+            PatientContactLink.id == link_id,
+            PatientContactLink.tenant_id == user.tenant_id,
+            WhatsappContact.tenant_id == user.tenant_id,
+            Paciente.tenant_id == user.tenant_id,
+        )
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Vinculacion no encontrada")
+    link, contact, patient = row
+    return _template(
+        request,
+        "tenant/contact_link_detail.html",
+        {"link": link, "contact": contact, "patient": patient},
+    )
+
+
+async def _resolve_contact_link(
+    request: Request,
+    link_id: int,
+    desired_status: PatientContactLinkStatus,
+    csrf_token: str,
+    user: CurrentUser,
+    session: AsyncSession,
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    link = await session.scalar(
+        select(PatientContactLink).where(
+            PatientContactLink.id == link_id,
+            PatientContactLink.tenant_id == user.tenant_id,
+        )
+    )
+    if link is None:
+        raise HTTPException(status_code=404, detail="Vinculacion no encontrada")
+
+    previous_status = link.status
+    idempotent = previous_status == desired_status.value
+    conflicting = previous_status not in {
+        PatientContactLinkStatus.PENDING.value,
+        desired_status.value,
+    }
+    if not idempotent and not conflicting:
+        link.status = desired_status.value
+        link.resolved_at = now_ba()
+        link.resolved_by = user.id
+    await audit_log(
+        session,
+        request,
+        user,
+        action="approve" if desired_status == PatientContactLinkStatus.APPROVED else "reject",
+        entity="patient_contact_link",
+        entity_id=link.id,
+        metadata={
+            "previous_status": previous_status,
+            "resulting_status": link.status,
+            "idempotent": idempotent,
+            "conflicting": conflicting,
+        },
+    )
+    if conflicting:
+        add_flash(request, "warning", "La vinculacion ya tiene una decision final distinta.")
+    elif idempotent:
+        add_flash(request, "success", "La decision ya estaba aplicada.")
+    else:
+        label = "aprobada" if desired_status == PatientContactLinkStatus.APPROVED else "rechazada"
+        add_flash(request, "success", f"Vinculacion {label}.")
+    return RedirectResponse(f"/t/contact-links/{link.id}", status_code=303)
+
+
+async def contact_link_approve(
+    request: Request,
+    link_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("patient:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    return await _resolve_contact_link(
+        request, link_id, PatientContactLinkStatus.APPROVED, csrf_token, user, session
+    )
+
+
+async def contact_link_reject(
+    request: Request,
+    link_id: int,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("patient:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    return await _resolve_contact_link(
+        request, link_id, PatientContactLinkStatus.REJECTED, csrf_token, user, session
     )
 
 

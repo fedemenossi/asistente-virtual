@@ -1,0 +1,28 @@
+{% extends "layout/base.html" %}
+
+{% set title = "Revisar vinculacion" %}
+{% set breadcrumb = "Tenant / Vinculaciones / Revisar" %}
+
+{% block content %}
+  <div class="page-header">
+    <div>
+      <p class="page-subtitle">Control de acceso a pacientes</p>
+      <h1 class="page-title">Revisar vinculacion</h1>
+    </div>
+    <a class="btn btn-secondary" href="/t/contact-links">Volver</a>
+  </div>
+  <section class="surface p-6">
+    <dl class="grid gap-4 md:grid-cols-2">
+      <div><dt class="text-xs font-semibold uppercase text-slate-500">Contacto de WhatsApp</dt><dd class="mt-1">{{ contact.phone_normalized }}</dd></div>
+      <div><dt class="text-xs font-semibold uppercase text-slate-500">Paciente</dt><dd class="mt-1">{{ patient.nombre }} {{ patient.apellido }}</dd></div>
+      <div><dt class="text-xs font-semibold uppercase text-slate-500">Documento</dt><dd class="mt-1">{{ patient.dni }}</dd></div>
+      <div><dt class="text-xs font-semibold uppercase text-slate-500">Estado</dt><dd class="mt-1">{{ {'pending': 'Pendiente', 'approved': 'Aprobada', 'rejected': 'Rechazada'}[link.status] }}</dd></div>
+    </dl>
+    {% if link.status == 'pending' %}
+      <div class="mt-6 flex gap-3">
+        <form method="post" action="/t/contact-links/{{ link.id }}/approve"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-primary" type="submit">Aprobar</button></form>
+        <form method="post" action="/t/contact-links/{{ link.id }}/reject"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-danger" type="submit">Rechazar</button></form>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -294,6 +294,24 @@ class ConversationService:
             )
 
         if current_state == ConversationState.AWAITING_CONTACT_APPROVAL.value:
+            try:
+                link_id = int(context.get("contact_link_id"))
+            except (TypeError, ValueError):
+                return self._pending_contact_approval_message()
+            linked = await self._patient_contact_repo.get_link_patient(contact, link_id)
+            if linked is None:
+                return self._pending_contact_approval_message()
+            link, patient = linked
+            if link.status == PatientContactLinkStatus.APPROVED.value:
+                return await self._select_patient(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    patient=patient,
+                    contact_id=contact.id,
+                    managed_for=str(context.get("managed_for") or "other"),
+                )
+            if link.status == PatientContactLinkStatus.REJECTED.value:
+                return self._rejected_contact_link_message()
             return self._pending_contact_approval_message()
 
         if current_state == ConversationState.ASK_PATIENT_DNI.value:
@@ -323,7 +341,7 @@ class ConversationService:
                     ConversationState.AWAITING_CONTACT_APPROVAL.value,
                     {"contact_id": contact.id, "contact_link_id": link.id},
                 )
-                return self._pending_contact_approval_message()
+                return self._contact_link_status_message(link.status)
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -521,7 +539,7 @@ class ConversationService:
                     ConversationState.AWAITING_CONTACT_APPROVAL.value,
                     {"contact_id": contact.id, "contact_link_id": link.id},
                 )
-                return self._pending_contact_approval_message()
+                return self._contact_link_status_message(link.status)
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -1759,6 +1777,18 @@ class ConversationService:
             "Por seguridad, no podemos mostrar datos ni realizar gestiones hasta su aprobacion."
         )
 
+    @staticmethod
+    def _rejected_contact_link_message() -> str:
+        return (
+            "La vinculacion fue rechazada por el consultorio. "
+            "Por seguridad, no podemos mostrar datos ni realizar gestiones desde este contacto."
+        )
+
+    def _contact_link_status_message(self, status: str) -> str:
+        if status == PatientContactLinkStatus.REJECTED.value:
+            return self._rejected_contact_link_message()
+        return self._pending_contact_approval_message()
+
     async def _select_patient(
         self,
         *,
@@ -1827,7 +1857,7 @@ class ConversationService:
                 ConversationState.AWAITING_CONTACT_APPROVAL.value,
                 {"contact_id": contact.id, "contact_link_id": link.id},
             )
-            return self._pending_contact_approval_message()
+            return self._contact_link_status_message(link.status)
         await self._conversacion_repo.upsert_state(
             tenant.id,
             phone,

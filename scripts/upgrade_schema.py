@@ -45,6 +45,10 @@ EXTRA_COLUMNS = {
         "created_at": "DATETIME NULL",
         "updated_at": "DATETIME NULL",
     },
+    "patient_contact_links": {
+        "resolved_at": "DATETIME NULL",
+        "resolved_by": "INT NULL",
+    },
     "tenants": {
         "created_at": "DATETIME NULL",
         "updated_at": "DATETIME NULL",

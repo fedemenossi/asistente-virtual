@@ -79,6 +79,24 @@ class PatientContactRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_link_patient(
+        self,
+        contact: WhatsappContact,
+        link_id: int,
+    ) -> tuple[PatientContactLink, Paciente] | None:
+        result = await self._session.execute(
+            select(PatientContactLink, Paciente)
+            .join(Paciente, Paciente.id == PatientContactLink.patient_id)
+            .where(
+                PatientContactLink.id == link_id,
+                PatientContactLink.tenant_id == contact.tenant_id,
+                PatientContactLink.contact_id == contact.id,
+                Paciente.tenant_id == contact.tenant_id,
+                Paciente.deleted_at.is_(None),
+            )
+        )
+        return result.one_or_none()
+
     async def link_patient(
         self,
         contact: WhatsappContact,

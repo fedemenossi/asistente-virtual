@@ -131,6 +131,32 @@ router.add_api_route(
     methods=["POST"],
     dependencies=[Depends(require_feature("pacientes"))],
 )
+router.add_api_route(
+    "/contact-links",
+    views.contact_links_list,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("pacientes"))],
+)
+router.add_api_route(
+    "/contact-links/{link_id}",
+    views.contact_link_detail,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("pacientes"))],
+)
+router.add_api_route(
+    "/contact-links/{link_id}/approve",
+    views.contact_link_approve,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("pacientes"))],
+)
+router.add_api_route(
+    "/contact-links/{link_id}/reject",
+    views.contact_link_reject,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("pacientes"))],
+)
 
 router.add_api_route(
     "/turnos",

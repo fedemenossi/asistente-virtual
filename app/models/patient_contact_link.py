@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -30,6 +31,8 @@ class PatientContactLink(Base, TimestampMixin):
     contact_id: Mapped[int] = mapped_column(ForeignKey("whatsapp_contacts.id"), nullable=False, index=True)
     patient_id: Mapped[int] = mapped_column(ForeignKey("pacientes.id"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default=PatientContactLinkStatus.APPROVED.value)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    resolved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
     contact = relationship("WhatsappContact", back_populates="patient_links")
     patient = relationship("Paciente", back_populates="contact_links")
