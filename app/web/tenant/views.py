@@ -90,6 +90,7 @@ from app.services.google_calendar_slots_service import (
     WEEKDAY_LABELS,
     build_google_calendar_config_from_form,
     calculate_slots,
+    calculate_slots_for_weekly_range,
     default_google_calendar_config,
     get_google_calendar_config,
     normalize_provider,
@@ -1067,6 +1068,7 @@ async def consultorio_calendar_slots_get(
         raise HTTPException(status_code=400, detail="El consultorio no usa Google Calendar")
     today = now_ba().date()
     google_config = get_google_calendar_config(consultorio)
+    weekly_ranges = get_eligibility_config(consultorio)["weekly_ranges"]
     return _template(
         request,
         "tenant/consultorio_calendar_slots.html",
@@ -1077,6 +1079,8 @@ async def consultorio_calendar_slots_get(
             "date_to": (today + timedelta(days=14)).isoformat(),
             "exclude_holidays": True,
             "preview_slots": [],
+            "weekly_ranges": weekly_ranges,
+            "selected_range_index": "0" if weekly_ranges else "",
             "result": None,
             "warnings": [],
             "errors": {},
@@ -1090,6 +1094,7 @@ async def consultorio_calendar_slots_post(
     date_from: str = Form(...),
     date_to: str = Form(...),
     action: str = Form("preview"),
+    eligibility_range_index: str | None = Form(None),
     exclude_holidays: str | None = Form(None),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("consultorio:write")),
@@ -1106,6 +1111,8 @@ async def consultorio_calendar_slots_post(
     result = None
     preview_slots = []
     warnings: list[str] = []
+    weekly_ranges = get_eligibility_config(consultorio)["weekly_ranges"]
+    selected_range_index: int | None = None
     logger.info(
         "calendar_slots_post_start tenant_id=%s consultorio_id=%s user_id=%s action=%s date_from=%s date_to=%s exclude_holidays=%s provider=%s",
         user.tenant_id,
@@ -1126,13 +1133,29 @@ async def consultorio_calendar_slots_post(
             if missing:
                 warnings.append("No hay feriados cargados para: " + ", ".join(str(year) for year in missing))
         google_config = get_google_calendar_config(consultorio)
-        preview_slots = calculate_slots(
-            google_config,
-            start_day,
-            end_day,
-            exclude_argentina_holidays=bool(exclude_holidays),
-            holiday_service=holiday_service,
-        )
+        if weekly_ranges:
+            try:
+                selected_range_index = int(eligibility_range_index or "0")
+                selected_range = weekly_ranges[selected_range_index]
+            except (ValueError, IndexError):
+                raise ValueError("Selecciona una Franja de atencion valida.") from None
+            preview_slots = calculate_slots_for_weekly_range(
+                google_config,
+                selected_range,
+                start_day,
+                end_day,
+                exclude_argentina_holidays=bool(exclude_holidays),
+                holiday_service=holiday_service,
+            )
+        else:
+            selected_range_index = None
+            preview_slots = calculate_slots(
+                google_config,
+                start_day,
+                end_day,
+                exclude_argentina_holidays=bool(exclude_holidays),
+                holiday_service=holiday_service,
+            )
         logger.info(
             "calendar_slots_calculated tenant_id=%s consultorio_id=%s action=%s calendar_id=%s timezone=%s slots=%s warnings=%s",
             user.tenant_id,
@@ -1200,6 +1223,8 @@ async def consultorio_calendar_slots_post(
             "date_to": date_to,
             "exclude_holidays": bool(exclude_holidays),
             "preview_slots": preview_slots,
+            "weekly_ranges": weekly_ranges,
+            "selected_range_index": str(selected_range_index) if selected_range_index is not None else "",
             "result": result,
             "warnings": warnings,
             "errors": errors,

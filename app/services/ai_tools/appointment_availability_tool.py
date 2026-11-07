@@ -35,7 +35,7 @@ async def get_available_appointment_slots(
     limit: int = 5,
 ) -> dict[str, Any]:
     normalized_type = _normalize_consultorio_type(consultorio_type)
-    safe_limit = max(1, min(int(limit or 5), 10))
+    safe_limit = max(1, min(int(limit or 5), 50))
     try:
         tenant = await session.get(Tenant, tenant_id)
         if tenant is None:
@@ -87,21 +87,41 @@ async def get_available_appointment_slots(
         sources: list[str] = []
         for consultorio in eligible:
             provider = CalendarService().resolve_provider_name(consultorio)
-            if provider == "google":
-                result = await _get_google_slots(
-                    tenant=tenant,
-                    consultorio=consultorio,
-                    consultorio_type=normalized_type,
-                    preferences=preferences,
-                    limit=safe_limit,
+            consultorio_type_value = (
+                "virtual" if consultorio.tipo == TipoConsultorio.VIRTUAL else "presential"
+            )
+            try:
+                if provider == "google":
+                    result = await _get_google_slots(
+                        tenant=tenant,
+                        consultorio=consultorio,
+                        consultorio_type=consultorio_type_value,
+                        preferences=preferences,
+                        limit=safe_limit,
+                    )
+                elif consultorio_type_value == "presential":
+                    result = await _get_presential_slots(
+                        tenant=tenant,
+                        consultorio=consultorio,
+                        limit=safe_limit,
+                    )
+                else:
+                    continue
+            except Exception as exc:
+                logger.warning(
+                    "availability_source_failed tenant_id=%s consultorio_id=%s error=%s",
+                    tenant.id,
+                    consultorio.id,
+                    type(exc).__name__,
                 )
-            elif normalized_type == "presential":
-                result = await _get_presential_slots(
-                    tenant=tenant,
-                    consultorio=consultorio,
-                    limit=safe_limit,
+                errors.append(
+                    tool_error(
+                        consultorio_type=consultorio_type_value,
+                        source=provider,
+                        error=type(exc).__name__,
+                        message="No pude consultar una de las agendas.",
+                    )
                 )
-            else:
                 continue
             if result.get("ok"):
                 slots.extend(result.get("slots") or [])
@@ -226,16 +246,11 @@ async def _get_consultorios(
     tenant_id: int,
     consultorio_type: str,
 ) -> list[Consultorio]:
-    tipo = TipoConsultorio.VIRTUAL if consultorio_type == "virtual" else TipoConsultorio.PRESENCIAL
-    result = await session.execute(
-        select(Consultorio)
-        .where(
-            Consultorio.tenant_id == tenant_id,
-            Consultorio.tipo == tipo,
-            Consultorio.deleted_at.is_(None),
-        )
-        .order_by(Consultorio.id.asc())
-    )
+    filters = [Consultorio.tenant_id == tenant_id, Consultorio.deleted_at.is_(None)]
+    if consultorio_type != "both":
+        tipo = TipoConsultorio.VIRTUAL if consultorio_type == "virtual" else TipoConsultorio.PRESENCIAL
+        filters.append(Consultorio.tipo == tipo)
+    result = await session.execute(select(Consultorio).where(*filters).order_by(Consultorio.id.asc()))
     return list(result.scalars().all())
 
 
@@ -291,6 +306,7 @@ def _normalize_slot(
         "end_at": end.isoformat(),
         "timezone": timezone,
         "provider": provider,
+        "consultorio_type": consultorio_type,
         "metadata": metadata or {},
     }
 
@@ -326,6 +342,8 @@ def _format_slot_label(start: datetime) -> str:
 
 def _normalize_consultorio_type(value: str) -> str:
     text = (value or "").strip().lower()
+    if text in {"both", "any", "ambos", "cualquiera"}:
+        return "both"
     return "virtual" if text == "virtual" else "presential"
 
 

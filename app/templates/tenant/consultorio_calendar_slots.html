@@ -32,6 +32,23 @@
   <form method="post" class="card p-6 space-y-4" data-calendar-slots-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <input type="hidden" name="action" value="preview" data-calendar-slots-action-input />
+    {% if weekly_ranges %}
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Franja de atencion</label>
+        <select class="select mt-1" name="eligibility_range_index" required>
+          {% for range in weekly_ranges %}
+            <option value="{{ loop.index0 }}" {% if selected_range_index == loop.index0|string %}selected{% endif %}>
+              {{ {'monday': 'Lunes', 'tuesday': 'Martes', 'wednesday': 'Miercoles', 'thursday': 'Jueves', 'friday': 'Viernes', 'saturday': 'Sabado', 'sunday': 'Domingo'}[range.day] }}: {{ range.start }} a {{ range.end }}
+            </option>
+          {% endfor %}
+        </select>
+        <p class="mt-1 text-xs text-slate-500">Solo se generaran slots dentro de esta Franja configurada.</p>
+      </div>
+    {% else %}
+      <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        Este Consultorio no tiene Franjas restringidas; se usara el horario configurado en Google Calendar.
+      </div>
+    {% endif %}
     <div class="grid gap-4 md:grid-cols-3">
       <div>
         <label class="block text-sm font-medium text-slate-700">Fecha desde</label>

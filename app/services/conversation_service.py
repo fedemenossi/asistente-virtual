@@ -608,6 +608,9 @@ class ConversationService:
                 intent = self._intent_from_ai_result(ai_result, min_confidence=ai_settings["min_confidence"])
             reason = intent.pending_reason
             category = intent.category
+            if self._requests_flexible_modality(text):
+                reason = "turno_ambos"
+                category = ConversationCategory.FLEXIBLE_APPOINTMENT
             if intent.requires_clarification:
                 return (
                     "Perfecto, te ayudo con tu turno. Indica por favor:\n"
@@ -638,6 +641,19 @@ class ConversationService:
                     reason=reason,
                     category=category,
                     appointment_type="virtual",
+                    original_text=text,
+                    has_media=has_media,
+                    media_items=media_items,
+                )
+            if reason == "turno_ambos":
+                return await self._start_appointment_flow_from_context(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    context=context,
+                    patient_id=getattr(paciente, "id", None),
+                    reason=reason,
+                    category=category,
+                    appointment_type="both",
                     original_text=text,
                     has_media=has_media,
                     media_items=media_items,
@@ -684,6 +700,16 @@ class ConversationService:
             return "Escriba la consulta en un solo mensaje que sera respondida a la brevedad."
 
         if current_state == ConversationState.ASK_AI_SLOT_SELECTION.value:
+            if self._wants_more_slots(text):
+                return await self._offer_appointment_slots_if_available(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    context=context,
+                    original_text=text,
+                    has_media=has_media,
+                    media_items=media_items,
+                    force_manual_on_unavailable=False,
+                )
             selected = self._select_offered_slot(context, text)
             if selected is None:
                 return self._invalid_slot_selection_message(context)
@@ -1291,7 +1317,10 @@ class ConversationService:
             "virtual" if context.get("reason") == "turno_virtual" else "presential"
         )
         appointment["type"] = appointment_type
-        reason = "turno_virtual" if appointment_type == "virtual" else "turno_presencial"
+        reason = {
+            "virtual": "turno_virtual",
+            "both": "turno_ambos",
+        }.get(appointment_type, "turno_presencial")
         context["reason"] = context.get("reason") or reason
         if not context.get("for_whom"):
             context["for_whom"] = appointment.get("for")
@@ -1308,22 +1337,30 @@ class ConversationService:
             )
 
         settings = get_effective_ai_settings(tenant)
-        limit = int(settings.get("max_offered_slots") or 5)
+        limit = max(1, min(int(settings.get("max_offered_slots") or 5), 5))
         preferences = {
             "preferred_day": appointment.get("preferred_day"),
             "preferred_date": appointment.get("preferred_date"),
             "preferred_time": appointment.get("preferred_time"),
             "preferred_time_range": appointment.get("preferred_time_range"),
         }
+        fetch_limit = 50 if appointment_type == "both" or appointment.get("offered_slot_ids") else limit
         result = await get_available_appointment_slots(
             self._session,
             tenant_id=tenant.id,
             consultorio_type=appointment_type,
             patient_context=context,
             preferences=preferences,
-            limit=limit,
+            limit=fetch_limit,
         )
-        slots = list((result.get("slots") or [])[:limit])
+        offered_history = list(appointment.get("offered_slot_ids") or [])
+        previously_offered = set(offered_history)
+        candidates = [
+            slot
+            for slot in result.get("slots") or []
+            if slot.get("slot_id") not in previously_offered
+        ]
+        slots = self._one_slot_per_day(candidates, limit=limit)
         self._log_ai_tool(
             tenant_id=tenant.id,
             phone=phone,
@@ -1373,11 +1410,15 @@ class ConversationService:
                     "end_at": slot.get("end_at"),
                     "timezone": slot.get("timezone"),
                     "provider": slot.get("provider"),
+                    "consultorio_type": slot.get("consultorio_type") or appointment_type,
                     "metadata": slot.get("metadata") or {},
                 }
             )
         appointment["preferences"] = {key: value for key, value in preferences.items() if value}
         appointment["offered_slots"] = offered
+        appointment["offered_slot_ids"] = offered_history + [
+            str(slot["slot_id"]) for slot in offered if slot.get("slot_id")
+        ]
         appointment["selected_slot"] = None
         appointment["awaiting_slot_selection"] = True
         appointment["awaiting_booking_confirmation"] = False
@@ -1388,10 +1429,21 @@ class ConversationService:
             context,
             conversation_category=self._appointment_category_from_context(context),
         )
-        label = "presenciales" if appointment_type == "presential" else "virtuales"
+        label = {
+            "presential": "presenciales",
+            "virtual": "virtuales",
+            "both": "presenciales o virtuales",
+        }.get(appointment_type, "disponibles")
         lines = [f"Encontre estos turnos {label} disponibles:"]
-        lines.extend(f"{slot['option']}) {slot['label']}" for slot in offered)
+        if appointment_type == "both":
+            lines.extend(
+                f"{slot['option']}) ({self._modality_label(slot.get('consultorio_type'))}) {slot['label']}"
+                for slot in offered
+            )
+        else:
+            lines.extend(f"{slot['option']}) {slot['label']}" for slot in offered)
         lines.append("Responde con el numero de opcion que preferis.")
+        lines.append("Si ninguno te sirve, escribi 'mas opciones'.")
         return "\n".join(lines)
 
     async def _reserve_selected_appointment(
@@ -1988,14 +2040,59 @@ class ConversationService:
     @staticmethod
     def _appointment_category_from_context(context: dict) -> str:
         appointment_type = (context.get("appointment") or {}).get("type")
+        if appointment_type == "both" or context.get("reason") == "turno_ambos":
+            return ConversationCategory.FLEXIBLE_APPOINTMENT
         if appointment_type == "presential" or context.get("reason") == "turno_presencial":
             return ConversationCategory.PRESENTIAL_APPOINTMENT
         return ConversationCategory.VIRTUAL_APPOINTMENT
 
     @staticmethod
     def _appointment_label_from_context(context: dict) -> str:
-        appointment_type = (context.get("appointment") or {}).get("type")
+        appointment = context.get("appointment") or {}
+        selected = appointment.get("selected_slot") or {}
+        appointment_type = selected.get("consultorio_type") or appointment.get("type")
+        if appointment_type == "both":
+            return "presencial o virtual"
         return "presencial" if appointment_type == "presential" else "virtual"
+
+    @staticmethod
+    def _one_slot_per_day(slots: list[dict], *, limit: int) -> list[dict]:
+        selected: list[dict] = []
+        seen_days: set[str] = set()
+        for slot in sorted(slots, key=lambda item: str(item.get("start_at") or "")):
+            day = str(slot.get("start_at") or "")[:10]
+            if not day or day in seen_days:
+                continue
+            selected.append(slot)
+            seen_days.add(day)
+            if len(selected) >= limit:
+                break
+        return selected
+
+    @staticmethod
+    def _modality_label(appointment_type: str | None) -> str:
+        return "Presencial" if appointment_type == "presential" else "Virtual"
+
+    @staticmethod
+    def _wants_more_slots(value: str | None) -> bool:
+        normalized = normalize_message(value)
+        return normalized in {
+            "mas opciones",
+            "ver mas opciones",
+            "otras opciones",
+            "otros horarios",
+            "mostrar mas",
+        }
+
+    @staticmethod
+    def _requests_flexible_modality(value: str | None) -> bool:
+        normalized = normalize_message(value)
+        mentions_both = "presencial" in normalized and "virtual" in normalized
+        is_flexible = any(
+            token in normalized
+            for token in ("cualquiera", "ambas", "ambos", "indistinto", "me da igual")
+        )
+        return mentions_both or ("turno" in normalized and is_flexible)
 
     @staticmethod
     def _select_offered_slot(context: dict, text: str) -> dict | None:

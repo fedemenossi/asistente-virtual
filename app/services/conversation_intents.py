@@ -8,6 +8,7 @@ import unicodedata
 class ConversationCategory:
     PRESENTIAL_APPOINTMENT = "PRESENTIAL_APPOINTMENT"
     VIRTUAL_APPOINTMENT = "VIRTUAL_APPOINTMENT"
+    FLEXIBLE_APPOINTMENT = "FLEXIBLE_APPOINTMENT"
     PRESCRIPTION_OR_ORDER = "PRESCRIPTION_OR_ORDER"
     OTHER_QUERY = "OTHER_QUERY"
     HUMAN_HANDOFF = "HUMAN_HANDOFF"
@@ -24,6 +25,7 @@ class PrescriptionSubtype:
 PENDING_REASON_BY_CATEGORY = {
     ConversationCategory.PRESENTIAL_APPOINTMENT: "turno_presencial",
     ConversationCategory.VIRTUAL_APPOINTMENT: "turno_virtual",
+    ConversationCategory.FLEXIBLE_APPOINTMENT: "turno_ambos",
     ConversationCategory.PRESCRIPTION_OR_ORDER: "receta_orden",
     ConversationCategory.OTHER_QUERY: "otra_consulta",
     ConversationCategory.HUMAN_HANDOFF: "humano",
@@ -33,6 +35,7 @@ PENDING_REASON_BY_CATEGORY = {
 CATEGORY_LABELS = {
     ConversationCategory.PRESENTIAL_APPOINTMENT: "Turno presencial",
     ConversationCategory.VIRTUAL_APPOINTMENT: "Turno virtual",
+    ConversationCategory.FLEXIBLE_APPOINTMENT: "Turno presencial o virtual",
     ConversationCategory.PRESCRIPTION_OR_ORDER: "Receta / orden",
     ConversationCategory.OTHER_QUERY: "Otra consulta",
     ConversationCategory.HUMAN_HANDOFF: "Humano",

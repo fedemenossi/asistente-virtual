@@ -176,6 +176,45 @@ def calculate_slots(
     return slots
 
 
+def calculate_slots_for_weekly_range(
+    config: dict[str, Any],
+    weekly_range: dict[str, Any],
+    start_date: date,
+    end_date: date,
+    *,
+    exclude_argentina_holidays: bool = False,
+    holiday_service: HolidayService | None = None,
+) -> list[CalculatedSlot]:
+    day_key = str(weekly_range.get("day") or "")
+    if day_key not in WEEKDAY_KEYS:
+        raise ValueError("La franja seleccionada no tiene un dia valido.")
+    start = _parse_time(weekly_range.get("start"), "Franja inicio")
+    end = _parse_time(weekly_range.get("end"), "Franja fin")
+    if start >= end:
+        raise ValueError("La franja seleccionada debe comenzar antes de finalizar.")
+
+    ranged_config = validate_google_calendar_config(config)
+    ranged_schedule = {
+        key: {**value, "enabled": False}
+        for key, value in ranged_config["schedule"].items()
+    }
+    ranged_schedule[day_key].update(
+        {
+            "enabled": True,
+            "start": start.strftime("%H:%M"),
+            "end": end.strftime("%H:%M"),
+        }
+    )
+    ranged_config["schedule"] = ranged_schedule
+    return calculate_slots(
+        ranged_config,
+        start_date,
+        end_date,
+        exclude_argentina_holidays=exclude_argentina_holidays,
+        holiday_service=holiday_service,
+    )
+
+
 def _parse_time(value: Any, label: str) -> time:
     try:
         return time.fromisoformat(str(value or ""))
