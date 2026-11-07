@@ -248,11 +248,13 @@ class AppointmentService:
 
     async def confirm_after_payment(
         self,
-        request: Request,
+        request: Request | None,
         tenant: Tenant,
         consultorio: Consultorio,
         paciente: Paciente,
         turno: Turno,
+        *,
+        commit: bool = True,
     ) -> None:
         # La reserva externa confirma un turno local ya existente.
         if turno.external_calendar_provider and turno.external_event_id:
@@ -286,7 +288,10 @@ class AppointmentService:
                     notif_type="warning",
                     tenant_id=tenant.id,
                 )
-                await self._session.commit()
+                if commit:
+                    await self._session.commit()
+                else:
+                    await self._session.flush()
                 return
             turno.external_calendar_id = result.get("calendar_id")
             turno.external_event_id = result.get("event_id")
@@ -322,7 +327,10 @@ class AppointmentService:
             notif_type="success",
             tenant_id=tenant.id,
         )
-        await self._session.commit()
+        if commit:
+            await self._session.commit()
+        else:
+            await self._session.flush()
 
     async def cancel_turno(
         self,

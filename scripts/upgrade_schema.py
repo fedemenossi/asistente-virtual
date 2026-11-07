@@ -15,6 +15,7 @@ from app.core.db import engine
 from app.core.timezone import now_ba
 from app.models import (  # noqa: F401
     AuditLog,
+    AvailabilityHold,
     BillingEmailLog,
     BillingDiagnostic,
     BillingFiscalContact,

@@ -368,6 +368,57 @@
       log.scrollTop = log.scrollHeight;
     };
 
+    const simulatorIdentity = () => {
+      const selectedTenant = tenantSelect?.selectedOptions[0];
+      const selectedPatient = patientSelect?.selectedOptions[0];
+      return {
+        toNumber: selectedTenant?.dataset?.whatsapp?.trim(),
+        fromNumber:
+          selectedPatient?.dataset?.phone?.trim() || phoneInput?.value?.trim(),
+      };
+    };
+
+    const appendActions = (actions) => {
+      if (!log || !actions?.length) return;
+      const wrapper = document.createElement("div");
+      wrapper.className = "mb-4 flex flex-wrap gap-2";
+      actions.forEach((action) => {
+        const actionButton = document.createElement("button");
+        actionButton.type = "button";
+        actionButton.className = "btn btn-primary";
+        actionButton.textContent = action.label;
+        actionButton.addEventListener("click", async () => {
+          const { toNumber, fromNumber } = simulatorIdentity();
+          if (!toNumber || !fromNumber) return;
+          actionButton.disabled = true;
+          appendMessage("Simulador", action.label);
+          try {
+            const response = await fetch("/admin/chat-simulator/api", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": csrfToken || "",
+              },
+              body: JSON.stringify({
+                to_number: toNumber,
+                from_number: fromNumber,
+                patient_id: patientSelect?.value || null,
+                action: action.id,
+              }),
+            });
+            const data = await response.json();
+            appendMessage("Bot", data.reply || data.error || "(sin respuesta)");
+            appendActions(data.actions || []);
+          } catch (err) {
+            appendMessage("Bot", "No se pudo contactar al servidor.");
+          }
+        });
+        wrapper.appendChild(actionButton);
+      });
+      log.appendChild(wrapper);
+      log.scrollTop = log.scrollHeight;
+    };
+
     const loadPatients = async () => {
       if (!tenantSelect || !patientSelect) return;
       const tenantId = tenantSelect.value;
@@ -444,6 +495,7 @@
           return;
         }
         appendMessage("Bot", data.reply || "(sin respuesta)");
+        appendActions(data.actions || []);
       } catch (err) {
         appendMessage("Bot", "No se pudo contactar al servidor.");
       }

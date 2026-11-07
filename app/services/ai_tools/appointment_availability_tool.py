@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timezone import now_ba
 from app.integrations.consultorio_movil import CabildoConfigError
+from app.models.availability_hold import AvailabilityHold, AvailabilityHoldStatus
 from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
@@ -182,6 +183,26 @@ async def get_available_appointment_slots(
                 source_attempt["status"] = "failed"
                 source_attempt["error"] = str(result.get("error") or "provider_error")
                 errors.append(result)
+        active_holds_result = await session.execute(
+            select(AvailabilityHold.consultorio_id, AvailabilityHold.external_slot_id).where(
+                AvailabilityHold.tenant_id == tenant_id,
+                AvailabilityHold.status == AvailabilityHoldStatus.ACTIVE,
+                AvailabilityHold.expires_at > now_ba(),
+            )
+        )
+        active_holds = {
+            (int(consultorio_id), str(external_slot_id))
+            for consultorio_id, external_slot_id in active_holds_result.all()
+        }
+        slots = [
+            slot
+            for slot in slots
+            if (
+                int((slot.get("metadata") or {}).get("consultorio_id") or 0),
+                str((slot.get("metadata") or {}).get("external_event_id") or ""),
+            )
+            not in active_holds
+        ]
         slots.sort(key=lambda slot: str(slot.get("start_at") or ""))
         if slots:
             response = tool_success(

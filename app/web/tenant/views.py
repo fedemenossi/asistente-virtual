@@ -2636,6 +2636,12 @@ def _parse_payment_settings(tenant: Tenant) -> dict:
         "mp_access_token": settings.get("mp_access_token", ""),
         "mp_webhook_secret": settings.get("mp_webhook_secret", ""),
         "public_text": settings.get("public_text", ""),
+        "first_consultation_amount": settings.get(
+            "first_consultation_amount", settings.get("amount", "")
+        ),
+        "first_consultation_currency": settings.get(
+            "first_consultation_currency", settings.get("currency", "ARS")
+        ),
     }
 
 
@@ -2683,6 +2689,8 @@ async def payment_settings_post(
     mp_access_token: str = Form(""),
     mp_webhook_secret: str = Form(""),
     public_text: str = Form(""),
+    first_consultation_amount: str = Form(""),
+    first_consultation_currency: str = Form("ARS"),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("settings:write")),
     session: AsyncSession = Depends(get_async_session),
@@ -2698,6 +2706,8 @@ async def payment_settings_post(
             "mp_access_token": mp_access_token.strip(),
             "mp_webhook_secret": mp_webhook_secret.strip(),
             "public_text": public_text.strip(),
+            "first_consultation_amount": first_consultation_amount.strip(),
+            "first_consultation_currency": first_consultation_currency.strip() or "ARS",
         }
         await audit_log(
             session,

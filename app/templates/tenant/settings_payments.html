@@ -11,6 +11,22 @@
 
   <form method="post" class="card p-6 space-y-4">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <h2 class="text-sm font-semibold text-slate-900">Tarifa de primera consulta particular</h2>
+      <p class="mt-1 text-xs text-slate-600">
+        Se informa antes de retener el turno y solo aplica a pacientes particulares que se atienden por primera vez.
+      </p>
+      <div class="mt-3 grid gap-3 md:grid-cols-2">
+        <div>
+          <label class="text-xs text-slate-500" for="first_consultation_amount">Monto</label>
+          <input class="input" id="first_consultation_amount" type="text" name="first_consultation_amount" value="{{ payment_settings.first_consultation_amount }}" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500" for="first_consultation_currency">Moneda</label>
+          <input class="input" id="first_consultation_currency" type="text" name="first_consultation_currency" value="{{ payment_settings.first_consultation_currency }}" />
+        </div>
+      </div>
+    </div>
     <div class="flex items-center gap-3">
       <input class="h-4 w-4" type="checkbox" id="enabled" name="enabled" {% if payment_settings.enabled %}checked{% endif %} />
       <label class="text-sm text-slate-700" for="enabled">Habilitar pagos</label>

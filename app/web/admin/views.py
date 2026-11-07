@@ -38,7 +38,7 @@ from app.repositories.notification_repository import NotificationRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.services.appointment_service import AppointmentService
-from app.services.conversation_service import ConversationService
+from app.services.conversation_service import ConversationService, ConversationState
 from app.services.ai_intent_classifier import SUPPORTED_INTENTS
 from app.services.tenant_ai_settings_service import (
     AI_SETTINGS_DEFAULTS,
@@ -1099,6 +1099,7 @@ async def chat_simulator_send(
                 tenant=tenant,
                 from_phone=from_number,
                 body=message,
+                simulator=True,
             )
         finally:
             set_current_tenant_id(None)
@@ -1132,8 +1133,9 @@ async def chat_simulator_api(
     to_number = (payload.get("to_number") or "").strip()
     from_number = (payload.get("from_number") or "").strip()
     message = (payload.get("message") or "").strip()
+    action = (payload.get("action") or "").strip()
 
-    if not to_number or not from_number or not message:
+    if not to_number or not from_number or (not message and not action):
         return JSONResponse({"error": "Completa los campos requeridos."}, status_code=400)
 
     tenant_service = TenantService(TenantRepository(session))
@@ -1151,11 +1153,20 @@ async def chat_simulator_api(
     async with session.begin_nested():
         set_current_tenant_id(tenant.id)
         try:
-            reply_text = await conversation_service.process_message(
-                tenant=tenant,
-                from_phone=from_number,
-                body=message,
-            )
+            if action == "approve_simulated_payment":
+                reply_text = await conversation_service.approve_simulated_payment(
+                    tenant=tenant,
+                    from_phone=from_number,
+                )
+            elif action:
+                return JSONResponse({"error": "Accion no soportada."}, status_code=400)
+            else:
+                reply_text = await conversation_service.process_message(
+                    tenant=tenant,
+                    from_phone=from_number,
+                    body=message,
+                    simulator=True,
+                )
         finally:
             set_current_tenant_id(None)
 
@@ -1174,7 +1185,18 @@ async def chat_simulator_api(
         "from_number": from_number,
         "patient_id": payload.get("patient_id"),
     }
-    return JSONResponse({"reply": reply_text})
+    normalized_phone = "".join(character for character in from_number if character.isdigit())
+    state = await ConversacionRepository(session).get_state(tenant.id, normalized_phone)
+    actions = []
+    if (
+        state is not None
+        and (state.status or "active").lower() == "active"
+        and state.estado_actual == ConversationState.ASK_SIMULATED_PAYMENT.value
+    ):
+        actions.append(
+            {"id": "approve_simulated_payment", "label": "Aprobar pago simulado"}
+        )
+    return JSONResponse({"reply": reply_text, "actions": actions})
 
 
 async def chat_simulator_patients(

@@ -38,6 +38,11 @@ from app.services.ai_intent_classifier import (
 )
 from app.services.ai_tools import get_available_appointment_slots
 from app.services.appointment_service import AppointmentService
+from app.services.availability_hold_service import (
+    AvailabilityHoldExpiredError,
+    AvailabilityHoldService,
+    SlotAlreadyHeldError,
+)
 from app.services.tenant_ai_settings_service import get_effective_ai_settings
 from sqlalchemy import select
 
@@ -81,6 +86,7 @@ class ConversationState(str, Enum):
     ASK_OTHER_QUERY = "ask_other_query"
     ASK_AI_SLOT_SELECTION = "ask_ai_slot_selection"
     ASK_AI_BOOKING_CONFIRMATION = "ask_ai_booking_confirmation"
+    ASK_SIMULATED_PAYMENT = "ask_simulated_payment"
     ASK_CANCEL_APPOINTMENT_SELECTION = "ask_cancel_appointment_selection"
     ASK_CANCEL_APPOINTMENT_CONFIRMATION = "ask_cancel_appointment_confirmation"
 
@@ -123,6 +129,8 @@ class ConversationService:
         from_phone: str,
         body: str,
         media_items: list[dict] | None = None,
+        *,
+        simulator: bool = False,
     ) -> str:
         normalized_phone = self._normalize_phone(from_phone)
         text = (body or "").strip()
@@ -749,7 +757,19 @@ class ConversationService:
                 )
             appointment = context.setdefault("appointment", {})
             appointment["awaiting_booking_confirmation"] = False
-            if context.get("for_whom") == "self" and not self._appointment_requires_payment(context, paciente):
+            requires_payment = context.get("for_whom") == "self" and self._appointment_requires_payment(
+                context, paciente
+            )
+            if requires_payment and simulator:
+                return await self._hold_selected_appointment(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    paciente=paciente,
+                    context=context,
+                    original_text=text,
+                    has_media=has_media,
+                )
+            if context.get("for_whom") == "self" and not requires_payment:
                 return await self._reserve_selected_appointment(
                     tenant=tenant,
                     phone=normalized_phone,
@@ -779,6 +799,12 @@ class ConversationService:
                 media_items=media_items,
             )
             return "Perfecto, dejo registrada tu seleccion para que el consultorio la confirme."
+
+        if current_state == ConversationState.ASK_SIMULATED_PAYMENT.value:
+            return (
+                "El turno sigue retenido y pendiente de pago simulado. "
+                "Usa la accion 'Aprobar pago simulado' del simulador."
+            )
 
         if current_state == ConversationState.ASK_CANCEL_APPOINTMENT_SELECTION.value:
             selected = self._select_cancellable_turno(context, text)
@@ -1540,6 +1566,134 @@ class ConversationService:
             lines.append(f"Google Meet: {reservation['meet_link']}")
         return "\n".join(lines)
 
+    async def _hold_selected_appointment(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        paciente: Paciente | None,
+        context: dict,
+        original_text: str,
+        has_media: bool,
+    ) -> str:
+        appointment = context.setdefault("appointment", {})
+        selected = appointment.get("selected_slot") or {}
+        metadata = selected.get("metadata") or {}
+        consultorio_id = metadata.get("consultorio_id")
+        external_event_id = metadata.get("external_event_id")
+        if paciente is None or not consultorio_id or not external_event_id:
+            return await self._booking_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+            )
+        consultorio = await self._session.get(Consultorio, int(consultorio_id))
+        if consultorio is None or consultorio.tenant_id != tenant.id:
+            return await self._booking_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+            )
+        try:
+            start_at = datetime.fromisoformat(str(selected["start_at"]).replace("Z", "+00:00"))
+            end_at = datetime.fromisoformat(str(selected["end_at"]).replace("Z", "+00:00"))
+            hold, turno, payment = await AvailabilityHoldService(self._session).acquire(
+                tenant=tenant,
+                consultorio=consultorio,
+                paciente=paciente,
+                conversation_phone=phone,
+                external_slot_id=str(external_event_id),
+                start_at=start_at,
+                end_at=end_at,
+                timezone_name=str(
+                    selected.get("timezone") or "America/Argentina/Buenos_Aires"
+                ),
+            )
+        except SlotAlreadyHeldError:
+            return await self._booking_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+            )
+
+        appointment["payment_hold"] = {
+            "hold_id": hold.id,
+            "turno_id": turno.id,
+            "payment_id": payment.id,
+            "expires_at": hold.expires_at.isoformat(),
+        }
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.ASK_SIMULATED_PAYMENT.value,
+            context,
+            conversation_category=self._appointment_category_from_context(context),
+            last_patient_message=original_text,
+            has_media=has_media,
+        )
+        amount, currency = AvailabilityHoldService.first_consultation_fee(tenant)
+        formatted_amount = format(amount, "f")
+        return (
+            f"Tarifa de primera consulta particular: {currency} {formatted_amount}.\n"
+            f"El turno del {selected.get('label')} quedo retenido durante 1 hora, "
+            "pendiente de pago simulado. Todavia no fue confirmado."
+        )
+
+    async def approve_simulated_payment(self, tenant: Tenant, from_phone: str) -> str:
+        phone = self._normalize_phone(from_phone)
+        state = await self._conversacion_repo.get_state(tenant.id, phone)
+        context = state.contexto_json if state is not None else {}
+        appointment = (context or {}).get("appointment") or {}
+        hold_data = appointment.get("payment_hold") or {}
+        try:
+            hold_id = int(hold_data.get("hold_id"))
+        except (TypeError, ValueError):
+            return "No hay un pago simulado pendiente para esta conversacion."
+        hold_service = AvailabilityHoldService(self._session)
+        hold = await hold_service.get(hold_id)
+        if hold is None or hold.tenant_id != tenant.id or hold.conversation_phone != phone:
+            return "No hay un pago simulado pendiente para esta conversacion."
+        consultorio = await self._session.get(Consultorio, hold.consultorio_id)
+        paciente = await self._session.get(Paciente, hold.patient_id)
+        if consultorio is None or paciente is None:
+            return "No pude completar el pago simulado. El turno no fue confirmado."
+        try:
+            turno, _payment, idempotent = await hold_service.approve_simulated(
+                hold=hold,
+                tenant=tenant,
+                consultorio=consultorio,
+                paciente=paciente,
+            )
+        except AvailabilityHoldExpiredError:
+            return "La retencion vencio. El pago simulado no fue aprobado y el turno no fue confirmado."
+        if turno.status != AppointmentStatus.CONFIRMED:
+            return "El pago simulado fue aprobado, pero la agenda rechazo el horario. El turno no fue confirmado."
+        appointment["booking_result"] = {
+            "turno_id": turno.id,
+            "external_event_id": turno.external_event_id,
+        }
+        if state is not None and (state.status or "").lower() != "finished":
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                phone,
+                ConversationState.ASK_SIMULATED_PAYMENT.value,
+                context,
+                conversation_category=self._appointment_category_from_context(context),
+            )
+            await self._conversacion_repo.mark_resolved(
+                tenant.id,
+                phone,
+                close_reason="simulated_payment_appointment_confirmed",
+            )
+        suffix = " (accion ya aplicada)." if idempotent else "."
+        return f"Pago simulado aprobado. Turno confirmado para el {appointment.get('selected_slot', {}).get('label')}{suffix}"
+
     async def _booking_failure_reply(
         self,
         *,
@@ -1567,6 +1721,11 @@ class ConversationService:
     @staticmethod
     def _appointment_requires_payment(context: dict, paciente: Paciente | None) -> bool:
         first_time = bool(context.get("first_time"))
+        coverage_type = str(
+            getattr(paciente, "health_coverage_type", "") or ""
+        ).strip().lower()
+        if coverage_type:
+            return first_time and coverage_type == "particular"
         coverage = str(getattr(paciente, "obra_social", "") or "").strip().lower()
         return first_time and coverage in {"", "particular", "sin cobertura"}
 

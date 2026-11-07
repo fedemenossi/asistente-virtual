@@ -1,4 +1,5 @@
 from app.models.arca_access_ticket import ArcaAccessTicket
+from app.models.availability_hold import AvailabilityHold
 from app.models.arca_billable_item import ArcaBillableItem
 from app.models.arca_fiscal_series import ArcaFiscalSeries
 from app.models.arca_invoice import ArcaInvoice
@@ -29,6 +30,7 @@ from app.models.whatsapp_contact import WhatsappContact
 
 __all__ = [
     "AuditLog",
+    "AvailabilityHold",
     "ArcaAccessTicket",
     "ArcaBillableItem",
     "ArcaFiscalSeries",
