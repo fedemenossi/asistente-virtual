@@ -2117,6 +2117,7 @@ OPERATIONAL_CATEGORY_LABELS = {
     "turno_presencial": "Turno presencial",
     "turno_virtual": "Turno virtual",
     "receta_orden": "Receta / orden",
+    "factura_reintegro": "Factura para reintegro",
     "otra_consulta": "Otra consulta",
     "derivacion_humana": "Derivacion humana",
     "sin_clasificar": "Sin clasificar",
@@ -2128,6 +2129,7 @@ OPERATIONAL_FROM_CATEGORY = {
     ConversationCategory.PRESCRIPTION_OR_ORDER: "receta_orden",
     ConversationCategory.OTHER_QUERY: "otra_consulta",
     ConversationCategory.HUMAN_HANDOFF: "derivacion_humana",
+    ConversationCategory.REIMBURSEMENT_INVOICE: "factura_reintegro",
 }
 
 
@@ -2139,6 +2141,7 @@ def _normalize_operational_category(value: str | None) -> str:
         "prescription_or_order": "receta_orden",
         "other_query": "otra_consulta",
         "human_handoff": "derivacion_humana",
+        "reimbursement_invoice": "factura_reintegro",
     }
     if normalized in legacy_map:
         return legacy_map[normalized]
@@ -2173,6 +2176,7 @@ def _operational_tone(value: str) -> str:
         "turno_presencial": "success",
         "turno_virtual": "info",
         "receta_orden": "warning",
+        "factura_reintegro": "info",
         "otra_consulta": "neutral",
         "derivacion_humana": "warning",
         "sin_clasificar": "neutral",

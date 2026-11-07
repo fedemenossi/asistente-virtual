@@ -2438,6 +2438,222 @@ def test_recipe_media_sets_flags(db_session):
     asyncio.run(run())
 
 
+def test_particular_can_request_manual_reimbursement_invoice(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Reintegro", "whatsapp:+708"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491170800001"
+    patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            phone,
+            obra_social="Particular",
+            health_coverage_type="particular",
+        )
+    )
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            greeting = await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            assert "8) Solicitar factura para reintegro" in greeting
+
+            coverage_prompt = await service.process_message(
+                tenant, f"whatsapp:+{phone}", "8"
+            )
+            assert "prepaga" in coverage_prompt.lower()
+
+            member_prompt = await service.process_message(
+                tenant, f"whatsapp:+{phone}", "OSDE"
+            )
+            assert "afiliado" in member_prompt.lower()
+
+            reply = await service.process_message(
+                tenant, f"whatsapp:+{phone}", "123456789"
+            )
+            assert "emision manual" in reply.lower()
+
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.status == "pending"
+            assert state.pending_reason == "factura_reintegro"
+            assert state.operational_category == "factura_reintegro"
+            assert state.contexto_json["patient_id"] == patient_id
+            assert state.contexto_json["contact_id"] is not None
+            assert state.contexto_json["billing_coverage"] == {
+                "entity": "OSDE",
+                "member_number": "123456789",
+            }
+            assert state.pending_message == "Prepaga: OSDE; afiliado: 123456789"
+
+            patient = await session.get(Paciente, patient_id)
+            assert patient.health_coverage_type == "particular"
+            assert patient.obra_social == "Particular"
+            assert patient.insurance_number is None
+
+    asyncio.run(run())
+
+
+def test_particular_can_start_reimbursement_invoice_with_natural_language(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Reintegro Texto", "whatsapp:+712"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491171200099"
+    asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            phone,
+            obra_social="Particular",
+            health_coverage_type="particular",
+        )
+    )
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "Necesito una factura para pedir el reintegro",
+            )
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            return reply, state
+
+    reply, state = asyncio.run(run())
+    assert "prepaga" in reply.lower()
+    assert state.estado_actual == ConversationState.ASK_REIMBURSEMENT_COVERAGE.value
+
+
+def test_simulator_delivers_media_to_shared_recipe_flow(client, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Simula Medios", "whatsapp:+709"))
+    phone = "5491170900001"
+    patient_id = asyncio.run(create_paciente(db_session, tenant_id, phone))
+    asyncio.run(
+        create_user(
+            db_session,
+            "admin-simula-medios@test.com",
+            hash_password("secret-123"),
+            UserRole.SUPER_ADMIN.value,
+            None,
+        )
+    )
+    login(client, "admin-simula-medios@test.com", "secret-123")
+    simulator_page = client.get("/admin/chat-simulator")
+    assert 'data-chat-media-url' in simulator_page.text
+    assert 'data-chat-media-type' in simulator_page.text
+    csrf_token = _extract_csrf(simulator_page.text)
+
+    def send(message: str, *, media_items=None):
+        response = client.post(
+            "/admin/chat-simulator/api",
+            headers={"X-CSRF-Token": csrf_token},
+            json={
+                "to_number": "whatsapp:+709",
+                "from_number": f"whatsapp:+{phone}",
+                "message": message,
+                "media_items": media_items or [],
+            },
+        )
+        assert response.status_code == 200
+        return response.json()["reply"]
+
+    send("hola")
+    send("1")
+    send("3")
+    send("orden medica")
+    reply = send(
+        "",
+        media_items=[
+            {
+                "url": "https://example.test/orden-anterior.jpg",
+                "content_type": "image/jpeg",
+            }
+        ],
+    )
+    assert "respondera" in reply.lower()
+
+    async def load_state():
+        async with db_session() as session:
+            return await ConversacionRepository(session).get_state(tenant_id, phone)
+
+    state = asyncio.run(load_state())
+    assert state.contexto_json["patient_id"] == patient_id
+    assert state.operational_category == "receta_orden"
+    assert state.has_media is True
+    assert state.media_metadata == [
+        {
+            "url": "https://example.test/orden-anterior.jpg",
+            "content_type": "image/jpeg",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("menu_option", "detail", "expected_reason", "expected_category", "expected_text"),
+    [
+        (
+            "4",
+            "Necesito conocer el valor de la consulta",
+            "otra_consulta",
+            "otra_consulta",
+            "Necesito conocer el valor de la consulta",
+        ),
+        (
+            "Necesito hablar con la secretaria",
+            "",
+            "humano",
+            "derivacion_humana",
+            "Necesito hablar con la secretaria",
+        ),
+    ],
+)
+def test_operational_requests_keep_patient_contact_text_and_category(
+    db_session,
+    menu_option,
+    detail,
+    expected_reason,
+    expected_category,
+    expected_text,
+):
+    suffix = "10" if expected_reason == "otra_consulta" else "11"
+    tenant_id = asyncio.run(
+        create_tenant(db_session, f"Tenant Operativa {suffix}", f"whatsapp:+7{suffix}")
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = f"549117{suffix}0001"
+    patient_id = asyncio.run(create_paciente(db_session, tenant_id, phone))
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            first_reply = await service.process_message(
+                tenant, f"whatsapp:+{phone}", menu_option
+            )
+            if detail:
+                assert "un solo mensaje" in first_reply.lower()
+                await service.process_message(tenant, f"whatsapp:+{phone}", detail)
+
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            link = await session.scalar(
+                select(PatientContactLink).where(
+                    PatientContactLink.tenant_id == tenant_id,
+                    PatientContactLink.patient_id == patient_id,
+                )
+            )
+            return state, link
+
+    state, link = asyncio.run(run())
+    assert link.status == "approved"
+    assert state.status == "pending"
+    assert state.pending_reason == expected_reason
+    assert state.operational_category == expected_category
+    assert expected_text in state.pending_message
+    assert state.contexto_json["patient_id"] == patient_id
+    assert state.contexto_json["contact_id"] == link.contact_id
+
+
 def test_web_patient_create_allows_multiple_patients_for_the_same_contact_phone(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Dedup", "whatsapp:+706"))
     asyncio.run(create_paciente(db_session, tenant_id, "5491170600001"))

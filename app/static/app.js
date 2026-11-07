@@ -289,6 +289,8 @@
     const patientSelect = chatRoot.querySelector("[data-chat-patient]");
     const resetForm = chatRoot.querySelector("[data-chat-reset]");
     const phoneInput = chatRoot.querySelector("[data-chat-phone]");
+    const mediaUrlInput = chatRoot.querySelector("[data-chat-media-url]");
+    const mediaTypeInput = chatRoot.querySelector("[data-chat-media-type]");
 
     const STORAGE_TO = "chat_simulator_to";
     const STORAGE_PATIENT = "chat_simulator_patient";
@@ -467,13 +469,20 @@
       const manualNumber = phoneInput?.value?.trim();
       const fromNumber = selected?.dataset?.phone?.trim() || manualNumber;
       const message = input?.value?.trim();
-      if (!toNumber || !fromNumber || !message) {
-        alert("Selecciona tenant, ingresa un telefono valido y escribe un mensaje.");
+      const mediaUrl = mediaUrlInput?.value?.trim() || "";
+      const mediaType = mediaTypeInput?.value?.trim() || "";
+      const mediaItems = mediaUrl || mediaType
+        ? [{ url: mediaUrl, content_type: mediaType }]
+        : [];
+      if (!toNumber || !fromNumber || (!message && !mediaItems.length)) {
+        alert("Selecciona tenant, ingresa un telefono valido y agrega un mensaje o adjunto.");
         return;
       }
       persistDefaults();
-      appendMessage("Paciente", message);
+      appendMessage("Paciente", message || `[Adjunto: ${mediaType || mediaUrl}]`);
       if (input) input.value = "";
+      if (mediaUrlInput) mediaUrlInput.value = "";
+      if (mediaTypeInput) mediaTypeInput.value = "";
 
       try {
         const resp = await fetch("/admin/chat-simulator/api", {
@@ -487,6 +496,7 @@
             from_number: fromNumber,
             patient_id: patientSelect?.value || null,
             message,
+            media_items: mediaItems,
           }),
         });
         const data = await resp.json();

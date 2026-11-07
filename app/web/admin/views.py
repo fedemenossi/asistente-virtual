@@ -1134,8 +1134,21 @@ async def chat_simulator_api(
     from_number = (payload.get("from_number") or "").strip()
     message = (payload.get("message") or "").strip()
     action = (payload.get("action") or "").strip()
+    raw_media_items = payload.get("media_items") or []
+    if not isinstance(raw_media_items, list) or any(
+        not isinstance(item, dict) for item in raw_media_items
+    ):
+        return JSONResponse({"error": "Los adjuntos simulados son invalidos."}, status_code=400)
+    media_items = [
+        {
+            "url": str(item.get("url") or "").strip(),
+            "content_type": str(item.get("content_type") or "").strip(),
+        }
+        for item in raw_media_items
+        if str(item.get("url") or "").strip() or str(item.get("content_type") or "").strip()
+    ]
 
-    if not to_number or not from_number or (not message and not action):
+    if not to_number or not from_number or (not message and not action and not media_items):
         return JSONResponse({"error": "Completa los campos requeridos."}, status_code=400)
 
     tenant_service = TenantService(TenantRepository(session))
@@ -1165,6 +1178,7 @@ async def chat_simulator_api(
                     tenant=tenant,
                     from_phone=from_number,
                     body=message,
+                    media_items=media_items,
                     simulator=True,
                 )
         finally:

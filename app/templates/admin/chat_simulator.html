@@ -76,8 +76,15 @@
 
     <form data-chat-form class="mt-4 flex gap-3">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
-      <textarea data-chat-input class="textarea flex-1 min-h-[96px]" placeholder="Escribe un mensaje"></textarea>
-      {{ button("Enviar", variant="primary", type="submit") }}
+      <div class="flex-1 space-y-3">
+        <textarea data-chat-input class="textarea min-h-[96px] w-full" placeholder="Escribe un mensaje"></textarea>
+        <div class="grid gap-3 md:grid-cols-2">
+          <input data-chat-media-url class="input" type="url" placeholder="URL de adjunto simulado (opcional)" />
+          <input data-chat-media-type class="input" placeholder="Tipo MIME, ej. image/jpeg" />
+        </div>
+        <p class="text-xs text-slate-500">Los adjuntos simulados recorren el mismo flujo que los medios recibidos por WhatsApp.</p>
+      </div>
+      <div>{{ button("Enviar", variant="primary", type="submit") }}</div>
     </form>
 
     <form data-chat-reset method="post" action="/admin/chat-simulator/reset" class="mt-4">

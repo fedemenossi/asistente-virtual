@@ -85,6 +85,8 @@ class ConversationState(str, Enum):
 
     ASK_RECIPE_KIND = "ask_recipe_kind"
     ASK_RECIPE_DETAIL = "ask_recipe_detail"
+    ASK_REIMBURSEMENT_COVERAGE = "ask_reimbursement_coverage"
+    ASK_REIMBURSEMENT_MEMBER_NUMBER = "ask_reimbursement_member_number"
     ASK_OTHER_QUERY = "ask_other_query"
     ASK_AI_SLOT_SELECTION = "ask_ai_slot_selection"
     ASK_AI_BOOKING_CONFIRMATION = "ask_ai_booking_confirmation"
@@ -696,6 +698,23 @@ class ConversationService:
                     media_items=media_items,
                 )
                 return "Perfecto. Derivo tu consulta para atencion humana y te responderan a la brevedad."
+            if reason == "factura_reintegro":
+                if not self._is_particular_patient(paciente):
+                    return (
+                        "La solicitud de factura para reintegro esta disponible para atenciones "
+                        "particulares. Si necesitas ayuda, elegi hablar con una persona."
+                    )
+                invoice_context = dict(context)
+                invoice_context["reason"] = reason
+                invoice_context["patient_id"] = paciente.id
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.ASK_REIMBURSEMENT_COVERAGE.value,
+                    invoice_context,
+                    conversation_category=ConversationCategory.REIMBURSEMENT_INVOICE,
+                )
+                return "Indicame la prepaga u obra social para la factura de reintegro."
             if reason == "cancelar_turno":
                 return await self._start_cancel_appointment_flow(
                     tenant=tenant,
@@ -710,11 +729,14 @@ class ConversationService:
                     paciente=paciente,
                     context=context,
                 )
+            other_context = dict(context)
+            other_context["reason"] = reason
+            other_context["patient_id"] = getattr(paciente, "id", None)
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
                 ConversationState.ASK_OTHER_QUERY.value,
-                {"reason": reason, "patient_id": getattr(paciente, "id", None)},
+                other_context,
                 conversation_category=category,
             )
             return "Escriba la consulta en un solo mensaje que sera respondida a la brevedad."
@@ -1266,12 +1288,58 @@ class ConversationService:
                 title="Solicitud de receta u orden",
                 category=ConversationCategory.PRESCRIPTION_OR_ORDER,
                 subtype=context.get("recipe_kind"),
-                requires_human_review=has_media,
+                requires_human_review=True,
                 has_media=has_media,
                 last_patient_message=text,
                 media_items=media_items,
             )
             return "Gracias. Aguarde que se le respondera a la brevedad."
+
+        if current_state == ConversationState.ASK_REIMBURSEMENT_COVERAGE.value:
+            if not text:
+                return "La prepaga u obra social no puede estar vacia."
+            context["billing_coverage"] = {"entity": text.strip()}
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_REIMBURSEMENT_MEMBER_NUMBER.value,
+                context,
+                conversation_category=ConversationCategory.REIMBURSEMENT_INVOICE,
+            )
+            return "Ahora indicame el numero de afiliado para la factura."
+
+        if current_state == ConversationState.ASK_REIMBURSEMENT_MEMBER_NUMBER.value:
+            if not text:
+                return "El numero de afiliado no puede estar vacio."
+            billing_coverage = dict(context.get("billing_coverage") or {})
+            billing_coverage["member_number"] = text.strip()
+            context["billing_coverage"] = billing_coverage
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_REIMBURSEMENT_MEMBER_NUMBER.value,
+                context,
+                conversation_category=ConversationCategory.REIMBURSEMENT_INVOICE,
+            )
+            await self._set_pending(
+                tenant=tenant,
+                phone=normalized_phone,
+                reason="factura_reintegro",
+                message=(
+                    f"Prepaga: {billing_coverage['entity']}; "
+                    f"afiliado: {billing_coverage['member_number']}"
+                ),
+                title="Solicitud de factura para reintegro",
+                category=ConversationCategory.REIMBURSEMENT_INVOICE,
+                subtype=None,
+                requires_human_review=True,
+                has_media=has_media,
+                last_patient_message=text,
+                media_items=media_items,
+            )
+            return (
+                "Gracias. La solicitud quedo pendiente para emision manual por el consultorio."
+            )
 
         if current_state in {
             ConversationState.ASK_OTHER_QUERY.value,
@@ -1477,7 +1545,7 @@ class ConversationService:
             title="Solicitud de receta u orden",
             category=ConversationCategory.PRESCRIPTION_OR_ORDER,
             subtype=subtype,
-            requires_human_review=has_media,
+            requires_human_review=True,
             has_media=has_media,
             last_patient_message=original_text,
             media_items=media_items,
@@ -2261,6 +2329,7 @@ class ConversationService:
             has_media=has_media,
             last_patient_message=last_patient_message,
             media_metadata=media_items or [],
+            operational_category=self._operational_category_for_reason(reason),
         )
         if self._notification_repo is not None:
             await self._notification_repo.create(
@@ -2301,6 +2370,7 @@ class ConversationService:
         menu = self._main_reason_menu_message(
             can_cancel=has_future_turnos,
             can_reschedule=has_future_turnos,
+            can_request_reimbursement_invoice=self._is_particular_patient(patient),
         )
         if patient_label:
             return (
@@ -2501,7 +2571,10 @@ class ConversationService:
 
     @staticmethod
     def _main_reason_menu_message(
-        *, can_cancel: bool = False, can_reschedule: bool = False
+        *,
+        can_cancel: bool = False,
+        can_reschedule: bool = False,
+        can_request_reimbursement_invoice: bool = False,
     ) -> str:
         menu = (
             "1) Turno presencial\n"
@@ -2514,6 +2587,8 @@ class ConversationService:
             menu += "\n6) Cancelar un turno"
         if can_reschedule:
             menu += "\n7) Reprogramar un turno"
+        if can_request_reimbursement_invoice:
+            menu += "\n8) Solicitar factura para reintegro"
         return menu
 
     def _main_reason_retry_message(self) -> str:
@@ -2748,9 +2823,24 @@ class ConversationService:
     @staticmethod
     def _is_direct_main_menu_option(value: str | None) -> bool:
         return normalize_message(value) in {
-            "1", "2", "3", "4", "5", "6", "7",
-            "a", "b", "c", "d", "e", "f", "g",
+            "1", "2", "3", "4", "5", "6", "7", "8",
+            "a", "b", "c", "d", "e", "f", "g", "h",
         }
+
+    @staticmethod
+    def _is_particular_patient(patient: Paciente | None) -> bool:
+        if patient is None:
+            return False
+        coverage_type = normalize_message(patient.health_coverage_type)
+        coverage_name = normalize_message(patient.obra_social)
+        return coverage_type == "particular" or coverage_name == "particular"
+
+    @staticmethod
+    def _operational_category_for_reason(reason: str) -> str:
+        return {
+            "humano": "derivacion_humana",
+            "factura_reintegro": "factura_reintegro",
+        }.get(reason, reason)
 
     def _intent_from_ai_result(self, result: AIIntentResult, *, min_confidence: float):
         from app.services.conversation_intents import IntentResult
@@ -2767,6 +2857,11 @@ class ConversationService:
             return IntentResult("otra_consulta", ConversationCategory.OTHER_QUERY)
         if result.intent == AIIntent.HUMAN_HANDOFF:
             return IntentResult("humano", ConversationCategory.HUMAN_HANDOFF)
+        if result.intent == AIIntent.REIMBURSEMENT_INVOICE:
+            return IntentResult(
+                "factura_reintegro",
+                ConversationCategory.REIMBURSEMENT_INVOICE,
+            )
         if result.intent == AIIntent.CANCEL_APPOINTMENT:
             return IntentResult("cancelar_turno", ConversationCategory.OTHER_QUERY)
         if result.intent == AIIntent.RESCHEDULE_APPOINTMENT:

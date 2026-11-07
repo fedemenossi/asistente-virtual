@@ -9,6 +9,7 @@ INTENT_LABELS = {
     "recipe_or_order": "Receta u orden",
     "other_medical_query": "Otra consulta",
     "human_handoff": "Derivacion humana",
+    "reimbursement_invoice": "Factura para reintegro",
     "cancel_appointment": "Cancelacion de turno",
     "reschedule_appointment": "Reprogramacion de turno",
     "greeting": "Saludo",

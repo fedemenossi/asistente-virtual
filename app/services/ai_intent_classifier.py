@@ -21,6 +21,7 @@ class AIIntent:
     RECIPE_OR_ORDER = "recipe_or_order"
     OTHER_MEDICAL_QUERY = "other_medical_query"
     HUMAN_HANDOFF = "human_handoff"
+    REIMBURSEMENT_INVOICE = "reimbursement_invoice"
     CANCEL_APPOINTMENT = "cancel_appointment"
     RESCHEDULE_APPOINTMENT = "reschedule_appointment"
     GREETING = "greeting"
@@ -34,6 +35,7 @@ SUPPORTED_INTENTS = {
     AIIntent.RECIPE_OR_ORDER,
     AIIntent.OTHER_MEDICAL_QUERY,
     AIIntent.HUMAN_HANDOFF,
+    AIIntent.REIMBURSEMENT_INVOICE,
     AIIntent.CANCEL_APPOINTMENT,
     AIIntent.RESCHEDULE_APPOINTMENT,
     AIIntent.GREETING,
@@ -116,6 +118,9 @@ def classify_by_rules(message: str) -> AIIntentResult:
         )
     ):
         return _result(AIIntent.HUMAN_HANDOFF, 0.92)
+
+    if "factura" in text or "reintegro" in text:
+        return _result(AIIntent.REIMBURSEMENT_INVOICE, 0.92)
 
     if any(
         token in text

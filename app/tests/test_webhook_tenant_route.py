@@ -27,7 +27,17 @@ def test_webhook_by_tenant_uses_secret_and_processes_message(client, db_session,
         lambda self, url, form, signature: True,
     )
 
+    captured = {}
+
     async def _fake_process(self, tenant, from_phone, body, media_items=None):
+        captured.update(
+            {
+                "tenant_id": tenant.id,
+                "from_phone": from_phone,
+                "body": body,
+                "media_items": media_items,
+            }
+        )
         return "ok-tenant-webhook"
 
     monkeypatch.setattr(
@@ -42,11 +52,26 @@ def test_webhook_by_tenant_uses_secret_and_processes_message(client, db_session,
             "To": "whatsapp:+14155238886",
             "Body": "hola",
             "MessageSid": "SM123",
+            "NumMedia": "1",
+            "MediaUrl0": "https://api.twilio.test/media/1",
+            "MediaContentType0": "image/jpeg",
         },
         headers={"X-Twilio-Signature": "test-signature"},
     )
     assert response.status_code == 200
     assert "ok-tenant-webhook" in response.text
+    assert captured == {
+        "tenant_id": tenant_id,
+        "from_phone": "whatsapp:+5491111111111",
+        "body": "hola",
+        "media_items": [
+            {
+                "index": 0,
+                "url": "https://api.twilio.test/media/1",
+                "content_type": "image/jpeg",
+            }
+        ],
+    }
 
 
 def test_webhook_by_tenant_rejects_invalid_secret(client, db_session):

@@ -12,6 +12,7 @@ class ConversationCategory:
     PRESCRIPTION_OR_ORDER = "PRESCRIPTION_OR_ORDER"
     OTHER_QUERY = "OTHER_QUERY"
     HUMAN_HANDOFF = "HUMAN_HANDOFF"
+    REIMBURSEMENT_INVOICE = "REIMBURSEMENT_INVOICE"
 
 
 class PrescriptionSubtype:
@@ -29,6 +30,7 @@ PENDING_REASON_BY_CATEGORY = {
     ConversationCategory.PRESCRIPTION_OR_ORDER: "receta_orden",
     ConversationCategory.OTHER_QUERY: "otra_consulta",
     ConversationCategory.HUMAN_HANDOFF: "humano",
+    ConversationCategory.REIMBURSEMENT_INVOICE: "factura_reintegro",
 }
 
 
@@ -39,6 +41,7 @@ CATEGORY_LABELS = {
     ConversationCategory.PRESCRIPTION_OR_ORDER: "Receta / orden",
     ConversationCategory.OTHER_QUERY: "Otra consulta",
     ConversationCategory.HUMAN_HANDOFF: "Humano",
+    ConversationCategory.REIMBURSEMENT_INVOICE: "Factura para reintegro",
 }
 
 
@@ -157,11 +160,22 @@ def classify_main_intent(value: str | None) -> IntentResult:
             pending_reason="reprogramar_turno",
             category=ConversationCategory.OTHER_QUERY,
         )
+    if text in {"8", "h"}:
+        return IntentResult(
+            pending_reason="factura_reintegro",
+            category=ConversationCategory.REIMBURSEMENT_INVOICE,
+        )
 
     if "reprogram" in text:
         return IntentResult(
             pending_reason="reprogramar_turno",
             category=ConversationCategory.OTHER_QUERY,
+        )
+
+    if "factura" in text or "reintegro" in text:
+        return IntentResult(
+            pending_reason="factura_reintegro",
+            category=ConversationCategory.REIMBURSEMENT_INVOICE,
         )
 
     human_keywords = ("humano", "persona", "secretaria", "doctora", "doctor", "asesor")

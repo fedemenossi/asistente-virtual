@@ -167,6 +167,50 @@ def test_tenant_conversation_list_does_not_break_with_empty_context(client, db_s
     assert "Sin contexto IA" in response.text
 
 
+def test_reimbursement_invoice_is_filterable_and_actionable_in_tenant_inbox(
+    client, db_session
+):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Inbox Reintegro", "whatsapp:+805"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-inbox-reintegro@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    async def seed():
+        async with db_session() as session:
+            async with session.begin():
+                session.add(
+                    EstadoConversacion(
+                        tenant_id=tenant_id,
+                        telefono="5491180500001",
+                        estado_actual="ask_reimbursement_member_number",
+                        contexto_json={"patient_id": None, "contact_id": 10},
+                        status="pending",
+                        pending_reason="factura_reintegro",
+                        pending_message="Prepaga: OSDE; afiliado: 123456",
+                        conversation_category="REIMBURSEMENT_INVOICE",
+                        operational_category="factura_reintegro",
+                        requires_human_review=True,
+                    )
+                )
+
+    asyncio.run(seed())
+    login(client, "tenant-inbox-reintegro@test.com", "secret-123")
+
+    response = client.get("/t/conversation-states?category=factura_reintegro")
+
+    assert response.status_code == 200
+    assert "5491180500001" in response.text
+    assert "Factura para reintegro" in response.text
+    assert "https://wa.me/5491180500001" in response.text
+    assert "/t/conversation-states/5491180500001/resolve" in response.text
+
+
 def test_tenant_conversation_detail_respects_permissions(client, db_session):
     tenant_a = asyncio.run(create_tenant(db_session, "Tenant Detail A", "whatsapp:+811"))
     tenant_b = asyncio.run(create_tenant(db_session, "Tenant Detail B", "whatsapp:+812"))
