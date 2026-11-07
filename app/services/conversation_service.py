@@ -1353,6 +1353,7 @@ class ConversationService:
             preferences=preferences,
             limit=fetch_limit,
         )
+        appointment["availability_context"] = result.get("availability_context") or {}
         offered_history = list(appointment.get("offered_slot_ids") or [])
         previously_offered = set(offered_history)
         candidates = [
@@ -1386,8 +1387,8 @@ class ConversationService:
                 await self._set_pending(
                     tenant=tenant,
                     phone=phone,
-                    reason=context["reason"],
-                    message=result.get("message") or "No se pudo consultar disponibilidad automatica.",
+                    reason="sin_disponibilidad",
+                    message="No hubo disponibilidades elegibles en las fuentes consultadas.",
                     title="Solicitud de turno para revision manual",
                     category=self._appointment_category_from_context(context),
                     subtype=None,
@@ -1434,7 +1435,14 @@ class ConversationService:
             "virtual": "virtuales",
             "both": "presenciales o virtuales",
         }.get(appointment_type, "disponibles")
-        lines = [f"Encontre estos turnos {label} disponibles:"]
+        lines = []
+        if result.get("partial"):
+            lines.append(
+                "Pude consultar solo parte de las agendas. "
+                "Estas opciones corresponden a las fuentes disponibles:"
+            )
+        else:
+            lines.append(f"Encontre estos turnos {label} disponibles:")
         if appointment_type == "both":
             lines.extend(
                 f"{slot['option']}) ({self._modality_label(slot.get('consultorio_type'))}) {slot['label']}"

@@ -2113,6 +2113,7 @@ def _format_local_time(value: datetime | None) -> str:
 
 
 OPERATIONAL_CATEGORY_LABELS = {
+    "sin_disponibilidad": "Falta de disponibilidad",
     "turno_presencial": "Turno presencial",
     "turno_virtual": "Turno virtual",
     "receta_orden": "Receta / orden",
@@ -2168,6 +2169,7 @@ def _resolve_operational_category(
 
 def _operational_tone(value: str) -> str:
     return {
+        "sin_disponibilidad": "warning",
         "turno_presencial": "success",
         "turno_virtual": "info",
         "receta_orden": "warning",

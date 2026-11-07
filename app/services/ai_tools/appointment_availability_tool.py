@@ -17,6 +17,7 @@ from app.models.tenant import Tenant
 from app.services.ai_tools.base import tool_error, tool_success
 from app.services.calendar_service import CalendarService
 from app.services.consultorio_eligibility_service import (
+    get_eligibility_config,
     has_specific_coverage_match,
     is_consultorio_eligible,
     slot_is_in_weekly_ranges,
@@ -45,12 +46,6 @@ async def get_available_appointment_slots(
                 message="No pude consultar la agenda en este momento.",
             )
         consultorios = await _get_consultorios(session, tenant_id, normalized_type)
-        if not consultorios:
-            return tool_error(
-                consultorio_type=normalized_type,
-                error="consultorio_not_configured",
-                message="No hay consultorio configurado para consultar disponibilidad.",
-            )
         coverage_type, coverage_entity = await _resolve_patient_coverage(
             session, tenant_id, patient_context
         )
@@ -59,16 +54,50 @@ async def get_available_appointment_slots(
             if patient_context.get("first_time") is not None
             else (patient_context.get("appointment") or {}).get("is_first_time")
         )
-        eligible = [
-            consultorio
-            for consultorio in consultorios
-            if is_consultorio_eligible(
+        if not consultorios:
+            response = tool_error(
+                consultorio_type=normalized_type,
+                error="consultorio_not_configured",
+                message="No hay consultorio configurado para consultar disponibilidad.",
+            )
+            response["availability_context"] = {
+                "patient_id": patient_context.get("patient_id"),
+                "modality": normalized_type,
+                "first_consultation": first_time,
+                "coverage": {
+                    "type": coverage_type,
+                    "entity": coverage_entity,
+                },
+                "rules_applied": [],
+                "sources_consulted": [],
+            }
+            return response
+        eligibility_evaluations: list[dict[str, Any]] = []
+        eligible: list[Consultorio] = []
+        for consultorio in consultorios:
+            is_eligible = is_consultorio_eligible(
                 consultorio,
                 first_time=first_time,
                 coverage_type=coverage_type,
                 coverage_entity=coverage_entity,
             )
-        ]
+            config = get_eligibility_config(consultorio)
+            eligibility_evaluations.append(
+                {
+                    "consultorio_id": consultorio.id,
+                    "consultorio_name": consultorio.nombre,
+                    "provider": CalendarService().resolve_provider_name(consultorio),
+                    "eligible": is_eligible,
+                    "rules": {
+                        "accepts_first_consultation": config["accepts_first_consultation"],
+                        "coverage_types": config["coverage_types"],
+                        "coverage_entities": config["coverage_entities"],
+                        "weekly_ranges": config["weekly_ranges"],
+                    },
+                }
+            )
+            if is_eligible:
+                eligible.append(consultorio)
         specific_matches = [
             consultorio
             for consultorio in eligible
@@ -76,33 +105,57 @@ async def get_available_appointment_slots(
         ]
         if specific_matches:
             eligible = specific_matches
+        selected_ids = {consultorio.id for consultorio in eligible}
+        for evaluation in eligibility_evaluations:
+            evaluation["selected"] = evaluation["consultorio_id"] in selected_ids
+        availability_context: dict[str, Any] = {
+            "patient_id": patient_context.get("patient_id"),
+            "modality": normalized_type,
+            "first_consultation": first_time,
+            "coverage": {
+                "type": coverage_type,
+                "entity": coverage_entity,
+            },
+            "rules_applied": eligibility_evaluations,
+            "sources_consulted": [],
+        }
         if not eligible:
-            return tool_error(
+            response = tool_error(
                 consultorio_type=normalized_type,
                 error="no_eligible_consultorio",
                 message="No hay consultorios elegibles para esta solicitud.",
             )
+            response["availability_context"] = availability_context
+            return response
         slots: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
         sources: list[str] = []
         for consultorio in eligible:
             provider = CalendarService().resolve_provider_name(consultorio)
+            if provider not in {"google", "drapp", "consultorio_movil"}:
+                continue
+            source_attempt: dict[str, Any] = {
+                "consultorio_id": consultorio.id,
+                "consultorio_name": consultorio.nombre,
+                "provider": provider,
+                "status": "consulting",
+            }
+            availability_context["sources_consulted"].append(source_attempt)
             consultorio_type_value = (
                 "virtual" if consultorio.tipo == TipoConsultorio.VIRTUAL else "presential"
             )
             try:
-                if provider in {"google", "drapp", "consultorio_movil"}:
-                    result = await _get_provider_slots(
-                        tenant=tenant,
-                        consultorio=consultorio,
-                        consultorio_type=consultorio_type_value,
-                        preferences=preferences,
-                        limit=safe_limit,
-                        provider=provider,
-                    )
-                else:
-                    continue
+                result = await _get_provider_slots(
+                    tenant=tenant,
+                    consultorio=consultorio,
+                    consultorio_type=consultorio_type_value,
+                    preferences=preferences,
+                    limit=safe_limit,
+                    provider=provider,
+                )
             except Exception as exc:
+                source_attempt["status"] = "failed"
+                source_attempt["error"] = type(exc).__name__
                 logger.warning(
                     "availability_source_failed tenant_id=%s consultorio_id=%s error=%s",
                     tenant.id,
@@ -119,27 +172,39 @@ async def get_available_appointment_slots(
                 )
                 continue
             if result.get("ok"):
+                source_attempt["status"] = (
+                    "available" if result.get("slots") else "no_availability"
+                )
                 slots.extend(result.get("slots") or [])
                 if result.get("source"):
                     sources.append(str(result["source"]))
             else:
+                source_attempt["status"] = "failed"
+                source_attempt["error"] = str(result.get("error") or "provider_error")
                 errors.append(result)
         slots.sort(key=lambda slot: str(slot.get("start_at") or ""))
         if slots:
-            return tool_success(
+            response = tool_success(
                 consultorio_type=normalized_type,
                 source=sources[0] if sources and len(set(sources)) == 1 else "combined",
                 slots=slots[:safe_limit],
                 message=None,
             )
+            response["partial"] = bool(errors)
+            response["availability_context"] = availability_context
+            return response
         if errors:
-            return errors[0]
-        return tool_success(
+            response = errors[0]
+            response["availability_context"] = availability_context
+            return response
+        response = tool_success(
             consultorio_type=normalized_type,
             source="combined",
             slots=[],
             message="No encontre turnos disponibles.",
         )
+        response["availability_context"] = availability_context
+        return response
     except Exception as exc:
         logger.warning(
             "ai_availability_tool_failed tenant_id=%s consultorio_type=%s error=%s",
