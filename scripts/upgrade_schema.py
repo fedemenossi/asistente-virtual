@@ -26,6 +26,7 @@ from app.models import (  # noqa: F401
     Notification,
     Payment,
     PaymentEvent,
+    PatientCredit,
     PushSubscription,
     Subscription,
     TenantFeature,

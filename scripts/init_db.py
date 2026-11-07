@@ -18,6 +18,7 @@ from app.models import (  # noqa: F401
     Paciente,
     Payment,
     PaymentEvent,
+    PatientCredit,
     Subscription,
     TenantFeature,
     Tenant,

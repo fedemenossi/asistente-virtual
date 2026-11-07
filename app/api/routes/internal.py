@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.db import get_async_session
 from app.services.reminder_service import ReminderService
+from app.services.availability_hold_service import AvailabilityHoldService
 
 router = APIRouter(prefix="/internal", tags=["internal"])
 
@@ -26,3 +27,17 @@ async def run_reminders(
         hours_value = 24
     sent = await ReminderService(session).run(request, hours_before=hours_value)
     return {"sent": sent}
+
+
+@router.post("/payment-holds/expire")
+async def expire_payment_holds(
+    request: Request,
+    session: AsyncSession = Depends(get_async_session),
+):
+    settings = get_settings()
+    token = request.headers.get("X-Internal-Token")
+    if not settings.internal_job_token or token != settings.internal_job_token:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    expired = await AvailabilityHoldService(session).expire_overdue()
+    await session.commit()
+    return {"expired": expired}

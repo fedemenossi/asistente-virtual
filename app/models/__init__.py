@@ -20,6 +20,7 @@ from app.models.paciente import Paciente
 from app.models.payment import Payment
 from app.models.payment_event import PaymentEvent
 from app.models.patient_contact_link import PatientContactLink, PatientContactLinkStatus
+from app.models.patient_credit import PatientCredit
 from app.models.push_subscription import PushSubscription
 from app.models.subscription import Subscription
 from app.models.tenant_feature import TenantFeature
@@ -52,6 +53,7 @@ __all__ = [
     "PaymentEvent",
     "PatientContactLink",
     "PatientContactLinkStatus",
+    "PatientCredit",
     "PushSubscription",
     "Subscription",
     "TenantFeature",

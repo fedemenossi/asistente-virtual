@@ -42,6 +42,7 @@ class AvailabilityHoldService:
         start_at: datetime,
         end_at: datetime,
         timezone_name: str,
+        payment_provider: str = "simulator",
     ) -> tuple[AvailabilityHold, Turno, Payment]:
         existing = await self._find_slot_hold(tenant.id, consultorio.id, external_slot_id)
         current = now_ba()
@@ -79,18 +80,22 @@ class AvailabilityHoldService:
             external_status="held_waiting_payment",
             status=AppointmentStatus.WAITING_PAYMENT,
             estado=EstadoTurno.WAITING_PAYMENT,
-            notes="Disponibilidad retenida por una hora; pendiente de pago simulado.",
+            notes="Disponibilidad retenida por una hora; pendiente de pago.",
         )
         amount, currency = self.first_consultation_fee(tenant)
         payment = Payment(
             tenant_id=tenant.id,
             patient_id=paciente.id,
             appointment_id=turno.id,
-            provider="simulator",
+            provider=payment_provider,
             status=PaymentStatus.PENDING,
             amount=amount,
             currency=currency,
-            description="Primera consulta particular (pago simulado)",
+            description=(
+                "Primera consulta particular (pago simulado)"
+                if payment_provider == "simulator"
+                else "Primera consulta particular"
+            ),
         )
         self._session.add(payment)
         await self._session.flush()
@@ -187,6 +192,30 @@ class AvailabilityHoldService:
         await self._session.flush()
         return turno, payment, False
 
+    async def expire_overdue(self) -> int:
+        current = now_ba()
+        result = await self._session.execute(
+            select(AvailabilityHold)
+            .where(
+                AvailabilityHold.status == AvailabilityHoldStatus.ACTIVE,
+                AvailabilityHold.expires_at <= current,
+            )
+            .with_for_update(skip_locked=True)
+        )
+        expired = 0
+        for hold in result.scalars().all():
+            turno = await self._session.get(Turno, hold.turno_id)
+            hold.status = AvailabilityHoldStatus.RELEASED
+            if turno is not None and turno.status == AppointmentStatus.WAITING_PAYMENT:
+                turno.status = AppointmentStatus.CANCELLED
+                turno.estado = EstadoTurno.CANCELADO
+                turno.external_status = "hold_expired"
+                turno.cancelled_at = current
+                turno.cancellation_reason = "hold_expired"
+            expired += 1
+        await self._session.flush()
+        return expired
+
     async def get(self, hold_id: int) -> AvailabilityHold | None:
         result = await self._session.execute(
             select(AvailabilityHold)
@@ -211,7 +240,6 @@ class AvailabilityHoldService:
         result = await self._session.execute(
             select(Payment).where(
                 Payment.appointment_id == turno_id,
-                Payment.provider == "simulator",
             )
         )
         return result.scalar_one_or_none()

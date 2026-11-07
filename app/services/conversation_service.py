@@ -43,6 +43,7 @@ from app.services.availability_hold_service import (
     AvailabilityHoldService,
     SlotAlreadyHeldError,
 )
+from app.services.payment_service import PaymentService
 from app.services.tenant_ai_settings_service import get_effective_ai_settings
 from sqlalchemy import select
 
@@ -87,6 +88,7 @@ class ConversationState(str, Enum):
     ASK_AI_SLOT_SELECTION = "ask_ai_slot_selection"
     ASK_AI_BOOKING_CONFIRMATION = "ask_ai_booking_confirmation"
     ASK_SIMULATED_PAYMENT = "ask_simulated_payment"
+    ASK_REAL_PAYMENT = "ask_real_payment"
     ASK_CANCEL_APPOINTMENT_SELECTION = "ask_cancel_appointment_selection"
     ASK_CANCEL_APPOINTMENT_CONFIRMATION = "ask_cancel_appointment_confirmation"
 
@@ -760,7 +762,7 @@ class ConversationService:
             requires_payment = context.get("for_whom") == "self" and self._appointment_requires_payment(
                 context, paciente
             )
-            if requires_payment and simulator:
+            if requires_payment and (simulator or PaymentService.is_configured(tenant)):
                 return await self._hold_selected_appointment(
                     tenant=tenant,
                     phone=normalized_phone,
@@ -768,6 +770,7 @@ class ConversationService:
                     context=context,
                     original_text=text,
                     has_media=has_media,
+                    simulated=simulator,
                 )
             if context.get("for_whom") == "self" and not requires_payment:
                 return await self._reserve_selected_appointment(
@@ -804,6 +807,12 @@ class ConversationService:
             return (
                 "El turno sigue retenido y pendiente de pago simulado. "
                 "Usa la accion 'Aprobar pago simulado' del simulador."
+            )
+
+        if current_state == ConversationState.ASK_REAL_PAYMENT.value:
+            return (
+                "El turno sigue retenido y pendiente de pago. "
+                "Usa el enlace de pago enviado anteriormente."
             )
 
         if current_state == ConversationState.ASK_CANCEL_APPOINTMENT_SELECTION.value:
@@ -1575,6 +1584,7 @@ class ConversationService:
         context: dict,
         original_text: str,
         has_media: bool,
+        simulated: bool = True,
     ) -> str:
         appointment = context.setdefault("appointment", {})
         selected = appointment.get("selected_slot") or {}
@@ -1612,6 +1622,7 @@ class ConversationService:
                 timezone_name=str(
                     selected.get("timezone") or "America/Argentina/Buenos_Aires"
                 ),
+                payment_provider="simulator" if simulated else "mercadopago",
             )
         except SlotAlreadyHeldError:
             return await self._booking_failure_reply(
@@ -1628,10 +1639,28 @@ class ConversationService:
             "payment_id": payment.id,
             "expires_at": hold.expires_at.isoformat(),
         }
+        if not simulated:
+            amount, currency = AvailabilityHoldService.first_consultation_fee(tenant)
+            payment = await PaymentService(self._session).create_payment_for_turno(
+                None,
+                tenant,
+                paciente,
+                turno,
+                float(amount),
+                currency,
+                "Primera consulta particular",
+                payment=payment,
+                commit=False,
+            )
+
         await self._conversacion_repo.upsert_state(
             tenant.id,
             phone,
-            ConversationState.ASK_SIMULATED_PAYMENT.value,
+            (
+                ConversationState.ASK_SIMULATED_PAYMENT.value
+                if simulated
+                else ConversationState.ASK_REAL_PAYMENT.value
+            ),
             context,
             conversation_category=self._appointment_category_from_context(context),
             last_patient_message=original_text,
@@ -1639,10 +1668,17 @@ class ConversationService:
         )
         amount, currency = AvailabilityHoldService.first_consultation_fee(tenant)
         formatted_amount = format(amount, "f")
+        if simulated:
+            return (
+                f"Tarifa de primera consulta particular: {currency} {formatted_amount}.\n"
+                f"El turno del {selected.get('label')} quedo retenido durante 1 hora, "
+                "pendiente de pago simulado. Todavia no fue confirmado."
+            )
         return (
             f"Tarifa de primera consulta particular: {currency} {formatted_amount}.\n"
-            f"El turno del {selected.get('label')} quedo retenido durante 1 hora, "
-            "pendiente de pago simulado. Todavia no fue confirmado."
+            f"El turno del {selected.get('label')} quedo retenido durante 1 hora. "
+            "Todavia no fue confirmado.\n"
+            f"Paga de forma segura desde este enlace: {payment.payment_url}"
         )
 
     async def approve_simulated_payment(self, tenant: Tenant, from_phone: str) -> str:
