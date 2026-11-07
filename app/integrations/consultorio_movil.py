@@ -1276,7 +1276,11 @@ def _resolve_cabildo_config(
 ) -> dict[str, Any]:
     cabildo_cfg = {}
     if consultorio and consultorio.configuracion_externa:
-        cabildo_cfg = consultorio.configuracion_externa.get("cabildo") or {}
+        cabildo_cfg = (
+            consultorio.configuracion_externa.get("drapp")
+            or consultorio.configuracion_externa.get("cabildo")
+            or {}
+        )
     return {
         "user": cabildo_cfg.get("user"),
         "password": cabildo_cfg.get("password"),

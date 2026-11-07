@@ -41,15 +41,17 @@
       <label class="block text-sm font-medium text-slate-700">Proveedor turnos</label>
       <select class="select mt-1" name="proveedor_turnos" data-provider-select>
         <option value="">Manual</option>
+        {% set selected_drapp = (form.proveedor_turnos is defined and form.proveedor_turnos == 'drapp') or (consultorio and consultorio.proveedor_turnos == 'drapp') %}
+        <option value="drapp" {% if selected_drapp %}selected{% endif %}>DrApp</option>
         {% set selected_cab = (form.proveedor_turnos is defined and form.proveedor_turnos == 'consultorio_movil') or (consultorio and consultorio.proveedor_turnos == 'consultorio_movil') %}
         <option value="consultorio_movil" {% if selected_cab %}selected{% endif %}>
-          Consultorio Movil
+          Consultorio Movil (legado)
         </option>
         {% set selected_google = (form.proveedor_turnos is defined and form.proveedor_turnos in ['google', 'google_calendar']) or (consultorio and consultorio.proveedor_turnos in ['google', 'google_calendar']) %}
         <option value="google_calendar" {% if selected_google %}selected{% endif %}>
           Google Calendar
         </option>
-        {% if consultorio and consultorio.proveedor_turnos and consultorio.proveedor_turnos not in ['', 'consultorio_movil', 'google'] %}
+        {% if consultorio and consultorio.proveedor_turnos and consultorio.proveedor_turnos not in ['', 'drapp', 'consultorio_movil', 'google'] %}
           <option value="{{ consultorio.proveedor_turnos }}" selected>{{ consultorio.proveedor_turnos }}</option>
         {% endif %}
       </select>
@@ -89,7 +91,7 @@
           <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p class="text-sm font-medium text-slate-800">Prueba de conexion</p>
-              <p class="mt-1 text-xs text-slate-500">Consulta los turnos disponibles que devuelve Consultorio Movil para los proximos 3 dias. No guarda cambios ni reserva turnos.</p>
+              <p class="mt-1 text-xs text-slate-500">Consulta los turnos disponibles que devuelve el proveedor seleccionado para los proximos 3 dias. No guarda cambios ni reserva turnos.</p>
             </div>
             <button
               class="btn btn-secondary shrink-0"
@@ -279,7 +281,7 @@
         if (rows.length > 1) button.closest("[data-eligibility-range]")?.remove();
       });
       const toggle = () => {
-        if (select.value === "consultorio_movil") {
+        if (select.value === "drapp" || select.value === "consultorio_movil") {
           fields.classList.remove("hidden");
         } else {
           fields.classList.add("hidden");
@@ -306,7 +308,7 @@
         input.parentElement.appendChild(msg);
       };
       form?.addEventListener("submit", (event) => {
-        if (select.value !== "consultorio_movil") return;
+        if (select.value !== "drapp" && select.value !== "consultorio_movil") return;
         clearInlineErrors();
         let hasError = false;
         if (!inputs.cab_user?.value.trim()) {

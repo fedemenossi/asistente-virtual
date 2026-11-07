@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timezone import now_ba
-from app.integrations import consultorio_movil
+from app.integrations.consultorio_movil import CabildoConfigError
 from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
@@ -91,19 +91,14 @@ async def get_available_appointment_slots(
                 "virtual" if consultorio.tipo == TipoConsultorio.VIRTUAL else "presential"
             )
             try:
-                if provider == "google":
-                    result = await _get_google_slots(
+                if provider in {"google", "drapp", "consultorio_movil"}:
+                    result = await _get_provider_slots(
                         tenant=tenant,
                         consultorio=consultorio,
                         consultorio_type=consultorio_type_value,
                         preferences=preferences,
                         limit=safe_limit,
-                    )
-                elif consultorio_type_value == "presential":
-                    result = await _get_presential_slots(
-                        tenant=tenant,
-                        consultorio=consultorio,
-                        limit=safe_limit,
+                        provider=provider,
                     )
                 else:
                     continue
@@ -159,18 +154,27 @@ async def get_available_appointment_slots(
         )
 
 
-async def _get_google_slots(
+async def _get_provider_slots(
     *,
     tenant: Tenant,
     consultorio: Consultorio,
     consultorio_type: str,
     preferences: dict,
     limit: int,
+    provider: str,
 ) -> dict[str, Any]:
     tz_name = (tenant.calendar_settings or {}).get("default_timezone") or "America/Argentina/Buenos_Aires"
     tz = _resolve_timezone(tz_name)
     start, end = _availability_window(tz, preferences)
-    slots = await CalendarService().list_available_slots(tenant, consultorio, start, end)
+    try:
+        slots = await CalendarService().list_available_slots(tenant, consultorio, start, end)
+    except CabildoConfigError:
+        return tool_error(
+            consultorio_type=consultorio_type,
+            source=provider,
+            error=f"{provider}_not_configured",
+            message="La agenda presencial no esta configurada para consulta automatica.",
+        )
     normalized = [
         _normalize_slot(
             tenant_id=tenant.id,
@@ -179,7 +183,7 @@ async def _get_google_slots(
             start_at=slot.start_at,
             end_at=slot.end_at,
             timezone=slot.timezone or tz_name,
-            provider=slot.provider or "google_calendar",
+            provider=slot.provider or provider,
             metadata={
                 "calendar_id_hash": _hash_value(slot.calendar_id),
                 # La referencia autoritativa queda solamente en el estado del
@@ -193,51 +197,9 @@ async def _get_google_slots(
     ]
     return tool_success(
         consultorio_type=consultorio_type,
-        source="calendar",
+        source="calendar" if provider == "google" else provider,
         slots=normalized[:limit],
-        message=None if normalized else "No encontre turnos virtuales disponibles.",
-    )
-
-
-async def _get_presential_slots(
-    *,
-    tenant: Tenant,
-    consultorio: Consultorio,
-    limit: int,
-) -> dict[str, Any]:
-    try:
-        selections = consultorio_movil.list_next_presential_slots(
-            tenant=tenant,
-            consultorio=consultorio,
-            limit=limit,
-        )
-    except consultorio_movil.CabildoConfigError:
-        return tool_error(
-            consultorio_type="presential",
-            source="consultorio_movil",
-            error="consultorio_movil_not_configured",
-            message="La agenda presencial no esta configurada para consulta automatica.",
-        )
-    normalized = [
-        _normalize_slot(
-            tenant_id=tenant.id,
-            consultorio_type="presential",
-            raw_slot_id=f"{selection.number}:{selection.start_at.isoformat()}",
-            start_at=selection.start_at,
-            end_at=selection.end_at,
-            timezone=selection.timezone,
-            provider="consultorio_movil",
-            metadata={"duration_minutes": selection.duration_minutes},
-            label=selection.label,
-        )
-        for selection in selections
-        if slot_is_in_weekly_ranges(consultorio, selection.start_at, selection.end_at)
-    ]
-    return tool_success(
-        consultorio_type="presential",
-        source="consultorio_movil",
-        slots=normalized[:limit],
-        message=None if normalized else "No encontre turnos presenciales disponibles.",
+        message=None if normalized else "No encontre turnos disponibles.",
     )
 
 

@@ -319,6 +319,8 @@ def _turno_provider_label(turno: Turno) -> tuple[str, str]:
         return "Google", "info"
     if provider == "consultorio_movil":
         return "Consultorio Movil", "warning"
+    if provider == "drapp":
+        return "DrApp", "warning"
     return "Manual", "neutral"
 
 
@@ -618,7 +620,7 @@ async def consultorios_new_post(
     if tenant:
         google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant)
     google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
-    if provider == "consultorio_movil":
+    if provider in {"drapp", "consultorio_movil"}:
         if not cab_user:
             errors["cab_user"] = "El usuario es obligatorio."
         if not cab_password:
@@ -653,8 +655,9 @@ async def consultorios_new_post(
                 days_value = int(cab_days)
             except ValueError:
                 days_value = 21
+        provider_config_key = "drapp" if provider == "drapp" else "cabildo"
         config_externa = {
-            "cabildo": {
+            provider_config_key: {
                 "user": cab_user.strip(),
                 "password": cab_password.strip(),
                 "staff_id": cab_staff_id.strip(),
@@ -710,9 +713,14 @@ async def consultorios_new_post(
         session.add(consultorio)
         await session.flush()
         metadata = None
-        if provider == "consultorio_movil":
+        if provider in {"drapp", "consultorio_movil"}:
+            provider_config_key = "drapp" if provider == "drapp" else "cabildo"
+            provider_config = (consultorio.configuracion_externa or {}).get(provider_config_key) or {}
             metadata = {
-                "cabildo": consultorio.configuracion_externa.get("cabildo") if consultorio.configuracion_externa else {},
+                provider_config_key: {
+                    "staff_id": provider_config.get("staff_id"),
+                    "days": provider_config.get("days"),
+                }
             }
         elif provider == "google":
             metadata = {"google_calendar": {"calendar_id": google_config.get("calendar_id"), "schedule_updated": True}}
@@ -738,7 +746,8 @@ async def consultorios_edit_get(
     consultorio = await get_tenant_entity_or_404(
         session, Consultorio, consultorio_id, user.tenant_id
     )
-    cabildo_cfg = (consultorio.configuracion_externa or {}).get("cabildo") or {}
+    provider_config_key = "drapp" if consultorio.proveedor_turnos == "drapp" else "cabildo"
+    cabildo_cfg = (consultorio.configuracion_externa or {}).get(provider_config_key) or {}
     tenant = await session.get(Tenant, user.tenant_id)
     google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
     google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
@@ -786,11 +795,12 @@ async def consultorios_edit_post(
     google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
     google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
     google_config = get_google_calendar_config(consultorio)
+    provider_config_key = "drapp" if provider == "drapp" else "cabildo"
     existing_days = (
-        (consultorio.configuracion_externa or {}).get("cabildo") or {}
+        (consultorio.configuracion_externa or {}).get(provider_config_key) or {}
     ).get("days") or 21
     days_value = existing_days
-    if provider == "consultorio_movil":
+    if provider in {"drapp", "consultorio_movil"}:
         if not cab_user:
             errors["cab_user"] = "El usuario es obligatorio."
         if not cab_password:
@@ -855,15 +865,15 @@ async def consultorios_edit_post(
         )
     previous_cabildo = None
     if consultorio.configuracion_externa:
-        previous_cabildo = (consultorio.configuracion_externa.get("cabildo") or {}).copy()
+        previous_cabildo = (consultorio.configuracion_externa.get(provider_config_key) or {}).copy()
     async with session.begin_nested():
         consultorio.nombre = nombre
         consultorio.tipo = TipoConsultorio(tipo)
         consultorio.proveedor_turnos = provider
         config_externa = consultorio.configuracion_externa or {}
         config_externa["eligibility"] = eligibility_config
-        if provider == "consultorio_movil":
-            config_externa["cabildo"] = {
+        if provider in {"drapp", "consultorio_movil"}:
+            config_externa[provider_config_key] = {
                 "user": cab_user.strip(),
                 "password": cab_password.strip(),
                 "staff_id": cab_staff_id.strip(),
@@ -876,10 +886,16 @@ async def consultorios_edit_post(
         consultorio.configuracion_externa = config_externa
         flag_modified(consultorio, "configuracion_externa")
         metadata = None
-        if provider == "consultorio_movil":
+        if provider in {"drapp", "consultorio_movil"}:
             metadata = {
-                "cabildo_before": previous_cabildo,
-                "cabildo_after": config_externa.get("cabildo") if config_externa else {},
+                f"{provider_config_key}_before": {
+                    "staff_id": (previous_cabildo or {}).get("staff_id"),
+                    "days": (previous_cabildo or {}).get("days"),
+                },
+                f"{provider_config_key}_after": {
+                    "staff_id": (config_externa.get(provider_config_key) or {}).get("staff_id"),
+                    "days": (config_externa.get(provider_config_key) or {}).get("days"),
+                },
             }
         elif provider == "google":
             metadata = {"google_calendar": {"calendar_id": google_config.get("calendar_id"), "schedule_updated": True}}
@@ -911,11 +927,12 @@ async def consultorio_provider_test(
     consultorio = await get_tenant_entity_or_404(
         session, Consultorio, consultorio_id, user.tenant_id
     )
-    if proveedor_turnos != "consultorio_movil":
+    provider = normalize_provider(proveedor_turnos)
+    if provider not in {"drapp", "consultorio_movil"}:
         return JSONResponse(
             {
                 "ok": False,
-                "message": "La prueba esta disponible para Consultorio Movil.",
+                "message": "La prueba esta disponible para DrApp y Consultorio Movil.",
                 "slots": [],
             },
             status_code=400,
@@ -944,10 +961,11 @@ async def consultorio_provider_test(
     if tenant is None:
         raise HTTPException(status_code=404)
 
+    provider_config_key = "drapp" if provider == "drapp" else "cabildo"
     test_consultorio = SimpleNamespace(
         tipo=consultorio.tipo,
         configuracion_externa={
-            "cabildo": {
+            provider_config_key: {
                 "user": cab_user.strip(),
                 "password": cab_password.strip(),
                 "staff_id": cab_staff_id.strip(),
@@ -968,10 +986,11 @@ async def consultorio_provider_test(
             status_code=400,
         )
     except Exception:
+        provider_label = "DrApp" if provider == "drapp" else "Consultorio Movil"
         return JSONResponse(
             {
                 "ok": False,
-                "message": "No se pudo conectar con Consultorio Movil. Verifica credenciales y staff id.",
+                "message": f"No se pudo conectar con {provider_label}. Verifica credenciales y staff id.",
                 "slots": [],
             },
             status_code=502,

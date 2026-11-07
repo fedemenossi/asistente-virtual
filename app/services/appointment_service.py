@@ -332,7 +332,7 @@ class AppointmentService:
         turno: Turno,
     ) -> None:
         should_cancel_external = bool(turno.external_calendar_provider and turno.external_event_id)
-        if turno.external_calendar_provider == "consultorio_movil":
+        if turno.external_calendar_provider in {"drapp", "consultorio_movil"}:
             should_cancel_external = (
                 should_cancel_external
                 and str(turno.external_status or "").lower() in {"reserved", "confirmed"}

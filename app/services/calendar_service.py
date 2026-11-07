@@ -5,6 +5,7 @@ import logging
 from fastapi import HTTPException, status
 
 from app.integrations.cabildo_provider import CabildoProvider
+from app.integrations.drapp_provider import DrAppProvider
 from app.integrations.google_calendar_provider import (
     GoogleCalendarProvider,
     get_google_service_account_email,
@@ -32,6 +33,8 @@ class CalendarService:
         provider = self.resolve_provider_name(consultorio)
         if provider == "consultorio_movil":
             return str((((consultorio.configuracion_externa or {}).get("cabildo") or {}).get("staff_id")) or "")
+        if provider == "drapp":
+            return str((((consultorio.configuracion_externa or {}).get("drapp") or {}).get("staff_id")) or "")
         if provider == "google":
             consultorio_settings = ((consultorio.configuracion_externa or {}).get("google_calendar") or {})
             if consultorio_settings.get("calendar_id"):
@@ -45,6 +48,8 @@ class CalendarService:
         provider = self.resolve_provider_name(consultorio)
         if provider == "consultorio_movil":
             return CabildoProvider()
+        if provider == "drapp":
+            return DrAppProvider()
         if provider != "google":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -160,6 +165,9 @@ class CalendarService:
         if provider_name == "consultorio_movil":
             await CabildoProvider().cancel_slot_for_context(tenant, consultorio, external_event_id)
             return
+        if provider_name == "drapp":
+            await DrAppProvider().cancel_slot_for_context(tenant, consultorio, external_event_id)
+            return
         provider = self._get_provider(tenant, consultorio)
         await provider.cancel_slot(external_event_id)
 
@@ -171,7 +179,12 @@ class CalendarService:
         external_event_id: str,
     ) -> dict:
         provider_name = (external_provider or self.resolve_provider_name(consultorio)).strip().lower()
-        provider = CabildoProvider() if provider_name == "consultorio_movil" else self._get_provider(tenant, consultorio)
+        if provider_name == "consultorio_movil":
+            provider = CabildoProvider()
+        elif provider_name == "drapp":
+            provider = DrAppProvider()
+        else:
+            provider = self._get_provider(tenant, consultorio)
         return await provider.get_event(external_event_id)
 
 
