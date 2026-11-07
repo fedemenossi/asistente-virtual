@@ -311,11 +311,26 @@ class AppointmentService:
                     Payment.patient_id == paciente.id,
                     Payment.appointment_id == locked_origin.id,
                     Payment.status == PaymentStatus.APPROVED,
-                )
+                ).with_for_update()
             )
         ).scalars().all()
         for payment in payments:
             payment.appointment_id = replacement.id
+
+        consumed_credits = (
+            await self._session.execute(
+                select(PatientCredit)
+                .where(
+                    PatientCredit.tenant_id == tenant.id,
+                    PatientCredit.patient_id == paciente.id,
+                    PatientCredit.status == PatientCreditStatus.CONSUMED,
+                    PatientCredit.consumed_turno_id == locked_origin.id,
+                )
+                .with_for_update()
+            )
+        ).scalars().all()
+        for credit in consumed_credits:
+            credit.consumed_turno_id = replacement.id
 
         await audit_log(
             self._session,
@@ -328,6 +343,8 @@ class AppointmentService:
             metadata={
                 "origin_turno_id": locked_origin.id,
                 "replacement_turno_id": replacement.id,
+                "approved_payments_transferred": len(payments),
+                "consumed_credits_transferred": len(consumed_credits),
             },
         )
         await self._session.commit()

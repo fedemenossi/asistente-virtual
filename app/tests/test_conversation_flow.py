@@ -1644,12 +1644,174 @@ def test_chat_reschedule_confirms_origin_and_reuses_original_eligibility_context
             assert origin.status == AppointmentStatus.CANCELLED
             assert len(replacements) == 1
             assert replacements[0].eligibility_context == origin.eligibility_context
+            from app.models.payment import Payment
+
+            payments = list(
+                (
+                    await session.execute(
+                        select(Payment).where(Payment.patient_id == paciente_id)
+                    )
+                ).scalars().all()
+            )
+            assert payments == []
 
     asyncio.run(run())
     assert effects == [
         ("reserve", "replacement-chat-24"),
         ("cancel", "origin-chat-24"),
     ]
+
+
+def test_paid_first_consultation_reschedule_does_not_create_another_payment_preference(
+    db_session, monkeypatch
+):
+    from app.models.payment import Payment, PaymentStatus
+
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Reprogramacion Pagada",
+            "whatsapp:+825",
+            ai_settings=_tools_ai_settings(),
+            payment_settings={"enabled": True, "mp_access_token": "test-token"},
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491182500025"
+    paciente_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            phone,
+            health_coverage_type="particular",
+            obra_social="Particular",
+        )
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Consultorio Particular",
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": {"calendar_id": "paid-reschedule"}},
+        )
+    )
+    origin_id = asyncio.run(
+        create_turno(
+            db_session,
+            paciente_id,
+            consultorio_id,
+            fecha_hora=now_ba().replace(tzinfo=None) + timedelta(days=2),
+            status=AppointmentStatus.CONFIRMED,
+            external_calendar_provider="google",
+            external_event_id="paid-origin-25",
+            external_status="reserved",
+            eligibility_context={
+                "coverage": {"type": "particular", "entity": "Particular"},
+                "first_consultation": True,
+                "modality": "presential",
+            },
+        )
+    )
+
+    async def seed_payment():
+        async with db_session() as session:
+            payment = Payment(
+                tenant_id=tenant_id,
+                patient_id=paciente_id,
+                appointment_id=origin_id,
+                provider="mercadopago",
+                external_payment_id="paid-reschedule-25",
+                status=PaymentStatus.APPROVED,
+                amount=30000,
+                currency="ARS",
+            )
+            session.add(payment)
+            await session.commit()
+            return payment.id
+
+    payment_id = asyncio.run(seed_payment())
+    slot_start = now_ba() + timedelta(days=4)
+    preference_calls: list[dict] = []
+
+    async def forbidden_preference(self, **kwargs):
+        preference_calls.append(kwargs)
+        raise AssertionError("No debe iniciar otro cobro durante una reprogramacion")
+
+    async def reserve_slot(self, tenant, consultorio, slot_id, patient, metadata):
+        return {
+            "event_id": slot_id,
+            "calendar_id": "paid-reschedule",
+            "start_at": slot_start.isoformat(),
+            "end_at": (slot_start + timedelta(minutes=30)).isoformat(),
+            "timezone": "America/Argentina/Buenos_Aires",
+        }
+
+    async def cancel_slot(self, tenant, consultorio, provider, event_id):
+        return None
+
+    monkeypatch.setattr(
+        "app.integrations.mercadopago_service.MercadoPagoService.create_payment_preference",
+        forbidden_preference,
+    )
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.reserve_slot", reserve_slot)
+    monkeypatch.setattr("app.services.calendar_service.CalendarService.cancel_slot", cancel_slot)
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            context = {
+                "patient_id": paciente_id,
+                "for_whom": "self",
+                "first_time": True,
+                "eligibility_context": {
+                    "coverage": {"type": "particular", "entity": "Particular"},
+                    "first_consultation": True,
+                    "modality": "presential",
+                },
+                "appointment": {
+                    "type": "presential",
+                    "reschedule_origin_id": origin_id,
+                    "awaiting_booking_confirmation": True,
+                    "selected_slot": {
+                        "label": "Miercoles 11/11 a las 10:00",
+                        "start_at": slot_start.isoformat(),
+                        "end_at": (slot_start + timedelta(minutes=30)).isoformat(),
+                        "timezone": "America/Argentina/Buenos_Aires",
+                        "metadata": {
+                            "consultorio_id": consultorio_id,
+                            "external_event_id": "paid-replacement-25",
+                        },
+                    },
+                },
+            }
+            await ConversacionRepository(session).upsert_state(
+                tenant_id,
+                phone,
+                ConversationState.ASK_AI_BOOKING_CONFIRMATION.value,
+                context,
+            )
+            response = await service.process_message(
+                tenant, f"whatsapp:+{phone}", "1"
+            )
+            payment = await session.get(Payment, payment_id)
+            payments = list(
+                (
+                    await session.execute(
+                        select(Payment).where(Payment.patient_id == paciente_id)
+                    )
+                ).scalars().all()
+            )
+            return response, payment, payments
+
+    response, payment, payments = asyncio.run(run())
+
+    assert "Turno reprogramado" in response
+    assert preference_calls == []
+    assert len(payments) == 1
+    assert payment.status == PaymentStatus.APPROVED
+    assert payment.appointment_id != origin_id
 
 
 def test_cancellation_lists_only_patient_turnos_with_modality_and_consultorio(db_session):
