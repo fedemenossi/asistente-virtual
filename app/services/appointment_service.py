@@ -334,25 +334,66 @@ class AppointmentService:
 
     async def cancel_turno(
         self,
-        request: Request,
+        request: Request | None,
         tenant: Tenant,
         consultorio: Consultorio,
         turno: Turno,
     ) -> None:
+        locked_turno = (
+            await self._session.execute(
+                select(Turno)
+                .where(
+                    Turno.id == turno.id,
+                    Turno.tenant_id == tenant.id,
+                    Turno.consultorio_id == consultorio.id,
+                )
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if locked_turno is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turno no encontrado")
+        turno = locked_turno
+        if turno.status == AppointmentStatus.CANCELLED:
+            return
         should_cancel_external = bool(turno.external_calendar_provider and turno.external_event_id)
         if turno.external_calendar_provider in {"drapp", "consultorio_movil"}:
             should_cancel_external = (
                 should_cancel_external
-                and str(turno.external_status or "").lower() in {"reserved", "confirmed"}
+                and str(turno.external_status or "").lower()
+                in {"reserved", "confirmed", "cancellation_failed"}
                 and turno.status != AppointmentStatus.DRAFT
             )
         if should_cancel_external:
-            await self._calendar.cancel_slot(
-                tenant,
-                consultorio,
-                turno.external_calendar_provider,
-                turno.external_event_id,
-            )
+            try:
+                await self._calendar.cancel_slot(
+                    tenant,
+                    consultorio,
+                    turno.external_calendar_provider,
+                    turno.external_event_id,
+                )
+            except Exception:
+                turno.external_status = "cancellation_failed"
+                turno.cancellation_reason = "external_cancellation_failed"
+                await audit_log(
+                    self._session,
+                    request,
+                    None,
+                    action="cancel_failed",
+                    entity="turno",
+                    entity_id=turno.id,
+                    tenant_id=tenant.id,
+                    metadata={"provider": turno.external_calendar_provider},
+                )
+                await create_notification(
+                    self._session,
+                    title="Cancelacion de turno pendiente",
+                    message=f"No se pudo liberar externamente el turno #{turno.id}.",
+                    notif_type="warning",
+                    tenant_id=tenant.id,
+                )
+                await self._session.flush()
+                raise
         turno.status = AppointmentStatus.CANCELLED
         turno.estado = EstadoTurno.CANCELADO
         turno.cancelled_at = now_ba()

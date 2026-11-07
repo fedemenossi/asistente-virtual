@@ -21,7 +21,7 @@ from app.integrations.interfaces import CalendarSlot
 from app.models.consultorio import TipoConsultorio
 from app.models.paciente import Paciente
 from app.models.patient_contact_link import PatientContactLink
-from app.models.turno import AppointmentStatus, Turno
+from app.models.turno import AppointmentStatus, TipoTurno, Turno
 
 
 def _tools_ai_settings(**overrides):
@@ -1449,6 +1449,7 @@ def test_chat_can_cancel_future_appointment(db_session, monkeypatch):
             paciente_id,
             consultorio_id,
             fecha_hora=now_ba().replace(tzinfo=None) + timedelta(days=1),
+            status=AppointmentStatus.CONFIRMED,
         )
     )
     cancelled = {}
@@ -1458,8 +1459,6 @@ def test_chat_can_cancel_future_appointment(db_session, monkeypatch):
         turno.status = AppointmentStatus.CANCELLED
         turno.estado = "cancelado"
         await self._session.flush()
-
-    from app.models.turno import AppointmentStatus
 
     monkeypatch.setattr("app.services.appointment_service.AppointmentService.cancel_turno", fake_cancel)
 
@@ -1479,6 +1478,155 @@ def test_chat_can_cancel_future_appointment(db_session, monkeypatch):
 
     asyncio.run(run())
     assert cancelled["turno_id"] == turno_id
+
+
+def test_identified_patient_menu_offers_cancellation_for_future_confirmed_turno(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cancel Menu", "whatsapp:+738"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491173800001"
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, phone))
+    consultorio_id = asyncio.run(create_consultorio(db_session, tenant_id, "Palermo"))
+    asyncio.run(
+        create_turno(
+            db_session,
+            paciente_id,
+            consultorio_id,
+            fecha_hora=now_ba().replace(tzinfo=None) + timedelta(days=2),
+            status=AppointmentStatus.CONFIRMED,
+        )
+    )
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            greeting = await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            assert "6) Cancelar un turno" in greeting
+
+            selection = await service.process_message(tenant, f"whatsapp:+{phone}", "6")
+            assert "Estos son tus turnos activos" in selection
+
+    asyncio.run(run())
+
+
+def test_cancellation_lists_only_patient_turnos_with_modality_and_consultorio(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cancel List", "whatsapp:+739"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491173900001"
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, phone))
+    other_patient_id = asyncio.run(create_paciente(db_session, tenant_id, "5491173900002"))
+    presencial_id = asyncio.run(
+        create_consultorio(db_session, tenant_id, "Palermo", tipo=TipoConsultorio.PRESENCIAL)
+    )
+    virtual_id = asyncio.run(
+        create_consultorio(db_session, tenant_id, "Online", tipo=TipoConsultorio.VIRTUAL)
+    )
+    future = now_ba().replace(tzinfo=None) + timedelta(days=3)
+    for patient_id, consultorio_id in (
+        (paciente_id, presencial_id),
+        (paciente_id, virtual_id),
+        (other_patient_id, presencial_id),
+    ):
+        asyncio.run(
+            create_turno(
+                db_session,
+                patient_id,
+                consultorio_id,
+                fecha_hora=future,
+                tipo=(
+                    TipoTurno.VIRTUAL
+                    if consultorio_id == virtual_id
+                    else TipoTurno.PRESENCIAL
+                ),
+                status=AppointmentStatus.CONFIRMED,
+            )
+        )
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            listing = await service.process_message(tenant, f"whatsapp:+{phone}", "6")
+
+            assert listing.count("Palermo") == 1
+            assert listing.count("Online") == 1
+            assert "Presencial" in listing
+            assert "Virtual" in listing
+            assert future.strftime("%d/%m %H:%M") in listing
+
+    asyncio.run(run())
+
+
+def test_external_cancellation_failure_stays_confirmed_and_is_handed_off(db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Cancel Failure",
+            "whatsapp:+741",
+            calendar_settings={"google_credentials_json": "{}"},
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491174100001"
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, phone))
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Google Belgrano",
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": {"calendar_id": "calendar@example.com"}},
+        )
+    )
+    turno_when = now_ba().replace(tzinfo=None) + timedelta(days=2)
+    turno_id = asyncio.run(
+        create_turno(
+            db_session,
+            paciente_id,
+            consultorio_id,
+            fecha_hora=turno_when,
+            status=AppointmentStatus.CONFIRMED,
+            external_calendar_provider="google",
+            external_calendar_id="calendar@example.com",
+            external_event_id="google-failure-22",
+            external_status="reserved",
+        )
+    )
+
+    async def failing_cancel(self, external_event_id):
+        raise RuntimeError("google unavailable")
+
+    monkeypatch.setattr(
+        "app.integrations.google_calendar_provider.GoogleCalendarProvider.cancel_slot",
+        failing_cancel,
+    )
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "6")
+            confirmation = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "Google Belgrano" in confirmation
+            assert "Presencial" in confirmation
+            assert turno_when.strftime("%d/%m %H:%M") in confirmation
+
+            result = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "No pude cancelar" in result
+            assert "fue cancelado y liberado" not in result
+
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            turno = await session.get(Turno, turno_id)
+            return state, turno
+
+    state, turno = asyncio.run(run())
+
+    assert state.status == "pending"
+    assert state.requires_human_review is True
+    assert state.pending_reason == "cancelar_turno"
+    assert turno.status == AppointmentStatus.CONFIRMED
+    assert turno.cancelled_at is None
+    assert turno.external_status == "cancellation_failed"
+    assert turno.cancellation_reason == "external_cancellation_failed"
 
 
 def test_salir_is_tenant_isolated(db_session):

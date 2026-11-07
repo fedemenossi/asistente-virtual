@@ -560,7 +560,7 @@ class ConversationService:
                     "insurance_number": context.get("insurance_number"),
                 },
             )
-            return self._known_patient_greeting(tenant, paciente.nombre, paciente.apellido)
+            return await self._known_patient_greeting(tenant, paciente)
 
         if current_state in {ConversationState.MAIN_REASON_MENU.value, ConversationState.MAIN_MENU.value}:
             if self._is_direct_main_menu_option(text):
@@ -851,8 +851,25 @@ class ConversationService:
                 tenant=tenant,
                 phone=normalized_phone,
                 turno_id=turno_id,
+                paciente_id=getattr(paciente, "id", None),
             )
             if not cancelled:
+                await self._set_pending(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    reason="cancelar_turno",
+                    message=(
+                        "No se pudo liberar externamente el turno seleccionado: "
+                        f"{selected.get('label') or turno_id}."
+                    ),
+                    title="Cancelacion de turno pendiente",
+                    category=ConversationCategory.HUMAN_HANDOFF,
+                    subtype=None,
+                    requires_human_review=True,
+                    has_media=False,
+                    last_patient_message=text,
+                    media_items=[],
+                )
                 return "No pude cancelar ese turno. Lo derivo para que el consultorio lo revise."
             await self._conversacion_repo.upsert_state(
                 tenant.id,
@@ -1840,7 +1857,7 @@ class ConversationService:
                 Turno.tenant_id == tenant_id,
                 Turno.paciente_id == paciente_id,
                 Turno.deleted_at.is_(None),
-                Turno.status.notin_([AppointmentStatus.CANCELLED, AppointmentStatus.COMPLETED]),
+                Turno.status == AppointmentStatus.CONFIRMED,
                 Turno.fecha_hora >= now_ba().replace(tzinfo=None),
             )
             .order_by(Turno.fecha_hora.asc())
@@ -1849,14 +1866,32 @@ class ConversationService:
         options = []
         for index, (turno, consultorio) in enumerate(result.all(), start=1):
             start = turno.start_at or turno.fecha_hora
+            modality = "Virtual" if str(turno.tipo.value) == "virtual" else "Presencial"
             options.append(
                 {
                     "option": index,
                     "turno_id": turno.id,
-                    "label": f"{consultorio.nombre} - {start.strftime('%d/%m %H:%M')}",
+                    "label": (
+                        f"{start.strftime('%d/%m %H:%M')} - {modality} - "
+                        f"{consultorio.nombre}"
+                    ),
                 }
             )
         return options
+
+    async def _has_cancellable_turnos(self, tenant_id: int, paciente_id: int) -> bool:
+        result = await self._session.execute(
+            select(Turno.id)
+            .where(
+                Turno.tenant_id == tenant_id,
+                Turno.paciente_id == paciente_id,
+                Turno.deleted_at.is_(None),
+                Turno.status == AppointmentStatus.CONFIRMED,
+                Turno.fecha_hora >= now_ba().replace(tzinfo=None),
+            )
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     @staticmethod
     def _select_cancellable_turno(context: dict, text: str) -> dict | None:
@@ -1883,14 +1918,22 @@ class ConversationService:
         tenant: Tenant,
         phone: str,
         turno_id: int | None,
+        paciente_id: int | None,
     ) -> bool:
-        if not turno_id:
+        if not turno_id or not paciente_id:
             return False
         result = await self._session.execute(
             select(Turno, Consultorio, Tenant)
             .join(Consultorio, Turno.consultorio_id == Consultorio.id)
             .join(Tenant, Turno.tenant_id == Tenant.id)
-            .where(Turno.id == int(turno_id), Turno.tenant_id == tenant.id)
+            .where(
+                Turno.id == int(turno_id),
+                Turno.tenant_id == tenant.id,
+                Turno.paciente_id == int(paciente_id),
+                Turno.status == AppointmentStatus.CONFIRMED,
+                Turno.fecha_hora >= now_ba().replace(tzinfo=None),
+            )
+            .with_for_update()
         )
         row = result.first()
         if row is None:
@@ -1965,26 +2008,28 @@ class ConversationService:
         candidate = value.strip()
         return bool(candidate) and ("@" in candidate) and ("." in candidate.split("@")[-1])
 
-    def _known_patient_greeting(
+    async def _known_patient_greeting(
         self,
         tenant: Tenant,
-        patient_name: str | None,
-        patient_last_name: str | None = None,
+        patient: Paciente,
     ) -> str:
         doctor_name = (tenant.fantasy_name or tenant.nombre or "profesional").strip()
         patient_label = " ".join(
-            part.strip() for part in (patient_name or "", patient_last_name or "") if part and part.strip()
+            part.strip() for part in (patient.nombre or "", patient.apellido or "") if part and part.strip()
         ).strip()
+        menu = self._main_reason_menu_message(
+            can_cancel=await self._has_cancellable_turnos(tenant.id, patient.id)
+        )
         if patient_label:
             return (
                 f"Hola {patient_label}, te contactaste con el consultorio del Dr. {doctor_name}. "
                 "Cual es el motivo de tu consulta?\n"
-                f"{self._main_reason_menu_message()}"
+                f"{menu}"
             )
         return (
             f"Hola, te contactaste con el consultorio del Dr. {doctor_name}. "
             "Cual es el motivo de tu consulta?\n"
-            f"{self._main_reason_menu_message()}"
+            f"{menu}"
         )
 
     def _patient_identification_greeting(self, tenant: Tenant) -> str:
@@ -2064,7 +2109,7 @@ class ConversationService:
                 "managed_for": managed_for,
             },
         )
-        return self._known_patient_greeting(tenant, patient.nombre, patient.apellido)
+        return await self._known_patient_greeting(tenant, patient)
 
     async def _complete_patient_registration(
         self,
@@ -2124,7 +2169,7 @@ class ConversationService:
                 "managed_for": context.get("managed_for"),
             },
         )
-        return self._known_patient_greeting(tenant, paciente.nombre, paciente.apellido)
+        return await self._known_patient_greeting(tenant, paciente)
 
     @staticmethod
     def _coverage_type_options() -> str:
@@ -2154,14 +2199,17 @@ class ConversationService:
         return (tenant.nombre or "el consultorio").strip() or "el consultorio"
 
     @staticmethod
-    def _main_reason_menu_message() -> str:
-        return (
+    def _main_reason_menu_message(*, can_cancel: bool = False) -> str:
+        menu = (
             "1) Turno presencial\n"
             "2) Turno virtual\n"
             "3) Solicitar receta u orden medica\n"
             "4) Otra consulta\n"
             "5) Hablar con una persona"
         )
+        if can_cancel:
+            menu += "\n6) Cancelar un turno"
+        return menu
 
     def _main_reason_retry_message(self) -> str:
         return self._invalid_option_message(self._main_reason_menu_message())
@@ -2394,7 +2442,7 @@ class ConversationService:
 
     @staticmethod
     def _is_direct_main_menu_option(value: str | None) -> bool:
-        return normalize_message(value) in {"1", "2", "3", "4", "5", "a", "b", "c", "d", "e"}
+        return normalize_message(value) in {"1", "2", "3", "4", "5", "6", "a", "b", "c", "d", "e", "f"}
 
     def _intent_from_ai_result(self, result: AIIntentResult, *, min_confidence: float):
         from app.services.conversation_intents import IntentResult
