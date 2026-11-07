@@ -17,6 +17,11 @@ class PaymentStatus(str, Enum):
     REFUNDED = "refunded"
 
 
+class PaymentReuseStatus(str, Enum):
+    CREDIT_ISSUED = "credit_issued"
+    NON_REUSABLE = "non_reusable"
+
+
 class Payment(Base):
     __tablename__ = "payments"
 
@@ -34,6 +39,9 @@ class Payment(Base):
     currency: Mapped[str] = mapped_column(String(10), default="ARS")
     description: Mapped[str | None] = mapped_column(String(255))
     payment_url: Mapped[str | None] = mapped_column(String(500))
+    reuse_status: Mapped[PaymentReuseStatus | None] = mapped_column(
+        SqlEnum(PaymentReuseStatus, native_enum=False), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utc_now, onupdate=utc_now

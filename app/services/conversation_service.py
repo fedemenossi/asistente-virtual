@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.timezone import get_ba_tz, now_ba
 from app.models.paciente import Paciente
 from app.models.patient_contact_link import PatientContactLinkStatus
+from app.models.payment import PaymentReuseStatus
 from app.models.tenant import Tenant
 from app.models.consultorio import Consultorio
 from app.models.turno import AppointmentStatus, Turno
@@ -820,6 +821,37 @@ class ConversationService:
             if selected is None:
                 return self._invalid_cancel_selection_message(context)
             context["cancel_appointment"]["selected"] = selected
+            economic_message = ""
+            selected_turno = (
+                await self._session.execute(
+                    select(Turno).where(
+                        Turno.id == int(selected.get("turno_id") or 0),
+                        Turno.tenant_id == tenant.id,
+                        Turno.paciente_id == getattr(paciente, "id", None),
+                        Turno.status == AppointmentStatus.CONFIRMED,
+                    )
+                )
+            ).scalar_one_or_none()
+            if selected_turno is not None:
+                economic_outcome = await AppointmentService(
+                    self._session
+                ).cancellation_economic_outcome(selected_turno)
+                if economic_outcome == PaymentReuseStatus.CREDIT_ISSUED:
+                    economic_message = (
+                        "Tu pago se convertira en Saldo a favor por 7 dias "
+                        "para una nueva reserva del mismo Paciente. No se realizara "
+                        "una devolucion monetaria.\n"
+                    )
+                elif economic_outcome == PaymentReuseStatus.NON_REUSABLE:
+                    economic_message = (
+                        "Como faltan menos de 24 horas, el pago no generara "
+                        "Saldo a favor ni devolucion monetaria.\n"
+                    )
+                else:
+                    economic_message = (
+                        "Este turno no tiene un pago aprobado asociado, por lo que "
+                        "no generara Saldo a favor ni devolucion monetaria.\n"
+                    )
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -828,6 +860,7 @@ class ConversationService:
             )
             return (
                 f"Seleccionaste cancelar el turno {selected.get('label')}.\n"
+                f"{economic_message}"
                 "Confirmas la cancelacion?\n"
                 "1) Si, cancelar\n"
                 "2) No"

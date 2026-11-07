@@ -109,6 +109,9 @@ EXTRA_COLUMNS = {
         "reminder_sent_at": "DATETIME NULL",
         "status": "VARCHAR(32) NULL",
     },
+    "payments": {
+        "reuse_status": "VARCHAR(32) NULL",
+    },
     "pacientes": {
         "created_at": "DATETIME NULL",
         "updated_at": "DATETIME NULL",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException, Request, status
 from sqlalchemy import select
@@ -8,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import audit_log
 from app.core.notifications import create_notification
-from app.core.timezone import now_ba
+from app.core.timezone import get_ba_tz, now_ba
 from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.paciente import Paciente
+from app.models.patient_credit import PatientCredit, PatientCreditStatus
+from app.models.payment import Payment, PaymentReuseStatus, PaymentStatus
 from app.models.tenant import Tenant
 from app.models.turno import AppointmentStatus, EstadoTurno, TipoTurno, Turno
 from app.services.calendar_service import CalendarService
@@ -408,6 +411,7 @@ class AppointmentService:
             entity_id=turno.id,
             tenant_id=tenant.id,
         )
+        await self._apply_cancellation_economic_policy(request, turno)
         await create_notification(
             self._session,
             title="Turno cancelado",
@@ -416,3 +420,132 @@ class AppointmentService:
             tenant_id=tenant.id,
         )
         await self._session.commit()
+
+    async def cancellation_economic_outcome(
+        self,
+        turno: Turno,
+    ) -> PaymentReuseStatus | None:
+        has_approved_payment = (
+            await self._session.execute(
+                select(Payment.id)
+                .where(
+                    Payment.tenant_id == turno.tenant_id,
+                    Payment.patient_id == turno.paciente_id,
+                    Payment.appointment_id == turno.id,
+                    Payment.status == PaymentStatus.APPROVED,
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if has_approved_payment is None:
+            return None
+        if self._cancellation_has_minimum_notice(turno):
+            return PaymentReuseStatus.CREDIT_ISSUED
+        return PaymentReuseStatus.NON_REUSABLE
+
+    @staticmethod
+    def _cancellation_has_minimum_notice(turno: Turno) -> bool:
+        timezone_name = turno.timezone or "America/Argentina/Buenos_Aires"
+        if timezone_name == "America/Argentina/Buenos_Aires":
+            operational_timezone = get_ba_tz()
+        else:
+            try:
+                operational_timezone = ZoneInfo(timezone_name)
+            except ZoneInfoNotFoundError:
+                operational_timezone = get_ba_tz()
+        starts_at = turno.start_at or turno.fecha_hora
+        if starts_at.tzinfo is None:
+            starts_at = starts_at.replace(tzinfo=operational_timezone)
+        else:
+            starts_at = starts_at.astimezone(operational_timezone)
+        current = now_ba().astimezone(operational_timezone)
+        return starts_at - current >= timedelta(hours=24)
+
+    async def _apply_cancellation_economic_policy(
+        self,
+        request: Request | None,
+        turno: Turno,
+    ) -> None:
+        payment = (
+            await self._session.execute(
+                select(Payment)
+                .where(
+                    Payment.tenant_id == turno.tenant_id,
+                    Payment.patient_id == turno.paciente_id,
+                    Payment.appointment_id == turno.id,
+                    Payment.status == PaymentStatus.APPROVED,
+                )
+                .order_by(Payment.id.desc())
+                .with_for_update()
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if payment is None:
+            await audit_log(
+                self._session,
+                request,
+                None,
+                action="cancel_economic_decision",
+                entity="turno",
+                entity_id=turno.id,
+                tenant_id=turno.tenant_id,
+                metadata={
+                    "outcome": "no_approved_payment",
+                    "turno_id": turno.id,
+                    "threshold_hours": 24,
+                },
+            )
+            return
+
+        if not self._cancellation_has_minimum_notice(turno):
+            payment.reuse_status = PaymentReuseStatus.NON_REUSABLE
+            await audit_log(
+                self._session,
+                request,
+                None,
+                action="cancel_economic_decision",
+                entity="payment",
+                entity_id=payment.id,
+                tenant_id=payment.tenant_id,
+                metadata={
+                    "outcome": PaymentReuseStatus.NON_REUSABLE.value,
+                    "turno_id": turno.id,
+                    "threshold_hours": 24,
+                },
+            )
+            return
+
+        credit = (
+            await self._session.execute(
+                select(PatientCredit)
+                .where(PatientCredit.source_payment_id == payment.id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if credit is None:
+            credit = PatientCredit(
+                tenant_id=payment.tenant_id,
+                patient_id=payment.patient_id,
+                source_payment_id=payment.id,
+                amount=payment.amount,
+                currency=payment.currency,
+                status=PatientCreditStatus.ACTIVE,
+                expires_at=now_ba() + timedelta(days=7),
+            )
+            self._session.add(credit)
+            await self._session.flush()
+        payment.reuse_status = PaymentReuseStatus.CREDIT_ISSUED
+        await audit_log(
+            self._session,
+            request,
+            None,
+            action="cancel_economic_decision",
+            entity="payment",
+            entity_id=payment.id,
+            tenant_id=payment.tenant_id,
+            metadata={
+                "outcome": PaymentReuseStatus.CREDIT_ISSUED.value,
+                "turno_id": turno.id,
+                "threshold_hours": 24,
+            },
+        )

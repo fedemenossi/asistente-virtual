@@ -1629,6 +1629,106 @@ def test_external_cancellation_failure_stays_confirmed_and_is_handed_off(db_sess
     assert turno.cancellation_reason == "external_cancellation_failed"
 
 
+def test_cancellation_confirmation_explains_seven_day_credit_for_paid_turno(db_session):
+    from app.models.payment import Payment, PaymentStatus
+
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cancel Credit Prompt", "whatsapp:+745"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491174500001"
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, phone))
+    consultorio_id = asyncio.run(create_consultorio(db_session, tenant_id, "Palermo"))
+    turno_id = asyncio.run(
+        create_turno(
+            db_session,
+            paciente_id,
+            consultorio_id,
+            fecha_hora=now_ba().replace(tzinfo=None) + timedelta(days=2),
+            timezone="America/Argentina/Buenos_Aires",
+            status=AppointmentStatus.CONFIRMED,
+        )
+    )
+
+    async def seed_payment():
+        async with db_session() as session:
+            async with session.begin():
+                session.add(
+                    Payment(
+                        tenant_id=tenant_id,
+                        patient_id=paciente_id,
+                        appointment_id=turno_id,
+                        provider="mercadopago",
+                        status=PaymentStatus.APPROVED,
+                        amount=42000,
+                        currency="ARS",
+                    )
+                )
+
+    asyncio.run(seed_payment())
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "6")
+            return await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+
+    confirmation = asyncio.run(run())
+
+    assert "saldo a favor" in confirmation.lower()
+    assert "7 dias" in confirmation.lower()
+    assert "1) Si, cancelar" in confirmation
+
+
+def test_cancellation_confirmation_explains_late_payment_is_non_reusable(db_session):
+    from app.models.payment import Payment, PaymentStatus
+
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Late Prompt", "whatsapp:+747"))
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491174700001"
+    paciente_id = asyncio.run(create_paciente(db_session, tenant_id, phone))
+    consultorio_id = asyncio.run(create_consultorio(db_session, tenant_id, "Belgrano"))
+    turno_id = asyncio.run(
+        create_turno(
+            db_session,
+            paciente_id,
+            consultorio_id,
+            fecha_hora=now_ba().replace(tzinfo=None) + timedelta(hours=2),
+            timezone="America/Argentina/Buenos_Aires",
+            status=AppointmentStatus.CONFIRMED,
+        )
+    )
+
+    async def seed_payment():
+        async with db_session() as session:
+            async with session.begin():
+                session.add(
+                    Payment(
+                        tenant_id=tenant_id,
+                        patient_id=paciente_id,
+                        appointment_id=turno_id,
+                        provider="mercadopago",
+                        status=PaymentStatus.APPROVED,
+                        amount=42000,
+                        currency="ARS",
+                    )
+                )
+
+    asyncio.run(seed_payment())
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "6")
+            return await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+
+    confirmation = asyncio.run(run())
+
+    assert "menos de 24 horas" in confirmation.lower()
+    assert "no generara saldo a favor ni devolucion" in confirmation.lower()
+    assert "1) Si, cancelar" in confirmation
+
+
 def test_salir_is_tenant_isolated(db_session):
     tenant_a_id = asyncio.run(create_tenant(db_session, "Tenant Exit A", "whatsapp:+726"))
     tenant_b_id = asyncio.run(create_tenant(db_session, "Tenant Exit B", "whatsapp:+727"))
