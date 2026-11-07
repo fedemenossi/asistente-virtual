@@ -12,9 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.timezone import now_ba
 from app.integrations import consultorio_movil
 from app.models.consultorio import Consultorio, TipoConsultorio
+from app.models.paciente import Paciente
 from app.models.tenant import Tenant
 from app.services.ai_tools.base import tool_error, tool_success
 from app.services.calendar_service import CalendarService
+from app.services.consultorio_eligibility_service import (
+    has_specific_coverage_match,
+    is_consultorio_eligible,
+    slot_is_in_weekly_ranges,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +34,6 @@ async def get_available_appointment_slots(
     preferences: dict,
     limit: int = 5,
 ) -> dict[str, Any]:
-    del patient_context
     normalized_type = _normalize_consultorio_type(consultorio_type)
     safe_limit = max(1, min(int(limit or 5), 10))
     try:
@@ -39,24 +44,86 @@ async def get_available_appointment_slots(
                 error="tenant_not_found",
                 message="No pude consultar la agenda en este momento.",
             )
-        consultorio = await _get_consultorio(session, tenant_id, normalized_type)
-        if consultorio is None:
+        consultorios = await _get_consultorios(session, tenant_id, normalized_type)
+        if not consultorios:
             return tool_error(
                 consultorio_type=normalized_type,
                 error="consultorio_not_configured",
                 message="No hay consultorio configurado para consultar disponibilidad.",
             )
-        if normalized_type == "virtual":
-            return await _get_virtual_slots(
-                tenant=tenant,
-                consultorio=consultorio,
-                preferences=preferences,
-                limit=safe_limit,
+        coverage_type, coverage_entity = await _resolve_patient_coverage(
+            session, tenant_id, patient_context
+        )
+        first_time = bool(
+            patient_context.get("first_time")
+            if patient_context.get("first_time") is not None
+            else (patient_context.get("appointment") or {}).get("is_first_time")
+        )
+        eligible = [
+            consultorio
+            for consultorio in consultorios
+            if is_consultorio_eligible(
+                consultorio,
+                first_time=first_time,
+                coverage_type=coverage_type,
+                coverage_entity=coverage_entity,
             )
-        return await _get_presential_slots(
-            tenant=tenant,
-            consultorio=consultorio,
-            limit=safe_limit,
+        ]
+        specific_matches = [
+            consultorio
+            for consultorio in eligible
+            if has_specific_coverage_match(consultorio, coverage_entity)
+        ]
+        if specific_matches:
+            eligible = specific_matches
+        if not eligible:
+            return tool_error(
+                consultorio_type=normalized_type,
+                error="no_eligible_consultorio",
+                message="No hay consultorios elegibles para esta solicitud.",
+            )
+        slots: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        sources: list[str] = []
+        for consultorio in eligible:
+            provider = CalendarService().resolve_provider_name(consultorio)
+            if provider == "google":
+                result = await _get_google_slots(
+                    tenant=tenant,
+                    consultorio=consultorio,
+                    consultorio_type=normalized_type,
+                    preferences=preferences,
+                    limit=safe_limit,
+                )
+            elif normalized_type == "presential":
+                result = await _get_presential_slots(
+                    tenant=tenant,
+                    consultorio=consultorio,
+                    limit=safe_limit,
+                )
+            else:
+                continue
+            if result.get("ok"):
+                slots.extend(result.get("slots") or [])
+                if result.get("source"):
+                    sources.append(str(result["source"]))
+            else:
+                errors.append(result)
+        slots.sort(key=lambda slot: str(slot.get("start_at") or ""))
+        if slots:
+            return tool_success(
+                consultorio_type=normalized_type,
+                source=sources[0] if sources and len(set(sources)) == 1 else "combined",
+                slots=slots[:safe_limit],
+                message=None,
+            )
+        if errors:
+            return errors[0]
+        return tool_success(
+            consultorio_type=normalized_type,
+            source="combined",
+            slots=[],
+            message="No encontre turnos disponibles.",
         )
     except Exception as exc:
         logger.warning(
@@ -72,10 +139,11 @@ async def get_available_appointment_slots(
         )
 
 
-async def _get_virtual_slots(
+async def _get_google_slots(
     *,
     tenant: Tenant,
     consultorio: Consultorio,
+    consultorio_type: str,
     preferences: dict,
     limit: int,
 ) -> dict[str, Any]:
@@ -86,7 +154,7 @@ async def _get_virtual_slots(
     normalized = [
         _normalize_slot(
             tenant_id=tenant.id,
-            consultorio_type="virtual",
+            consultorio_type=consultorio_type,
             raw_slot_id=slot.slot_id,
             start_at=slot.start_at,
             end_at=slot.end_at,
@@ -100,12 +168,13 @@ async def _get_virtual_slots(
                 "external_event_id": slot.slot_id,
             },
         )
-        for slot in slots[:limit]
+        for slot in slots
+        if slot_is_in_weekly_ranges(consultorio, slot.start_at, slot.end_at)
     ]
     return tool_success(
-        consultorio_type="virtual",
+        consultorio_type=consultorio_type,
         source="calendar",
-        slots=normalized,
+        slots=normalized[:limit],
         message=None if normalized else "No encontre turnos virtuales disponibles.",
     )
 
@@ -141,21 +210,22 @@ async def _get_presential_slots(
             metadata={"duration_minutes": selection.duration_minutes},
             label=selection.label,
         )
-        for selection in selections[:limit]
+        for selection in selections
+        if slot_is_in_weekly_ranges(consultorio, selection.start_at, selection.end_at)
     ]
     return tool_success(
         consultorio_type="presential",
         source="consultorio_movil",
-        slots=normalized,
+        slots=normalized[:limit],
         message=None if normalized else "No encontre turnos presenciales disponibles.",
     )
 
 
-async def _get_consultorio(
+async def _get_consultorios(
     session: AsyncSession,
     tenant_id: int,
     consultorio_type: str,
-) -> Consultorio | None:
+) -> list[Consultorio]:
     tipo = TipoConsultorio.VIRTUAL if consultorio_type == "virtual" else TipoConsultorio.PRESENCIAL
     result = await session.execute(
         select(Consultorio)
@@ -165,9 +235,38 @@ async def _get_consultorio(
             Consultorio.deleted_at.is_(None),
         )
         .order_by(Consultorio.id.asc())
-        .limit(1)
     )
-    return result.scalar_one_or_none()
+    return list(result.scalars().all())
+
+
+async def _resolve_patient_coverage(
+    session: AsyncSession,
+    tenant_id: int,
+    patient_context: dict,
+) -> tuple[str, str]:
+    if patient_context.get("for_whom") == "other":
+        entity = str(patient_context.get("other_insurance") or "").strip()
+        return _infer_coverage_type(None, entity), entity
+    patient = None
+    try:
+        patient_id = int(patient_context.get("patient_id"))
+    except (TypeError, ValueError):
+        patient_id = 0
+    if patient_id:
+        candidate = await session.get(Paciente, patient_id)
+        if candidate is not None and candidate.tenant_id == tenant_id:
+            patient = candidate
+    entity = str(getattr(patient, "obra_social", "") or patient_context.get("insurance") or "").strip()
+    explicit_type = str(getattr(patient, "health_coverage_type", "") or patient_context.get("coverage_type") or "")
+    return _infer_coverage_type(explicit_type, entity), entity
+
+
+def _infer_coverage_type(explicit_type: str | None, entity: str) -> str:
+    normalized_type = str(explicit_type or "").strip().lower()
+    if normalized_type in {"particular", "obra_social", "prepaga"}:
+        return normalized_type
+    normalized_entity = str(entity or "").strip().lower()
+    return "particular" if normalized_entity in {"", "particular", "sin cobertura"} else "obra_social"
 
 
 def _normalize_slot(

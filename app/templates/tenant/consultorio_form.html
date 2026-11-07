@@ -191,6 +191,57 @@
       </div>
       <div class="hidden rounded-lg border px-3 py-3 text-sm" data-google-calendars-result></div>
     </div>
+    <section class="rounded-xl border border-slate-200 p-4 space-y-4" data-eligibility-rules>
+      <div>
+        <p class="text-sm font-semibold text-slate-900">Reglas de elegibilidad</p>
+        <p class="mt-1 text-xs text-slate-500">Estas reglas determinan si el consultorio participa de una oferta de turnos.</p>
+      </div>
+      <label class="flex items-center gap-3">
+        <input type="checkbox" name="eligibility_accepts_first_consultation" value="1" {% if eligibility_config.accepts_first_consultation %}checked{% endif %} />
+        <span class="text-sm text-slate-800">Admite primera consulta</span>
+      </label>
+      <div>
+        <p class="text-sm font-medium text-slate-700">Tipos de cobertura admitidos</p>
+        <div class="mt-2 flex flex-wrap gap-4">
+          {% for coverage_type in eligibility_coverage_types %}
+            <label class="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" name="eligibility_coverage_types" value="{{ coverage_type }}" {% if coverage_type in eligibility_config.coverage_types %}checked{% endif %} />
+              {{ {'particular': 'Particular', 'obra_social': 'Obra social', 'prepaga': 'Prepaga'}[coverage_type] }}
+            </label>
+          {% endfor %}
+        </div>
+        {% if errors.eligibility_coverage_types %}<p class="mt-1 text-xs text-rose-600">{{ errors.eligibility_coverage_types }}</p>{% endif %}
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Entidades especificas</label>
+        <textarea class="input mt-1 min-h-24" name="eligibility_coverage_entities" placeholder="Una entidad por linea">{{ eligibility_config.coverage_entities | join('\n') }}</textarea>
+        <p class="mt-1 text-xs text-slate-500">Dejalo vacio para admitir cualquier entidad de los tipos seleccionados.</p>
+      </div>
+      <div>
+        <div class="flex items-center justify-between gap-3">
+          <div><p class="text-sm font-medium text-slate-700">Franjas de atencion</p><p class="text-xs text-slate-500">Podes agregar varias franjas para un mismo dia.</p></div>
+          <button class="btn btn-secondary" type="button" data-add-eligibility-range>Agregar franja</button>
+        </div>
+        <label class="mt-3 flex items-center gap-3 text-sm text-slate-700">
+          <input type="checkbox" name="eligibility_ranges_enabled" value="1" {% if eligibility_config.weekly_ranges %}checked{% endif %} />
+          Restringir la oferta a estas franjas
+        </label>
+        {% if errors.eligibility_ranges %}<p class="mt-1 text-xs text-rose-600">{{ errors.eligibility_ranges }}</p>{% endif %}
+        <div class="mt-3 space-y-2" data-eligibility-ranges>
+          {% set ranges = eligibility_config.weekly_ranges if eligibility_config.weekly_ranges else [{'day': 'monday', 'start': '09:00', 'end': '17:00'}] %}
+          {% for range in ranges %}
+            <div class="grid gap-2 md:grid-cols-4" data-eligibility-range>
+              <select class="select" name="eligibility_range_day">
+                {% for day_key, day_label in eligibility_weekdays %}<option value="{{ day_key }}" {% if range.day == day_key %}selected{% endif %}>{{ day_label }}</option>{% endfor %}
+              </select>
+              <input class="input" type="time" name="eligibility_range_start" value="{{ range.start }}" />
+              <input class="input" type="time" name="eligibility_range_end" value="{{ range.end }}" />
+              <button class="btn btn-secondary" type="button" data-remove-eligibility-range>Quitar</button>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </section>
     <div class="flex items-center gap-3">
       <button class="btn btn-primary" type="submit">Guardar</button>
       <a class="btn btn-secondary" href="/t/consultorios">Cancelar</a>
@@ -208,6 +259,8 @@
       const googleCalendarsResult = document.querySelector("[data-google-calendars-result]");
       const googleCalendarSelect = document.querySelector("[data-google-calendar-select]");
       const googleCalendarInput = document.querySelector("[data-google-calendar-id-input]");
+      const eligibilityRanges = document.querySelector("[data-eligibility-ranges]");
+      const addEligibilityRange = document.querySelector("[data-add-eligibility-range]");
       const inputs = {
         cab_user: form?.querySelector("input[name='cab_user']"),
         cab_password: form?.querySelector("input[name='cab_password']"),
@@ -215,6 +268,16 @@
         cab_days: form?.querySelector("input[name='cab_days']"),
       };
       if (!select || !fields) return;
+      addEligibilityRange?.addEventListener("click", () => {
+        const row = eligibilityRanges?.querySelector("[data-eligibility-range]")?.cloneNode(true);
+        if (row) eligibilityRanges.appendChild(row);
+      });
+      eligibilityRanges?.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-remove-eligibility-range]");
+        if (!button) return;
+        const rows = eligibilityRanges.querySelectorAll("[data-eligibility-range]");
+        if (rows.length > 1) button.closest("[data-eligibility-range]")?.remove();
+      });
       const toggle = () => {
         if (select.value === "consultorio_movil") {
           fields.classList.remove("hidden");

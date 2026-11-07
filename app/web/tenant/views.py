@@ -79,6 +79,12 @@ from app.services.patient_import_job_service import (
     start_patient_csv_import_job,
 )
 from app.services.calendar_service import CalendarService
+from app.services.consultorio_eligibility_service import (
+    COVERAGE_TYPES,
+    WEEKDAYS as ELIGIBILITY_WEEKDAYS,
+    build_eligibility_config_from_form,
+    get_eligibility_config,
+)
 from app.services.google_calendar_slots_service import (
     WEEKDAY_KEYS,
     WEEKDAY_LABELS,
@@ -513,6 +519,7 @@ def _consultorio_form_common_context(
     google_calendars: list[dict] | None = None,
     google_calendar_error: str | None = None,
     google_service_account_email: str | None = None,
+    eligibility_config: dict | None = None,
 ) -> dict:
     return {
         "consultorio": consultorio,
@@ -530,6 +537,9 @@ def _consultorio_form_common_context(
         "google_calendars": google_calendars or [],
         "google_calendar_error": google_calendar_error,
         "google_service_account_email": google_service_account_email,
+        "eligibility_config": eligibility_config or get_eligibility_config(consultorio),
+        "eligibility_coverage_types": COVERAGE_TYPES,
+        "eligibility_weekdays": ELIGIBILITY_WEEKDAYS,
     }
 
 
@@ -598,6 +608,8 @@ async def consultorios_new_post(
     provider = normalize_provider(proveedor_turnos)
     config_externa: dict | None = None
     form = await request.form()
+    eligibility_config, eligibility_errors = build_eligibility_config_from_form(form)
+    errors: dict[str, str] = dict(eligibility_errors)
     google_config = default_google_calendar_config()
     google_calendars: list[dict] = []
     google_calendar_error = None
@@ -606,7 +618,6 @@ async def consultorios_new_post(
         google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant)
     google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
     if provider == "consultorio_movil":
-        errors: dict[str, str] = {}
         if not cab_user:
             errors["cab_user"] = "El usuario es obligatorio."
         if not cab_password:
@@ -632,6 +643,7 @@ async def consultorios_new_post(
                     google_calendars=google_calendars,
                     google_calendar_error=google_calendar_error,
                     google_service_account_email=google_service_account_email,
+                    eligibility_config=eligibility_config,
                 ),
             )
         days_value = 21
@@ -649,7 +661,6 @@ async def consultorios_new_post(
             }
         }
     elif provider == "google":
-        errors = {}
         try:
             google_config = build_google_calendar_config_from_form(form)
         except ValueError as exc:
@@ -666,9 +677,27 @@ async def consultorios_new_post(
                     google_calendars=google_calendars,
                     google_calendar_error=google_calendar_error,
                     google_service_account_email=google_service_account_email,
+                    eligibility_config=eligibility_config,
                 ),
             )
         config_externa = {"google_calendar": google_config}
+    if errors:
+        return _template(
+            request,
+            "tenant/consultorio_form.html",
+            _consultorio_form_common_context(
+                None,
+                errors=errors,
+                form_data={"nombre": nombre, "tipo": tipo, "proveedor_turnos": provider or ""},
+                google_config=google_config,
+                google_calendars=google_calendars,
+                google_calendar_error=google_calendar_error,
+                google_service_account_email=google_service_account_email,
+                eligibility_config=eligibility_config,
+            ),
+        )
+    config_externa = dict(config_externa or {})
+    config_externa["eligibility"] = eligibility_config
     consultorio = Consultorio(
         tenant_id=user.tenant_id,
         nombre=nombre,
@@ -747,10 +776,11 @@ async def consultorios_edit_post(
     validate_csrf(request, csrf_token)
     provider = normalize_provider(proveedor_turnos)
     form = await request.form()
+    eligibility_config, eligibility_errors = build_eligibility_config_from_form(form)
     consultorio = await get_tenant_entity_or_404(
         session, Consultorio, consultorio_id, user.tenant_id
     )
-    errors: dict[str, str] = {}
+    errors: dict[str, str] = dict(eligibility_errors)
     tenant = await session.get(Tenant, user.tenant_id)
     google_calendars, google_calendar_error = _load_google_calendars_for_tenant(tenant) if tenant else ([], None)
     google_service_account_email = CalendarService().get_google_service_account_email(tenant) if tenant else None
@@ -784,6 +814,7 @@ async def consultorios_edit_post(
                     google_calendars=google_calendars,
                     google_calendar_error=google_calendar_error,
                     google_service_account_email=google_service_account_email,
+                    eligibility_config=eligibility_config,
                 ),
             )
     elif provider == "google":
@@ -803,8 +834,24 @@ async def consultorios_edit_post(
                     google_calendars=google_calendars,
                     google_calendar_error=google_calendar_error,
                     google_service_account_email=google_service_account_email,
+                    eligibility_config=eligibility_config,
                 ),
             )
+    if errors:
+        return _template(
+            request,
+            "tenant/consultorio_form.html",
+            _consultorio_form_common_context(
+                consultorio,
+                errors=errors,
+                form_data={"nombre": nombre, "tipo": tipo, "proveedor_turnos": provider or ""},
+                google_config=google_config,
+                google_calendars=google_calendars,
+                google_calendar_error=google_calendar_error,
+                google_service_account_email=google_service_account_email,
+                eligibility_config=eligibility_config,
+            ),
+        )
     previous_cabildo = None
     if consultorio.configuracion_externa:
         previous_cabildo = (consultorio.configuracion_externa.get("cabildo") or {}).copy()
@@ -813,6 +860,7 @@ async def consultorios_edit_post(
         consultorio.tipo = TipoConsultorio(tipo)
         consultorio.proveedor_turnos = provider
         config_externa = consultorio.configuracion_externa or {}
+        config_externa["eligibility"] = eligibility_config
         if provider == "consultorio_movil":
             config_externa["cabildo"] = {
                 "user": cab_user.strip(),
@@ -821,11 +869,11 @@ async def consultorios_edit_post(
                 "days": days_value,
             }
             consultorio.configuracion_externa = config_externa
-            flag_modified(consultorio, "configuracion_externa")
         elif provider == "google":
             config_externa["google_calendar"] = google_config
             consultorio.configuracion_externa = config_externa
-            flag_modified(consultorio, "configuracion_externa")
+        consultorio.configuracion_externa = config_externa
+        flag_modified(consultorio, "configuracion_externa")
         metadata = None
         if provider == "consultorio_movil":
             metadata = {
