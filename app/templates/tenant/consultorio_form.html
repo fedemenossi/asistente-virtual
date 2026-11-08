@@ -60,28 +60,28 @@
     <div class="border border-slate-200 rounded-xl p-4 space-y-3 hidden" data-cabildo-fields>
       <div>
         <label class="block text-sm font-medium text-slate-700">Usuario</label>
-        <input class="input mt-1 {% if errors.cab_user %}border-rose-400 focus:ring-rose-300{% endif %}" name="cab_user" value="{{ cabildo_defaults.user if cabildo_defaults else '' }}" autocomplete="off" />
+        <input class="input mt-1 {% if errors.cab_user %}border-rose-400 focus:ring-rose-300{% endif %}" name="cab_user" value="{{ cabildo_defaults.user if cabildo_defaults else '' }}" autocomplete="off" data-lpignore="true" data-1p-ignore {% if not selected_drapp and not selected_cab %}disabled{% endif %} />
         {% if errors.cab_user %}
           <p class="mt-1 text-xs text-rose-600">{{ errors.cab_user }}</p>
         {% endif %}
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700">Password</label>
-        <input class="input mt-1 {% if errors.cab_password %}border-rose-400 focus:ring-rose-300{% endif %}" type="password" name="cab_password" value="{{ cabildo_defaults.password if cabildo_defaults else '' }}" autocomplete="off" />
+        <input class="input mt-1 {% if errors.cab_password %}border-rose-400 focus:ring-rose-300{% endif %}" type="password" name="cab_password" value="{{ cabildo_defaults.password if cabildo_defaults else '' }}" autocomplete="new-password" data-lpignore="true" data-1p-ignore {% if not selected_drapp and not selected_cab %}disabled{% endif %} />
         {% if errors.cab_password %}
           <p class="mt-1 text-xs text-rose-600">{{ errors.cab_password }}</p>
         {% endif %}
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700">Id del profesinal</label>
-        <input class="input mt-1 {% if errors.cab_staff_id %}border-rose-400 focus:ring-rose-300{% endif %}" name="cab_staff_id" value="{{ cabildo_defaults.staff_id if cabildo_defaults else '' }}" />
+        <input class="input mt-1 {% if errors.cab_staff_id %}border-rose-400 focus:ring-rose-300{% endif %}" name="cab_staff_id" value="{{ cabildo_defaults.staff_id if cabildo_defaults else '' }}" autocomplete="off" {% if not selected_drapp and not selected_cab %}disabled{% endif %} />
         {% if errors.cab_staff_id %}
           <p class="mt-1 text-xs text-rose-600">{{ errors.cab_staff_id }}</p>
         {% endif %}
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700">Dias para buscar turnos</label>
-        <input class="input mt-1 {% if errors.cab_days %}border-rose-400 focus:ring-rose-300{% endif %}" type="number" min="1" name="cab_days" value="{{ cabildo_defaults.days if cabildo_defaults else 21 }}" />
+        <input class="input mt-1 {% if errors.cab_days %}border-rose-400 focus:ring-rose-300{% endif %}" type="number" min="1" name="cab_days" value="{{ cabildo_defaults.days if cabildo_defaults else 21 }}" autocomplete="off" {% if not selected_drapp and not selected_cab %}disabled{% endif %} />
         {% if errors.cab_days %}
           <p class="mt-1 text-xs text-rose-600">{{ errors.cab_days }}</p>
         {% endif %}
@@ -281,16 +281,24 @@
         if (rows.length > 1) button.closest("[data-eligibility-range]")?.remove();
       });
       const toggle = () => {
-        if (select.value === "drapp" || select.value === "consultorio_movil") {
+        const credentialsActive = select.value === "drapp" || select.value === "consultorio_movil";
+        if (credentialsActive) {
           fields.classList.remove("hidden");
         } else {
           fields.classList.add("hidden");
         }
-        if (select.value === "google_calendar" || select.value === "google") {
+        fields.querySelectorAll("input, select, textarea").forEach((control) => {
+          control.disabled = !credentialsActive;
+        });
+        const googleActive = select.value === "google_calendar" || select.value === "google";
+        if (googleActive) {
           googleFields?.classList.remove("hidden");
         } else {
           googleFields?.classList.add("hidden");
         }
+        googleFields?.querySelectorAll("input, select, textarea").forEach((control) => {
+          control.disabled = !googleActive;
+        });
       };
       const clearInlineErrors = () => {
         fields.querySelectorAll("[data-inline-error]").forEach((el) => el.remove());

@@ -516,11 +516,16 @@
   const cabildoFields = document.querySelector("[data-cabildo-fields]");
   if (providerSelect && cabildoFields) {
     const toggleCabildo = () => {
-      if (providerSelect.value === "consultorio_movil") {
+      const credentialsActive =
+        providerSelect.value === "drapp" || providerSelect.value === "consultorio_movil";
+      if (credentialsActive) {
         cabildoFields.classList.remove("hidden");
       } else {
         cabildoFields.classList.add("hidden");
       }
+      cabildoFields.querySelectorAll("input, select, textarea").forEach((control) => {
+        control.disabled = !credentialsActive;
+      });
     };
     providerSelect.addEventListener("change", toggleCabildo);
     toggleCabildo();

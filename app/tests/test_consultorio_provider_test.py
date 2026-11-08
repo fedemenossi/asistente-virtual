@@ -67,8 +67,27 @@ def test_consultorio_form_disables_browser_autocomplete(client, db_session):
     assert response.status_code == 200
     assert re.search(r"<form[^>]+data-consultorio-form[^>]+autocomplete=\"off\"", response.text)
     assert re.search(r"<input[^>]+name=\"nombre\"[^>]+autocomplete=\"off\"", response.text)
-    assert re.search(r"<input[^>]+name=\"cab_user\"[^>]+autocomplete=\"off\"", response.text)
-    assert re.search(r"<input[^>]+name=\"cab_password\"[^>]+autocomplete=\"off\"", response.text)
+    user_input = re.search(r"<input[^>]+name=\"cab_user\"[^>]*>", response.text)
+    password_input = re.search(r"<input[^>]+name=\"cab_password\"[^>]*>", response.text)
+    assert user_input and 'autocomplete="off"' in user_input.group(0)
+    assert password_input and 'autocomplete="new-password"' in password_input.group(0)
+    assert "disabled" not in user_input.group(0)
+    assert "disabled" not in password_input.group(0)
+
+
+def test_new_manual_consultorio_disables_hidden_provider_credentials(client, db_session):
+    _seed_tenant_with_consultorio(client, db_session)
+
+    response = client.get("/t/consultorios/new")
+
+    assert response.status_code == 200
+    assert re.search(r"<input[^>]+name=\"nombre\"[^>]+value=\"\"[^>]+autocomplete=\"off\"", response.text)
+    assert re.search(r"<input[^>]+name=\"cab_user\"[^>]+disabled", response.text)
+    assert re.search(
+        r"<input[^>]+name=\"cab_password\"[^>]+autocomplete=\"new-password\"[^>]+disabled",
+        response.text,
+    )
+    assert 'data-lpignore="true"' in response.text
 
 
 def test_consultorio_provider_test_returns_slots_without_secrets(client, db_session, monkeypatch):
