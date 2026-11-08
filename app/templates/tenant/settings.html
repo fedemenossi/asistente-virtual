@@ -10,7 +10,7 @@
       <p class="page-subtitle">Solo campos permitidos.</p>
     </div>
   </div>
-  <form method="post" class="surface space-y-6">
+  <form method="post" class="surface space-y-6" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     {% if errors %}
       <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">

@@ -16,18 +16,18 @@
       Revisá los campos marcados para continuar.
     </div>
   {% endif %}
-  <form method="post" class="card p-6 space-y-4">
+  <form method="post" class="card p-6 space-y-4" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <div>
       <label class="block text-sm font-medium text-slate-700">Email</label>
-      <input class="input mt-1 {% if errors.email %}border-rose-400 focus:ring-rose-300{% endif %}" name="email" value="{{ form.get('email') or (user.email if user else '') }}" required />
+      <input class="input mt-1 {% if errors.email %}border-rose-400 focus:ring-rose-300{% endif %}" name="email" value="{{ form.get('email') or (user.email if user else '') }}" autocomplete="off" required />
       {% if errors.email %}
         <p class="mt-1 text-xs text-rose-600">{{ errors.email }}</p>
       {% endif %}
     </div>
     <div>
       <label class="block text-sm font-medium text-slate-700">Password {% if is_edit %}(opcional){% endif %}</label>
-      <input class="input mt-1" type="password" name="password" {% if not is_edit %}required{% endif %} />
+      <input class="input mt-1" type="password" name="password" autocomplete="off" {% if not is_edit %}required{% endif %} />
     </div>
     <div>
       <label class="block text-sm font-medium text-slate-700">Rol</label>

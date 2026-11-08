@@ -59,6 +59,18 @@ def test_consultorio_edit_shows_provider_test_button(client, db_session):
     assert "proximos 3 dias" in response.text
 
 
+def test_consultorio_form_disables_browser_autocomplete(client, db_session):
+    _, consultorio_id = _seed_tenant_with_consultorio(client, db_session)
+
+    response = client.get(f"/t/consultorios/{consultorio_id}/edit")
+
+    assert response.status_code == 200
+    assert re.search(r"<form[^>]+data-consultorio-form[^>]+autocomplete=\"off\"", response.text)
+    assert re.search(r"<input[^>]+name=\"nombre\"[^>]+autocomplete=\"off\"", response.text)
+    assert re.search(r"<input[^>]+name=\"cab_user\"[^>]+autocomplete=\"off\"", response.text)
+    assert re.search(r"<input[^>]+name=\"cab_password\"[^>]+autocomplete=\"off\"", response.text)
+
+
 def test_consultorio_provider_test_returns_slots_without_secrets(client, db_session, monkeypatch):
     _, consultorio_id = _seed_tenant_with_consultorio(client, db_session)
     page = client.get(f"/t/consultorios/{consultorio_id}/edit")

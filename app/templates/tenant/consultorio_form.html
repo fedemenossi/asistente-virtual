@@ -16,12 +16,12 @@
       Revisá los campos marcados en rojo.
     </div>
   {% endif %}
-  <form method="post" class="card p-6 space-y-4" data-consultorio-form>
+  <form method="post" class="card p-6 space-y-4" data-consultorio-form autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     {% set nombre_value = (form.nombre if form.nombre is defined and form.nombre != '' else (consultorio.nombre if consultorio else '')) %}
     <div>
       <label class="block text-sm font-medium text-slate-700">Nombre</label>
-      <input class="input mt-1" name="nombre" value="{{ nombre_value }}" required />
+      <input class="input mt-1" name="nombre" value="{{ nombre_value }}" autocomplete="off" required />
     </div>
     <div>
       <label class="block text-sm font-medium text-slate-700">Tipo</label>
@@ -60,14 +60,14 @@
     <div class="border border-slate-200 rounded-xl p-4 space-y-3 hidden" data-cabildo-fields>
       <div>
         <label class="block text-sm font-medium text-slate-700">Usuario</label>
-        <input class="input mt-1 {% if errors.cab_user %}border-rose-400 focus:ring-rose-300{% endif %}" name="cab_user" value="{{ cabildo_defaults.user if cabildo_defaults else '' }}" />
+        <input class="input mt-1 {% if errors.cab_user %}border-rose-400 focus:ring-rose-300{% endif %}" name="cab_user" value="{{ cabildo_defaults.user if cabildo_defaults else '' }}" autocomplete="off" />
         {% if errors.cab_user %}
           <p class="mt-1 text-xs text-rose-600">{{ errors.cab_user }}</p>
         {% endif %}
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700">Password</label>
-        <input class="input mt-1 {% if errors.cab_password %}border-rose-400 focus:ring-rose-300{% endif %}" type="password" name="cab_password" value="{{ cabildo_defaults.password if cabildo_defaults else '' }}" />
+        <input class="input mt-1 {% if errors.cab_password %}border-rose-400 focus:ring-rose-300{% endif %}" type="password" name="cab_password" value="{{ cabildo_defaults.password if cabildo_defaults else '' }}" autocomplete="off" />
         {% if errors.cab_password %}
           <p class="mt-1 text-xs text-rose-600">{{ errors.cab_password }}</p>
         {% endif %}

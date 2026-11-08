@@ -9,7 +9,7 @@
     <h1 class="text-2xl font-semibold text-slate-900">Pagos</h1>
   </div>
 
-  <form method="post" class="card p-6 space-y-4">
+  <form method="post" class="card p-6 space-y-4" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
       <h2 class="text-sm font-semibold text-slate-900">Tarifa de primera consulta particular</h2>
@@ -46,11 +46,11 @@
       </div>
       <div>
         <label class="text-xs text-slate-500">MP Access Token</label>
-        <input class="input" type="password" name="mp_access_token" value="{{ payment_settings.mp_access_token }}" />
+        <input class="input" type="password" name="mp_access_token" value="{{ payment_settings.mp_access_token }}" autocomplete="off" />
       </div>
       <div>
         <label class="text-xs text-slate-500">MP Webhook Secret</label>
-        <input class="input" type="password" name="mp_webhook_secret" value="{{ payment_settings.mp_webhook_secret }}" />
+        <input class="input" type="password" name="mp_webhook_secret" value="{{ payment_settings.mp_webhook_secret }}" autocomplete="off" />
       </div>
       <div class="md:col-span-2">
         <label class="text-xs text-slate-500">Texto visible al paciente</label>

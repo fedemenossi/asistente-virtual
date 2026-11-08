@@ -9,7 +9,7 @@
     <h1 class="text-2xl font-semibold text-slate-900">Configuracion ARCA</h1>
   </div>
 
-  <form method="post" class="card p-6 space-y-6">
+  <form method="post" class="card p-6 space-y-6" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     {% if errors %}
       <div class="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -157,7 +157,7 @@
         </div>
         <div>
           <label class="text-xs text-slate-500">Passphrase de clave privada</label>
-          <input class="input" type="password" name="key_passphrase" placeholder="{% if settings.get('has_key_passphrase') %}Passphrase ya cargada{% endif %}" />
+          <input class="input" type="password" name="key_passphrase" autocomplete="off" placeholder="{% if settings.get('has_key_passphrase') %}Passphrase ya cargada{% endif %}" />
         </div>
       </div>
     </div>
