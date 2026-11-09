@@ -18,7 +18,7 @@ def _csrf(html: str) -> str:
     return match.group(1)
 
 
-def test_operator_configures_consultorio_eligibility_and_multiple_weekly_ranges(
+def test_operator_configures_eligibility_and_multiple_generation_ranges(
     client,
     db_session,
     monkeypatch,
@@ -43,7 +43,8 @@ def test_operator_configures_consultorio_eligibility_and_multiple_weekly_ranges(
     assert form.status_code == 200
     assert "Reglas de elegibilidad" in form.text
     assert "Admite primera consulta" in form.text
-    assert "Franjas de atencion" in form.text
+    assert "Horarios para generar slots" in form.text
+    assert "Restringir la oferta a estas franjas" not in form.text
 
     response = client.post(
         "/t/consultorios/new",
@@ -59,10 +60,12 @@ def test_operator_configures_consultorio_eligibility_and_multiple_weekly_ranges(
             "eligibility_accepts_first_consultation": "1",
             "eligibility_coverage_types": ["obra_social"],
             "eligibility_coverage_entities": "Caja Notarial",
-            "eligibility_ranges_enabled": "1",
-            "eligibility_range_day": ["monday", "wednesday"],
-            "eligibility_range_start": ["09:00", "14:00"],
-            "eligibility_range_end": ["12:00", "18:00"],
+            "gcal_schedule_mode": "ranges",
+            "gcal_schedule_day": ["monday", "wednesday"],
+            "gcal_schedule_start": ["09:00", "14:00"],
+            "gcal_schedule_end": ["12:00", "18:00"],
+            "gcal_schedule_slot_minutes": ["30", "45"],
+            "gcal_schedule_buffer_minutes": ["0", "15"],
         },
         follow_redirects=False,
     )
@@ -78,11 +81,13 @@ def test_operator_configures_consultorio_eligibility_and_multiple_weekly_ranges(
     assert 'name="eligibility_coverage_entities"' in edit.text
     assert ">Caja Notarial</textarea>" in edit.text
     assert '<option value="monday" selected>' in edit.text
-    assert 'name="eligibility_range_start" value="09:00"' in edit.text
-    assert 'name="eligibility_range_end" value="12:00"' in edit.text
+    assert 'name="gcal_schedule_start" value="09:00"' in edit.text
+    assert 'name="gcal_schedule_end" value="12:00"' in edit.text
     assert '<option value="wednesday" selected>' in edit.text
-    assert 'name="eligibility_range_start" value="14:00"' in edit.text
-    assert 'name="eligibility_range_end" value="18:00"' in edit.text
+    assert 'name="gcal_schedule_start" value="14:00"' in edit.text
+    assert 'name="gcal_schedule_end" value="18:00"' in edit.text
+    assert 'name="gcal_schedule_slot_minutes" value="45"' in edit.text
+    assert 'name="gcal_schedule_buffer_minutes" value="15"' in edit.text
 
     edited = client.post(
         edit_url_match.group(1),
@@ -97,10 +102,12 @@ def test_operator_configures_consultorio_eligibility_and_multiple_weekly_ranges(
             "gcal_reserved_tag_template": "[TURNO {patient_full_name}]",
             "eligibility_coverage_types": ["particular"],
             "eligibility_coverage_entities": "",
-            "eligibility_ranges_enabled": "1",
-            "eligibility_range_day": ["tuesday"],
-            "eligibility_range_start": ["08:00"],
-            "eligibility_range_end": ["11:00"],
+            "gcal_schedule_mode": "ranges",
+            "gcal_schedule_day": ["tuesday"],
+            "gcal_schedule_start": ["08:00"],
+            "gcal_schedule_end": ["11:00"],
+            "gcal_schedule_slot_minutes": ["20"],
+            "gcal_schedule_buffer_minutes": ["5"],
         },
         follow_redirects=False,
     )
@@ -109,7 +116,9 @@ def test_operator_configures_consultorio_eligibility_and_multiple_weekly_ranges(
     assert 'name="eligibility_accepts_first_consultation" value="1" checked' not in reopened.text
     assert 'name="eligibility_coverage_types" value="particular" checked' in reopened.text
     assert '<option value="tuesday" selected>' in reopened.text
-    assert 'name="eligibility_range_start" value="08:00"' in reopened.text
+    assert 'name="gcal_schedule_start" value="08:00"' in reopened.text
+    assert 'name="gcal_schedule_slot_minutes" value="20"' in reopened.text
+    assert 'name="gcal_schedule_buffer_minutes" value="5"' in reopened.text
 
     other_tenant_id = asyncio.run(create_tenant(db_session, "Tenant Eligibility Other", "whatsapp:+821"))
     asyncio.run(

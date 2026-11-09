@@ -48,6 +48,7 @@ def default_google_calendar_config() -> dict[str, Any]:
         "reserved_tag_template": DEFAULT_RESERVED_TAG_TEMPLATE,
         "timezone": DEFAULT_TIMEZONE,
         "require_google_meet": True,
+        "schedule_ranges": [],
         "schedule": {
             key: {
                 "enabled": False,
@@ -70,22 +71,43 @@ def normalize_provider(value: str | None) -> str | None:
 
 def get_google_calendar_config(consultorio) -> dict[str, Any]:
     configured = ((getattr(consultorio, "configuracion_externa", None) or {}).get("google_calendar") or {})
-    base = default_google_calendar_config()
-    for key, value in configured.items():
-        if key == "schedule" and isinstance(value, dict):
-            for day_key, day_value in value.items():
-                if day_key in base["schedule"] and isinstance(day_value, dict):
-                    base["schedule"][day_key].update(
-                        {k: v for k, v in day_value.items() if k in base["schedule"][day_key]}
-                    )
-        elif key in base and value is not None:
-            base[key] = value
-    return validate_google_calendar_config(base)
+    payload = {
+        key: value
+        for key, value in configured.items()
+        if key in default_google_calendar_config() and value is not None
+    }
+    if "schedule_ranges" not in configured:
+        legacy_eligibility_ranges = (
+            ((getattr(consultorio, "configuracion_externa", None) or {}).get("eligibility") or {}).get(
+                "weekly_ranges"
+            )
+            or []
+        )
+        if legacy_eligibility_ranges:
+            legacy_schedule = configured.get("schedule") if isinstance(configured.get("schedule"), dict) else {}
+            payload["schedule_ranges"] = [
+                {
+                    "day": item.get("day"),
+                    "start": item.get("start"),
+                    "end": item.get("end"),
+                    "slot_minutes": (legacy_schedule.get(item.get("day")) or {}).get("slot_minutes", 30),
+                    "buffer_minutes": (legacy_schedule.get(item.get("day")) or {}).get("buffer_minutes", 0),
+                }
+                for item in legacy_eligibility_ranges
+                if isinstance(item, dict)
+            ]
+    return validate_google_calendar_config(payload)
 
 
 def validate_google_calendar_config(data: dict[str, Any]) -> dict[str, Any]:
     config = default_google_calendar_config()
-    config.update({key: value for key, value in data.items() if key in config and key != "schedule"})
+    config.update(
+        {
+            key: value
+            for key, value in data.items()
+            if key in config and key not in {"schedule", "schedule_ranges"}
+        }
+    )
     config["calendar_id"] = str(config.get("calendar_id") or "").strip()
     config["available_tag"] = str(config.get("available_tag") or DEFAULT_AVAILABLE_TAG).strip() or DEFAULT_AVAILABLE_TAG
     config["reserved_tag_template"] = (
@@ -96,37 +118,50 @@ def validate_google_calendar_config(data: dict[str, Any]) -> dict[str, Any]:
     config["require_google_meet"] = _as_bool(config.get("require_google_meet"))
     _resolve_timezone(config["timezone"])
 
-    schedule_input = data.get("schedule") if isinstance(data.get("schedule"), dict) else {}
-    schedule: dict[str, dict[str, Any]] = {}
-    for day_key in WEEKDAY_KEYS:
-        day = {**default_google_calendar_config()["schedule"][day_key], **(schedule_input.get(day_key) or {})}
-        start = _parse_time(day.get("start"), f"{WEEKDAY_LABELS[day_key]} inicio")
-        end = _parse_time(day.get("end"), f"{WEEKDAY_LABELS[day_key]} fin")
-        slot_minutes = _parse_int(day.get("slot_minutes"), f"{WEEKDAY_LABELS[day_key]} duracion", minimum=1)
-        buffer_minutes = _parse_int(day.get("buffer_minutes"), f"{WEEKDAY_LABELS[day_key]} intervalo", minimum=0)
-        enabled = _as_bool(day.get("enabled"))
-        if enabled and start >= end:
-            raise ValueError(f"{WEEKDAY_LABELS[day_key]}: la hora de inicio debe ser menor a la hora de fin.")
-        schedule[day_key] = {
-            "enabled": enabled,
-            "start": start.strftime("%H:%M"),
-            "end": end.strftime("%H:%M"),
-            "slot_minutes": slot_minutes,
-            "buffer_minutes": buffer_minutes,
-        }
-    config["schedule"] = schedule
+    if "schedule_ranges" in data:
+        raw_ranges = data.get("schedule_ranges") if isinstance(data.get("schedule_ranges"), list) else []
+    else:
+        raw_ranges = _ranges_from_legacy_schedule(data.get("schedule"))
+    schedule_ranges = [_validate_schedule_range(item) for item in raw_ranges if isinstance(item, dict)]
+    schedule_ranges.sort(key=lambda item: (WEEKDAY_KEYS.index(item["day"]), item["start"]))
+    _validate_non_overlapping_ranges(schedule_ranges)
+    config["schedule_ranges"] = schedule_ranges
+    config["schedule"] = _legacy_schedule_from_ranges(schedule_ranges)
     return config
 
 
 def build_google_calendar_config_from_form(form) -> dict[str, Any]:
-    schedule = {}
-    for day_key in WEEKDAY_KEYS:
-        schedule[day_key] = {
-            "enabled": form.get(f"gcal_{day_key}_enabled") == "1",
-            "start": form.get(f"gcal_{day_key}_start") or "09:00",
-            "end": form.get(f"gcal_{day_key}_end") or "17:00",
-            "slot_minutes": form.get(f"gcal_{day_key}_slot_minutes") or 30,
-            "buffer_minutes": form.get(f"gcal_{day_key}_buffer_minutes") or 0,
+    getlist = getattr(form, "getlist", lambda key: [form[key]] if key in form else [])
+    if form.get("gcal_schedule_mode") == "ranges":
+        days = getlist("gcal_schedule_day")
+        starts = getlist("gcal_schedule_start")
+        ends = getlist("gcal_schedule_end")
+        durations = getlist("gcal_schedule_slot_minutes")
+        intervals = getlist("gcal_schedule_buffer_minutes")
+        schedule_ranges = []
+        for index in range(max(len(days), len(starts), len(ends), len(durations), len(intervals), 0)):
+            schedule_ranges.append(
+                {
+                    "day": days[index] if index < len(days) else "",
+                    "start": starts[index] if index < len(starts) else "",
+                    "end": ends[index] if index < len(ends) else "",
+                    "slot_minutes": durations[index] if index < len(durations) else "",
+                    "buffer_minutes": intervals[index] if index < len(intervals) else "",
+                }
+            )
+        schedule_payload = {"schedule_ranges": schedule_ranges}
+    else:
+        schedule_payload = {
+            "schedule": {
+                day_key: {
+                    "enabled": form.get(f"gcal_{day_key}_enabled") == "1",
+                    "start": form.get(f"gcal_{day_key}_start") or "09:00",
+                    "end": form.get(f"gcal_{day_key}_end") or "17:00",
+                    "slot_minutes": form.get(f"gcal_{day_key}_slot_minutes") or 30,
+                    "buffer_minutes": form.get(f"gcal_{day_key}_buffer_minutes") or 0,
+                }
+                for day_key in WEEKDAY_KEYS
+            }
         }
     return validate_google_calendar_config(
         {
@@ -135,7 +170,7 @@ def build_google_calendar_config_from_form(form) -> dict[str, Any]:
             "reserved_tag_template": form.get("gcal_reserved_tag_template") or DEFAULT_RESERVED_TAG_TEMPLATE,
             "timezone": form.get("gcal_timezone") or DEFAULT_TIMEZONE,
             "require_google_meet": form.get("gcal_require_google_meet") == "1",
-            "schedule": schedule,
+            **schedule_payload,
         }
     )
 
@@ -160,8 +195,7 @@ def calculate_slots(
             day += timedelta(days=1)
             continue
         day_key = WEEKDAY_KEYS[day.weekday()]
-        day_config = config["schedule"][day_key]
-        if day_config["enabled"]:
+        for day_config in (item for item in config["schedule_ranges"] if item["day"] == day_key):
             start_time = _parse_time(day_config["start"], "inicio")
             end_time = _parse_time(day_config["end"], "fin")
             slot_minutes = int(day_config["slot_minutes"])
@@ -176,43 +210,72 @@ def calculate_slots(
     return slots
 
 
-def calculate_slots_for_weekly_range(
-    config: dict[str, Any],
-    weekly_range: dict[str, Any],
-    start_date: date,
-    end_date: date,
-    *,
-    exclude_argentina_holidays: bool = False,
-    holiday_service: HolidayService | None = None,
-) -> list[CalculatedSlot]:
-    day_key = str(weekly_range.get("day") or "")
-    if day_key not in WEEKDAY_KEYS:
-        raise ValueError("La franja seleccionada no tiene un dia valido.")
-    start = _parse_time(weekly_range.get("start"), "Franja inicio")
-    end = _parse_time(weekly_range.get("end"), "Franja fin")
-    if start >= end:
-        raise ValueError("La franja seleccionada debe comenzar antes de finalizar.")
+def slot_is_in_schedule_ranges(consultorio, start_at: datetime, end_at: datetime) -> bool:
+    config = get_google_calendar_config(consultorio)
+    ranges = config["schedule_ranges"]
+    if not ranges:
+        return True
+    timezone = _resolve_timezone(config["timezone"])
+    local_start = start_at.astimezone(timezone) if start_at.tzinfo is not None else start_at
+    local_end = end_at.astimezone(timezone) if end_at.tzinfo is not None else end_at
+    day_key = WEEKDAY_KEYS[local_start.weekday()]
+    slot_start = local_start.strftime("%H:%M")
+    slot_end = local_end.strftime("%H:%M")
+    return any(
+        item["day"] == day_key and item["start"] <= slot_start and slot_end <= item["end"]
+        for item in ranges
+    )
 
-    ranged_config = validate_google_calendar_config(config)
-    ranged_schedule = {
-        key: {**value, "enabled": False}
-        for key, value in ranged_config["schedule"].items()
+
+def _ranges_from_legacy_schedule(value: Any) -> list[dict[str, Any]]:
+    schedule = value if isinstance(value, dict) else {}
+    ranges = []
+    for day_key in WEEKDAY_KEYS:
+        day = {**default_google_calendar_config()["schedule"][day_key], **(schedule.get(day_key) or {})}
+        if _as_bool(day.get("enabled")):
+            ranges.append({"day": day_key, **{key: day[key] for key in ("start", "end", "slot_minutes", "buffer_minutes")}})
+    return ranges
+
+
+def _validate_schedule_range(item: dict[str, Any]) -> dict[str, Any]:
+    day_key = str(item.get("day") or "").strip()
+    if day_key not in WEEKDAY_KEYS:
+        raise ValueError("Cada franja debe tener un dia valido.")
+    start = _parse_time(item.get("start"), f"{WEEKDAY_LABELS[day_key]} inicio")
+    end = _parse_time(item.get("end"), f"{WEEKDAY_LABELS[day_key]} fin")
+    if start >= end:
+        raise ValueError(f"{WEEKDAY_LABELS[day_key]}: la hora de inicio debe ser menor a la hora de fin.")
+    return {
+        "day": day_key,
+        "start": start.strftime("%H:%M"),
+        "end": end.strftime("%H:%M"),
+        "slot_minutes": _parse_int(item.get("slot_minutes"), f"{WEEKDAY_LABELS[day_key]} duracion", minimum=1),
+        "buffer_minutes": _parse_int(item.get("buffer_minutes"), f"{WEEKDAY_LABELS[day_key]} intervalo", minimum=0),
     }
-    ranged_schedule[day_key].update(
-        {
+
+
+def _validate_non_overlapping_ranges(ranges: list[dict[str, Any]]) -> None:
+    previous_by_day: dict[str, dict[str, Any]] = {}
+    for item in ranges:
+        previous = previous_by_day.get(item["day"])
+        if previous and item["start"] < previous["end"]:
+            raise ValueError(f"{WEEKDAY_LABELS[item['day']]}: las franjas de atencion no pueden superponerse.")
+        previous_by_day[item["day"]] = item
+
+
+def _legacy_schedule_from_ranges(ranges: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    schedule = default_google_calendar_config()["schedule"]
+    for item in ranges:
+        if schedule[item["day"]]["enabled"]:
+            continue
+        schedule[item["day"]] = {
             "enabled": True,
-            "start": start.strftime("%H:%M"),
-            "end": end.strftime("%H:%M"),
+            "start": item["start"],
+            "end": item["end"],
+            "slot_minutes": item["slot_minutes"],
+            "buffer_minutes": item["buffer_minutes"],
         }
-    )
-    ranged_config["schedule"] = ranged_schedule
-    return calculate_slots(
-        ranged_config,
-        start_date,
-        end_date,
-        exclude_argentina_holidays=exclude_argentina_holidays,
-        holiday_service=holiday_service,
-    )
+    return schedule
 
 
 def _parse_time(value: Any, label: str) -> time:

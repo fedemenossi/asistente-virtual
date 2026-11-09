@@ -164,33 +164,53 @@
           <span class="mt-1 block text-xs text-slate-500">Si el calendario no permite crear Meet, no se reservara el turno virtual. Si se desactiva, el turno virtual puede reservarse sin link.</span>
         </span>
       </label>
-      <div class="overflow-x-auto rounded-xl border border-slate-200">
+      <div class="rounded-xl border border-slate-200">
+        <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+          <div>
+            <p class="text-sm font-medium text-slate-800">Horarios para generar slots</p>
+            <p class="text-xs text-slate-500">Agrega una o varias franjas para cada dia de atencion.</p>
+          </div>
+          <button class="btn btn-secondary" type="button" data-add-google-schedule-range>Agregar franja</button>
+        </div>
+        <input type="hidden" name="gcal_schedule_mode" value="ranges" />
+        <div class="overflow-x-auto">
         <table class="min-w-full text-sm">
           <thead class="bg-slate-50 text-slate-600">
             <tr>
               <th class="px-3 py-2 text-left font-medium">Dia</th>
-              <th class="px-3 py-2 text-left font-medium">Activo</th>
               <th class="px-3 py-2 text-left font-medium">Inicio</th>
               <th class="px-3 py-2 text-left font-medium">Fin</th>
-              <th class="px-3 py-2 text-left font-medium">Duracion</th>
-              <th class="px-3 py-2 text-left font-medium">Intervalo</th>
+              <th class="px-3 py-2 text-left font-medium">Duracion (min)</th>
+              <th class="px-3 py-2 text-left font-medium">Intervalo (min)</th>
+              <th class="px-3 py-2 text-left font-medium">Accion</th>
             </tr>
           </thead>
-          <tbody>
-            {% for day_key, day_label in google_weekdays %}
-              {% set day = google_config.schedule[day_key] %}
-              <tr class="border-t border-slate-200">
-                <td class="px-3 py-2 text-slate-800">{{ day_label }}</td>
-                <td class="px-3 py-2"><input type="checkbox" name="gcal_{{ day_key }}_enabled" value="1" {% if day.enabled %}checked{% endif %} /></td>
-                <td class="px-3 py-2"><input class="input min-w-28" type="time" name="gcal_{{ day_key }}_start" value="{{ day.start }}" /></td>
-                <td class="px-3 py-2"><input class="input min-w-28" type="time" name="gcal_{{ day_key }}_end" value="{{ day.end }}" /></td>
-                <td class="px-3 py-2"><input class="input min-w-24" type="number" min="1" name="gcal_{{ day_key }}_slot_minutes" value="{{ day.slot_minutes }}" /></td>
-                <td class="px-3 py-2"><input class="input min-w-24" type="number" min="0" name="gcal_{{ day_key }}_buffer_minutes" value="{{ day.buffer_minutes }}" /></td>
+          <tbody data-google-schedule-ranges>
+            {% for range in google_config.schedule_ranges %}
+              <tr class="border-t border-slate-200" data-google-schedule-range>
+                <td class="px-3 py-2"><select class="select min-w-32" name="gcal_schedule_day">{% for day_key, day_label in google_weekdays %}<option value="{{ day_key }}" {% if range.day == day_key %}selected{% endif %}>{{ day_label }}</option>{% endfor %}</select></td>
+                <td class="px-3 py-2"><input class="input min-w-28" type="time" name="gcal_schedule_start" value="{{ range.start }}" required /></td>
+                <td class="px-3 py-2"><input class="input min-w-28" type="time" name="gcal_schedule_end" value="{{ range.end }}" required /></td>
+                <td class="px-3 py-2"><input class="input min-w-24" type="number" min="1" name="gcal_schedule_slot_minutes" value="{{ range.slot_minutes }}" required /></td>
+                <td class="px-3 py-2"><input class="input min-w-24" type="number" min="0" name="gcal_schedule_buffer_minutes" value="{{ range.buffer_minutes }}" required /></td>
+                <td class="px-3 py-2"><button class="btn btn-secondary" type="button" data-remove-google-schedule-range>Quitar</button></td>
               </tr>
             {% endfor %}
           </tbody>
         </table>
+        </div>
+        <p class="px-4 py-3 text-xs text-slate-500 {% if google_config.schedule_ranges %}hidden{% endif %}" data-google-schedule-empty>No hay dias configurados. No se generaran slots hasta agregar una franja.</p>
       </div>
+      <template data-google-schedule-range-template>
+        <tr class="border-t border-slate-200" data-google-schedule-range>
+          <td class="px-3 py-2"><select class="select min-w-32" name="gcal_schedule_day">{% for day_key, day_label in google_weekdays %}<option value="{{ day_key }}">{{ day_label }}</option>{% endfor %}</select></td>
+          <td class="px-3 py-2"><input class="input min-w-28" type="time" name="gcal_schedule_start" value="09:00" required /></td>
+          <td class="px-3 py-2"><input class="input min-w-28" type="time" name="gcal_schedule_end" value="17:00" required /></td>
+          <td class="px-3 py-2"><input class="input min-w-24" type="number" min="1" name="gcal_schedule_slot_minutes" value="30" required /></td>
+          <td class="px-3 py-2"><input class="input min-w-24" type="number" min="0" name="gcal_schedule_buffer_minutes" value="0" required /></td>
+          <td class="px-3 py-2"><button class="btn btn-secondary" type="button" data-remove-google-schedule-range>Quitar</button></td>
+        </tr>
+      </template>
       <div class="hidden rounded-lg border px-3 py-3 text-sm" data-google-calendars-result></div>
     </div>
     <section class="rounded-xl border border-slate-200 p-4 space-y-4" data-eligibility-rules>
@@ -219,30 +239,6 @@
         <textarea class="input mt-1 min-h-24" name="eligibility_coverage_entities" placeholder="Una entidad por linea">{{ eligibility_config.coverage_entities | join('\n') }}</textarea>
         <p class="mt-1 text-xs text-slate-500">Dejalo vacio para admitir cualquier entidad de los tipos seleccionados.</p>
       </div>
-      <div>
-        <div class="flex items-center justify-between gap-3">
-          <div><p class="text-sm font-medium text-slate-700">Franjas de atencion</p><p class="text-xs text-slate-500">Podes agregar varias franjas para un mismo dia.</p></div>
-          <button class="btn btn-secondary" type="button" data-add-eligibility-range>Agregar franja</button>
-        </div>
-        <label class="mt-3 flex items-center gap-3 text-sm text-slate-700">
-          <input type="checkbox" name="eligibility_ranges_enabled" value="1" {% if eligibility_config.weekly_ranges %}checked{% endif %} />
-          Restringir la oferta a estas franjas
-        </label>
-        {% if errors.eligibility_ranges %}<p class="mt-1 text-xs text-rose-600">{{ errors.eligibility_ranges }}</p>{% endif %}
-        <div class="mt-3 space-y-2" data-eligibility-ranges>
-          {% set ranges = eligibility_config.weekly_ranges if eligibility_config.weekly_ranges else [{'day': 'monday', 'start': '09:00', 'end': '17:00'}] %}
-          {% for range in ranges %}
-            <div class="grid gap-2 md:grid-cols-4" data-eligibility-range>
-              <select class="select" name="eligibility_range_day">
-                {% for day_key, day_label in eligibility_weekdays %}<option value="{{ day_key }}" {% if range.day == day_key %}selected{% endif %}>{{ day_label }}</option>{% endfor %}
-              </select>
-              <input class="input" type="time" name="eligibility_range_start" value="{{ range.start }}" />
-              <input class="input" type="time" name="eligibility_range_end" value="{{ range.end }}" />
-              <button class="btn btn-secondary" type="button" data-remove-eligibility-range>Quitar</button>
-            </div>
-          {% endfor %}
-        </div>
-      </div>
     </section>
     <div class="flex items-center gap-3">
       <button class="btn btn-primary" type="submit">Guardar</button>
@@ -261,8 +257,10 @@
       const googleCalendarsResult = document.querySelector("[data-google-calendars-result]");
       const googleCalendarSelect = document.querySelector("[data-google-calendar-select]");
       const googleAvailabilityButton = document.querySelector("[data-google-availability-button]");
-      const eligibilityRanges = document.querySelector("[data-eligibility-ranges]");
-      const addEligibilityRange = document.querySelector("[data-add-eligibility-range]");
+      const googleScheduleRanges = document.querySelector("[data-google-schedule-ranges]");
+      const googleScheduleTemplate = document.querySelector("[data-google-schedule-range-template]");
+      const googleScheduleEmpty = document.querySelector("[data-google-schedule-empty]");
+      const addGoogleScheduleRange = document.querySelector("[data-add-google-schedule-range]");
       const inputs = {
         cab_user: form?.querySelector("input[name='cab_user']"),
         cab_password: form?.querySelector("input[name='cab_password']"),
@@ -270,15 +268,19 @@
         cab_days: form?.querySelector("input[name='cab_days']"),
       };
       if (!select || !fields) return;
-      addEligibilityRange?.addEventListener("click", () => {
-        const row = eligibilityRanges?.querySelector("[data-eligibility-range]")?.cloneNode(true);
-        if (row) eligibilityRanges.appendChild(row);
+      const updateGoogleScheduleEmpty = () => {
+        googleScheduleEmpty?.classList.toggle("hidden", Boolean(googleScheduleRanges?.querySelector("[data-google-schedule-range]")));
+      };
+      addGoogleScheduleRange?.addEventListener("click", () => {
+        const row = googleScheduleTemplate?.content.firstElementChild?.cloneNode(true);
+        if (row) googleScheduleRanges?.appendChild(row);
+        updateGoogleScheduleEmpty();
       });
-      eligibilityRanges?.addEventListener("click", (event) => {
-        const button = event.target.closest("[data-remove-eligibility-range]");
+      googleScheduleRanges?.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-remove-google-schedule-range]");
         if (!button) return;
-        const rows = eligibilityRanges.querySelectorAll("[data-eligibility-range]");
-        if (rows.length > 1) button.closest("[data-eligibility-range]")?.remove();
+        button.closest("[data-google-schedule-range]")?.remove();
+        updateGoogleScheduleEmpty();
       });
       const toggle = () => {
         const credentialsActive = select.value === "drapp" || select.value === "consultorio_movil";

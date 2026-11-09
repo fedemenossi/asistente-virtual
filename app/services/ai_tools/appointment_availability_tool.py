@@ -21,8 +21,8 @@ from app.services.consultorio_eligibility_service import (
     get_eligibility_config,
     has_specific_coverage_match,
     is_consultorio_eligible,
-    slot_is_in_weekly_ranges,
 )
+from app.services.google_calendar_slots_service import slot_is_in_schedule_ranges
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ async def get_available_appointment_slots(
                         "accepts_first_consultation": config["accepts_first_consultation"],
                         "coverage_types": config["coverage_types"],
                         "coverage_entities": config["coverage_entities"],
-                        "weekly_ranges": config["weekly_ranges"],
+                        "schedule_source": "consultorio",
                     },
                 }
             )
@@ -279,7 +279,7 @@ async def _get_provider_slots(
             },
         )
         for slot in slots
-        if slot_is_in_weekly_ranges(consultorio, slot.start_at, slot.end_at)
+        if slot_is_in_schedule_ranges(consultorio, slot.start_at, slot.end_at)
     ]
     return tool_success(
         consultorio_type=consultorio_type,

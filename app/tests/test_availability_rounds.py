@@ -50,7 +50,7 @@ def _google_config() -> dict:
     }
 
 
-def test_operator_generates_google_slots_only_for_selected_weekly_range(
+def test_operator_generates_all_configured_schedule_ranges(
     client,
     db_session,
     monkeypatch,
@@ -100,8 +100,7 @@ def test_operator_generates_google_slots_only_for_selected_weekly_range(
     page = client.get(f"/t/consultorios/{consultorio_id}/calendar-slots")
 
     assert page.status_code == 200
-    assert "10:00 a 11:00" in page.text
-    assert "15:00 a 16:00" in page.text
+    assert "todos los horarios semanales configurados" in page.text
 
     response = client.post(
         f"/t/consultorios/{consultorio_id}/calendar-slots",
@@ -109,7 +108,6 @@ def test_operator_generates_google_slots_only_for_selected_weekly_range(
             "csrf_token": _csrf(page.text),
             "date_from": "2026-11-09",
             "date_to": "2026-11-09",
-            "eligibility_range_index": "0",
             "action": "generate",
         },
     )
@@ -118,6 +116,8 @@ def test_operator_generates_google_slots_only_for_selected_weekly_range(
     assert [(slot.start_at.strftime("%H:%M"), slot.end_at.strftime("%H:%M")) for slot in generated] == [
         ("10:00", "10:30"),
         ("10:30", "11:00"),
+        ("15:00", "15:30"),
+        ("15:30", "16:00"),
     ]
 
     other_tenant_id = asyncio.run(
@@ -142,12 +142,11 @@ def test_operator_generates_google_slots_only_for_selected_weekly_range(
             "csrf_token": _csrf(foreign_form.text),
             "date_from": "2026-11-09",
             "date_to": "2026-11-09",
-            "eligibility_range_index": "1",
             "action": "generate",
         },
     )
     assert foreign_generation.status_code == 404
-    assert len(generated) == 2
+    assert len(generated) == 4
 
 
 def test_simulator_combines_modalities_in_chronological_rounds_and_reserves_server_reference(

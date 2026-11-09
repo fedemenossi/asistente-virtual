@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -13,6 +14,7 @@ from app.models.user import UserRole
 from app.services.calendar_service import CalendarService
 from app.services.google_calendar_slots_service import (
     calculate_slots,
+    get_google_calendar_config,
     validate_google_calendar_config,
 )
 from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_user, login
@@ -48,6 +50,81 @@ def test_calculate_slots_with_buffer_and_end_boundary():
         ("09:00", "09:30"),
         ("09:40", "10:10"),
         ("10:20", "10:50"),
+    ]
+
+
+def test_calculate_slots_supports_multiple_ranges_with_own_duration_and_interval():
+    config = {
+        "calendar_id": "calendar-1",
+        "timezone": "America/Argentina/Buenos_Aires",
+        "schedule_ranges": [
+            {
+                "day": "monday",
+                "start": "09:00",
+                "end": "10:00",
+                "slot_minutes": 20,
+                "buffer_minutes": 10,
+            },
+            {
+                "day": "monday",
+                "start": "14:00",
+                "end": "15:00",
+                "slot_minutes": 30,
+                "buffer_minutes": 0,
+            },
+        ],
+    }
+
+    slots = calculate_slots(config, date(2026, 5, 4), date(2026, 5, 4))
+
+    assert [(slot.start_at.strftime("%H:%M"), slot.end_at.strftime("%H:%M")) for slot in slots] == [
+        ("09:00", "09:20"),
+        ("09:30", "09:50"),
+        ("14:00", "14:30"),
+        ("14:30", "15:00"),
+    ]
+
+
+def test_schedule_ranges_reject_overlaps_on_same_day():
+    with pytest.raises(ValueError, match="no pueden superponerse"):
+        validate_google_calendar_config(
+            {
+                "schedule_ranges": [
+                    {"day": "monday", "start": "09:00", "end": "12:00", "slot_minutes": 30, "buffer_minutes": 0},
+                    {"day": "monday", "start": "11:00", "end": "13:00", "slot_minutes": 30, "buffer_minutes": 0},
+                ]
+            }
+        )
+
+
+def test_legacy_eligibility_ranges_migrate_to_generation_schedule():
+    consultorio = SimpleNamespace(
+        configuracion_externa={
+            "google_calendar": {
+                "schedule": {
+                    "monday": {
+                        "enabled": True,
+                        "start": "08:00",
+                        "end": "18:00",
+                        "slot_minutes": 45,
+                        "buffer_minutes": 15,
+                    }
+                }
+            },
+            "eligibility": {
+                "weekly_ranges": [
+                    {"day": "monday", "start": "10:00", "end": "12:00"},
+                    {"day": "monday", "start": "15:00", "end": "17:00"},
+                ]
+            },
+        }
+    )
+
+    config = get_google_calendar_config(consultorio)
+
+    assert config["schedule_ranges"] == [
+        {"day": "monday", "start": "10:00", "end": "12:00", "slot_minutes": 45, "buffer_minutes": 15},
+        {"day": "monday", "start": "15:00", "end": "17:00", "slot_minutes": 45, "buffer_minutes": 15},
     ]
 
 

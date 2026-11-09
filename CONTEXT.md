@@ -21,7 +21,7 @@ Conjunto de días, horarios, Disponibilidades y Turnos propios de un Consultorio
 _Evitar_: agenda del tenant, calendario global, consultorio
 
 **Franja de atención**:
-Período semanal recurrente en el que un Consultorio puede ofrecer atención, definido por día de la semana y horario. Un Consultorio puede tener varias franjas y cada una limita las Disponibilidades que pueden ofrecerse.
+Período semanal recurrente de un Consultorio, definido por día, inicio, fin, duración del turno e intervalo. Puede haber varias franjas por día; en agendas Google se usan para generar Disponibilidades y para limitar cuáles pueden ofrecerse.
 _Evitar_: disponibilidad, turno, horario excepcional
 
 **Modalidad de atención**:

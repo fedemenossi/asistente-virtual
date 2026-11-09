@@ -666,7 +666,8 @@ Configuracion por consultorio virtual (`consultorio.configuracion_externa.google
 - `available_tag` default `[TURNO DISPONIBLE]`.
 - `reserved_tag_template` default `[TURNO {patient_full_name}]`.
 - `timezone` default `America/Argentina/Buenos_Aires`.
-- `schedule` semanal lunes-domingo con activo, inicio, fin, duracion del turno y buffer.
+- `schedule_ranges`: lista unica de franjas semanales con dia, inicio, fin, duracion del turno e intervalo; admite varias franjas por dia.
+- `schedule`: representacion legacy derivada para compatibilidad con configuraciones anteriores.
 - El formulario acepta `proveedor_turnos=google_calendar` y lo normaliza a `google`.
 
 Flujos:
@@ -681,7 +682,7 @@ Flujos:
 
 UI:
 - `/t/settings/calendar`
-- Boton "Probar conexion" abre modal con grilla de slots desde `/t/settings/calendar/test`.
+- Boton "Probar conexion" valida credenciales generales y lista calendarios accesibles desde `/t/settings/calendar/test`.
 - `/t/consultorios/{consultorio_id}/edit` lista calendarios con `calendarList.list` y configura agenda semanal.
 - `/t/consultorios/{consultorio_id}/calendar-slots` previsualiza/genera eventos disponibles.
 
