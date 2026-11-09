@@ -294,7 +294,9 @@ def test_simulator_reserves_drapp_slot_and_exposes_confirmed_trace_to_operator(
     send("1")
     send("1")
     send("1")
-    offer = send("2")
+    coverage_prompt = send("2")
+    assert "1) OSDE (prepaga)" in coverage_prompt
+    offer = send("1")
     assert "10:30" in offer
     assert "controlled-secret" not in offer
 

@@ -43,8 +43,24 @@ def test_operator_configures_eligibility_and_multiple_generation_ranges(
     assert form.status_code == 200
     assert "Reglas de elegibilidad" in form.text
     assert "Admite primera consulta" in form.text
+    assert "Prepagas admitidas para turnos" in form.text
     assert "Horarios para generar slots" in form.text
     assert "Restringir la oferta a estas franjas" not in form.text
+
+    missing_prepaga = client.post(
+        "/t/consultorios/new",
+        data={
+            "csrf_token": _csrf(form.text),
+            "nombre": "Prepaga sin parametrizar",
+            "tipo": "virtual",
+            "proveedor_turnos": "",
+            "eligibility_accepts_first_consultation": "1",
+            "eligibility_coverage_types": ["prepaga"],
+            "eligibility_prepaga_entities": "",
+        },
+    )
+    assert missing_prepaga.status_code == 200
+    assert "Indica al menos una prepaga admitida" in missing_prepaga.text
 
     response = client.post(
         "/t/consultorios/new",
@@ -58,8 +74,9 @@ def test_operator_configures_eligibility_and_multiple_generation_ranges(
             "gcal_available_tag": "[TURNO DISPONIBLE]",
             "gcal_reserved_tag_template": "[TURNO {patient_full_name}]",
             "eligibility_accepts_first_consultation": "1",
-            "eligibility_coverage_types": ["obra_social"],
+            "eligibility_coverage_types": ["obra_social", "prepaga"],
             "eligibility_coverage_entities": "Caja Notarial",
+            "eligibility_prepaga_entities": "OSDE\nSwiss Medical",
             "gcal_schedule_mode": "ranges",
             "gcal_schedule_day": ["monday", "wednesday"],
             "gcal_schedule_start": ["09:00", "14:00"],
@@ -78,8 +95,11 @@ def test_operator_configures_eligibility_and_multiple_generation_ranges(
     assert edit.status_code == 200
     assert 'name="eligibility_accepts_first_consultation" value="1" checked' in edit.text
     assert 'name="eligibility_coverage_types" value="obra_social" checked' in edit.text
+    assert 'name="eligibility_coverage_types" value="prepaga" checked' in edit.text
     assert 'name="eligibility_coverage_entities"' in edit.text
     assert ">Caja Notarial</textarea>" in edit.text
+    assert 'name="eligibility_prepaga_entities"' in edit.text
+    assert "OSDE\nSwiss Medical</textarea>" in edit.text
     assert '<option value="monday" selected>' in edit.text
     assert 'name="gcal_schedule_start" value="09:00"' in edit.text
     assert 'name="gcal_schedule_end" value="12:00"' in edit.text
@@ -268,7 +288,10 @@ def test_simulator_offers_only_consultorios_eligible_for_first_consultation_and_
     send("1")
     send("2")
     send("1")
-    offer = send("1")
+    coverage_prompt = send("1")
+    assert "1) Caja Notarial" in coverage_prompt
+    assert "2) OSDE" in coverage_prompt
+    offer = send("2")
 
     assert "turnos virtuales disponibles" in offer
     assert "10:00" in offer
@@ -437,7 +460,10 @@ def test_simulator_keeps_reimbursement_patient_particular_and_filters_modality_t
     send("1")
     send("2")
     send("1")
-    offer = send("2")
+    coverage_prompt = send("2")
+    assert "1) Particular" in coverage_prompt
+    assert "2) Caja Notarial" in coverage_prompt
+    offer = send("1")
 
     assert "turnos virtuales disponibles" in offer
     assert "15:00" in offer
@@ -555,7 +581,9 @@ def test_simulator_prefers_specific_coverage_consultorio_for_caja_notarial(
     send("1")
     send("2")
     send("1")
-    offer = send("2")
+    coverage_prompt = send("2")
+    assert "1) Caja Notarial (obra social)" in coverage_prompt
+    offer = send("1")
 
     assert caja_id != generic_id
     assert "10:00" in offer

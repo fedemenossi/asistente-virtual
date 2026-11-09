@@ -138,8 +138,9 @@ def test_simulator_holds_first_private_consultation_until_explicit_approval(
             db_session,
             tenant_id,
             phone,
-            obra_social="Particular",
-            health_coverage_type="particular",
+            obra_social="Medicus",
+            health_coverage_type="prepaga",
+            insurance_number="MED-RETENCION",
         )
     )
     competing_phone = "5491100002003"

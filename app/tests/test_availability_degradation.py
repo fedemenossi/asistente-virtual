@@ -214,7 +214,9 @@ def test_simulator_degrades_availability_and_handoffs_total_failure(
     send("1")
     send("1")
     send("1")
-    offer = send("2")
+    coverage_prompt = send("2")
+    assert "1) OSDE (prepaga)" in coverage_prompt
+    offer = send("1")
 
     assert "drapp-private-detail" not in offer
     assert "google-private-detail" not in offer

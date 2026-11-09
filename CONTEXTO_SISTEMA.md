@@ -275,10 +275,11 @@ Multi-tenant:
 Archivo central: `app/services/conversation_service.py`.
 
 Estados:
-- Registro actual: `ask_first_name`, `ask_last_name`, `ask_dni`, `ask_insurance`, `ask_insurance_number`, `ask_email`.
+- Registro actual: identificacion por DNI, `ask_first_name`, `ask_last_name`, `ask_registration_email`, `ask_coverage_type`, `ask_coverage_entity`, `ask_coverage_number`. La cobertura informada queda en el perfil del paciente.
 - Menu actual: `main_reason_menu` (se conserva `main_menu` como compatibilidad legacy).
 - Turno presencial: `ask_presential_for_whom`, datos de otra persona si aplica, `ask_presential_first_time`.
 - Turno virtual: `ask_virtual_for_whom`, datos de otra persona si aplica, `ask_virtual_first_time`.
+- Cobertura del turno: `ask_appointment_coverage`; ofrece Particular y cada entidad habilitada por los consultorios compatibles, sin reemplazar la cobertura guardada en el perfil.
 - Receta/orden: `ask_recipe_kind`, `ask_recipe_detail`.
 - Otras consultas: `ask_other_query`.
 - Estados legacy conservados: `ask_appointment_for`, `ask_other_dni`, `ask_other_confirm`, `ask_presential_slot`, `ask_presential_dni`, `first_time_check`, `other_detail`, `human_reason`.
@@ -299,8 +300,9 @@ Reglas:
   - queda en bandeja operativa para gestion manual/semi-manual
 - Turnos:
   - la infraestructura local y la sincronizacion externa existen en `AppointmentService` / `CalendarService`
-  - el bot actual NO agenda automaticamente la mayoria de pedidos por WhatsApp
-  - las solicitudes de turno presencial/virtual quedan como conversaciones pendientes clasificadas
+  - con herramientas de agenda habilitadas, el bot consulta y reserva automaticamente las agendas compatibles
+  - la cobertura elegida para el turno, no la cobertura del perfil, determina elegibilidad y pago previo
+  - si no hay automatizacion o disponibilidad, la solicitud queda pendiente para gestion humana
 
 Conversaciones pendientes/finalizadas:
 - Bandeja en `/t/conversation-states`.
@@ -669,6 +671,12 @@ Configuracion por consultorio virtual (`consultorio.configuracion_externa.google
 - `schedule_ranges`: lista unica de franjas semanales con dia, inicio, fin, duracion del turno e intervalo; admite varias franjas por dia.
 - `schedule`: representacion legacy derivada para compatibilidad con configuraciones anteriores.
 - El formulario acepta `proveedor_turnos=google_calendar` y lo normaliza a `google`.
+
+Reglas de elegibilidad por consultorio (`consultorio.configuracion_externa.eligibility`):
+- `coverage_types`: particular, obra social y/o prepaga.
+- `coverage_entities`: obras sociales admitidas; vacio admite cualquiera cuando obra social esta habilitada.
+- `prepaga_entities`: lista explicita de prepagas que el bot puede ofrecer para ese consultorio.
+- Las configuraciones antiguas que admitian exclusivamente prepaga y no tienen `prepaga_entities` migran en lectura desde `coverage_entities` para mantener compatibilidad.
 
 Flujos:
 - Listar slots disponibles: eventos con `summary=[TURNO DISPONIBLE]` o `extendedProperties.private.slot_status=available`.

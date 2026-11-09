@@ -93,6 +93,7 @@ async def get_available_appointment_slots(
                         "accepts_first_consultation": config["accepts_first_consultation"],
                         "coverage_types": config["coverage_types"],
                         "coverage_entities": config["coverage_entities"],
+                        "prepaga_entities": config["prepaga_entities"],
                         "schedule_source": "consultorio",
                     },
                 }
@@ -102,7 +103,7 @@ async def get_available_appointment_slots(
         specific_matches = [
             consultorio
             for consultorio in eligible
-            if has_specific_coverage_match(consultorio, coverage_entity)
+            if has_specific_coverage_match(consultorio, coverage_type, coverage_entity)
         ]
         if specific_matches:
             eligible = specific_matches
@@ -312,6 +313,10 @@ async def _resolve_patient_coverage(
     if preserved_coverage:
         entity = str(preserved_coverage.get("entity") or "").strip()
         return _infer_coverage_type(preserved_coverage.get("type"), entity), entity
+    appointment = patient_context.get("appointment") or {}
+    if appointment.get("coverage_selected"):
+        entity = str(patient_context.get("insurance") or "").strip()
+        return _infer_coverage_type(patient_context.get("coverage_type"), entity), entity
     if patient_context.get("for_whom") == "other":
         entity = str(patient_context.get("other_insurance") or "").strip()
         return _infer_coverage_type(None, entity), entity

@@ -299,7 +299,9 @@ def test_simulator_combines_modalities_in_chronological_rounds_and_reserves_serv
     send("1")
     send("Quiero un turno presencial o virtual, cualquiera de las dos modalidades")
     send("1")
-    first_round = send("2")
+    coverage_prompt = send("2")
+    assert "1) OSDE (prepaga)" in coverage_prompt
+    first_round = send("1")
 
     assert len(re.findall(r"^\d+\)", first_round, flags=re.MULTILINE)) == 5
     assert "(Presencial)" in first_round

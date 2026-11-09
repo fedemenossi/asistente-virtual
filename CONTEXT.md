@@ -53,15 +53,19 @@ Paso obligatorio de una Conversación que determina a qué Paciente corresponde 
 _Evitar_: identificación por teléfono solamente, solicitante asumido, paciente implícito
 
 **Perfil mínimo del Paciente**:
-Conjunto de datos obligatorios para dar de alta a un Paciente: nombre, apellido, DNI, email y Cobertura de salud. La entidad de cobertura y el número de afiliado son obligatorios cuando la atención se gestiona por obra social o prepaga y pueden solicitarse a un particular como Datos de cobertura para facturación. Si el Paciente ya existe y se identifica por DNI, sus datos registrados se reutilizan sin volver a solicitarlos.
+Conjunto de datos obligatorios para dar de alta a un Paciente: nombre, apellido, DNI, email y Cobertura declarada del Paciente. La entidad y el número de afiliado son obligatorios cuando declara obra social o prepaga. Si el Paciente ya existe y se identifica por DNI, sus datos registrados se reutilizan sin volver a solicitarlos.
 _Evitar_: datos del solicitante, contexto transitorio de la conversación
 
-**Cobertura de salud**:
-Condición bajo la cual se gestiona la atención del Paciente, clasificada como obra social, prepaga o particular e identificada por la entidad específica cuando corresponde. Participa en las Reglas de elegibilidad y el Requisito de pago; un particular no deja de serlo por informar una prepaga para facturación o reintegro.
-_Evitar_: medio de pago, condición fiscal, número de afiliado
+**Cobertura declarada del Paciente**:
+Obra social, prepaga o condición particular que el Paciente informa durante el Alta y que queda guardada en su perfil junto con el número de afiliado. Sirve como dato clínico y administrativo para recetas, facturación o reintegros, pero no selecciona automáticamente la Cobertura del Turno.
+_Evitar_: cobertura del turno, regla de elegibilidad, medio de pago
+
+**Cobertura del Turno**:
+Condición elegida expresamente para una Solicitud de turno. El Asistente ofrece Particular y las obras sociales o prepagas habilitadas en los Consultorios compatibles; las prepagas se muestran por su nombre parametrizado. Esta elección participa en las Reglas de elegibilidad y el Requisito de pago sin modificar la Cobertura declarada del Paciente.
+_Evitar_: cobertura del perfil, dato de facturación, selección automática por prepaga declarada
 
 **Datos de cobertura para facturación**:
-Prepaga u obra social y número de afiliado que se solicitan para emitir una factura o facilitar un reintegro, incluso cuando la Cobertura de salud del Turno sea particular. Ante una atención particular, el Asistente pregunta si el Paciente necesita factura para reintegro y solo solicita estos datos cuando la respuesta es afirmativa. Son datos administrativos y no modifican las Reglas de elegibilidad ni el Requisito de pago de la Solicitud de turno.
+Prepaga u obra social y número de afiliado que se solicitan para emitir una factura o facilitar un reintegro, incluso cuando la Cobertura del Turno sea particular. Ante una atención particular, el Asistente pregunta si el Paciente necesita factura para reintegro y solo solicita estos datos cuando la respuesta es afirmativa. Son datos administrativos y no modifican las Reglas de elegibilidad ni el Requisito de pago de la Solicitud de turno.
 _Evitar_: cobertura de atención, cambio de consultorio, exención del pago previo
 
 **Alta de Paciente**:
@@ -69,11 +73,11 @@ Creación de un Paciente nuevo dentro de un Tenant después de comprobar que su 
 _Evitar_: vinculación de contacto, actualización de paciente, registro duplicado
 
 **Primera consulta**:
-Condición de una Solicitud de turno que indica que el Paciente todavía no fue atendido por el profesional del Tenant. No forma parte de la identidad del Paciente, participa en las Reglas de elegibilidad y solo requiere pago previo cuando la Cobertura de salud es particular.
+Condición de una Solicitud de turno que indica que el Paciente todavía no fue atendido por el profesional del Tenant. No forma parte de la identidad del Paciente, participa en las Reglas de elegibilidad y solo requiere pago previo cuando la Cobertura del Turno es particular.
 _Evitar_: paciente nuevo, dato de identidad permanente
 
 **Requisito de pago**:
-Condición de una Primera consulta con Cobertura de salud particular que exige recibir un Pago aprobado antes de confirmar el Turno. No se aplica a obra social, prepaga ni a Pacientes ya atendidos por el profesional.
+Condición de una Primera consulta con Cobertura del Turno particular que exige recibir un Pago aprobado antes de confirmar el Turno. No se aplica a obra social, prepaga ni a Pacientes ya atendidos por el profesional, con independencia de la Cobertura declarada del Paciente.
 _Evitar_: precio de consulta, pago opcional, requisito universal
 
 **Tarifa de primera consulta**:
@@ -81,7 +85,7 @@ Importe y moneda configurados por el Operador en Pagos para cobrar las Solicitud
 _Evitar_: importe facturado, tarifa del consultorio, precio de facturación
 
 **Regla de elegibilidad**:
-Restricción parametrizable que determina si una Solicitud de turno puede utilizar un Consultorio, considerando al menos la Modalidad de atención, la condición de Primera consulta y la Cobertura de salud. Solo las agendas elegibles pueden aportar opciones a la Oferta de disponibilidad.
+Restricción parametrizable que determina si una Solicitud de turno puede utilizar un Consultorio, considerando al menos la Modalidad de atención, la condición de Primera consulta y la Cobertura del Turno. Cada Consultorio declara las prepagas que admite por nombre; solo las agendas elegibles pueden aportar opciones a la Oferta de disponibilidad.
 _Evitar_: preferencia, sugerencia, filtro visual, regla codificada para un profesional
 
 **Contacto de WhatsApp**:
@@ -161,7 +165,7 @@ Cambio de un Turno confirmado a una nueva Disponibilidad que cumple el mismo Con
 _Evitar_: cancelación seguida de alta sin relación, edición de fecha sin reserva, nuevo cobro
 
 **Contexto de elegibilidad**:
-Instantánea de las condiciones con las que un Turno obtuvo acceso a una agenda, incluidas la Cobertura de salud, la condición de Primera consulta y la Modalidad de atención aplicable. Se conserva para que una Reprogramación busque horarios bajo las mismas reglas.
+Instantánea de las condiciones con las que un Turno obtuvo acceso a una agenda, incluidas la Cobertura del Turno, la condición de Primera consulta y la Modalidad de atención aplicable. Se conserva para que una Reprogramación busque horarios bajo las mismas reglas.
 _Evitar_: perfil actual del paciente, configuración actual del consultorio, contexto técnico de conversación
 
 ## Conversaciones y gestión

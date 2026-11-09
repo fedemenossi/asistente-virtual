@@ -115,6 +115,141 @@ def test_text_outside_menu_does_not_break_state(db_session):
     asyncio.run(run())
 
 
+def test_appointment_coverage_is_selected_separately_from_patient_profile(
+    db_session,
+    monkeypatch,
+):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Appointment Coverage",
+            "whatsapp:+739",
+            ai_settings=_tools_ai_settings(),
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491173900001"
+    patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            phone,
+            health_coverage_type="prepaga",
+            obra_social="Medicus",
+            insurance_number="MED-123",
+        )
+    )
+    asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual particular",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {"calendar_id": "particular-calendar"},
+                "eligibility": {
+                    "accepts_first_consultation": True,
+                    "coverage_types": ["particular"],
+                    "coverage_entities": [],
+                    "prepaga_entities": [],
+                },
+            },
+        )
+    )
+    for name, calendar_id in (("OSDE", "osde-calendar"), ("Swiss Medical", "swiss-calendar")):
+        asyncio.run(
+            create_consultorio(
+                db_session,
+                tenant_id,
+                f"Virtual {name}",
+                tipo=TipoConsultorio.VIRTUAL,
+                proveedor_turnos="google",
+                configuracion_externa={
+                    "google_calendar": {"calendar_id": calendar_id},
+                    "eligibility": {
+                        "accepts_first_consultation": True,
+                        "coverage_types": ["prepaga"],
+                        "coverage_entities": [],
+                        "prepaga_entities": [name],
+                    },
+                },
+            )
+        )
+
+    captured = {}
+
+    async def available_slots(
+        session,
+        *,
+        tenant_id,
+        consultorio_type,
+        patient_context,
+        preferences,
+        limit=5,
+    ):
+        captured["patient_context"] = patient_context
+        return {
+            "ok": True,
+            "source": "calendar",
+            "consultorio_type": consultorio_type,
+            "slots": [
+                {
+                    "slot_id": "selected-coverage-slot",
+                    "label": "Martes 10/11 a las 10:00",
+                    "start_at": "2026-11-10T10:00:00-03:00",
+                    "end_at": "2026-11-10T10:30:00-03:00",
+                    "timezone": "America/Argentina/Buenos_Aires",
+                    "provider": "google",
+                    "consultorio_type": "virtual",
+                    "metadata": {},
+                }
+            ],
+            "availability_context": {
+                "coverage": {
+                    "type": patient_context["coverage_type"],
+                    "entity": patient_context["insurance"],
+                },
+                "first_consultation": True,
+                "modality": "virtual",
+            },
+            "message": None,
+            "error": None,
+        }
+
+    monkeypatch.setattr(
+        "app.services.conversation_service.get_available_appointment_slots",
+        available_slots,
+    )
+
+    async def run():
+        async with db_session() as session:
+            service = _service(session)
+            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "2")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            coverage_prompt = await service.process_message(
+                tenant, f"whatsapp:+{phone}", "1"
+            )
+
+            assert "1) Particular" in coverage_prompt
+            assert "2) OSDE" in coverage_prompt
+            assert "3) Swiss Medical" in coverage_prompt
+            assert "Medicus" not in coverage_prompt
+
+            offer = await service.process_message(tenant, f"whatsapp:+{phone}", "2")
+            assert "turnos virtuales disponibles" in offer
+            assert captured["patient_context"]["coverage_type"] == "prepaga"
+            assert captured["patient_context"]["insurance"] == "OSDE"
+
+            patient = await session.get(Paciente, patient_id)
+            assert patient.health_coverage_type == "prepaga"
+            assert patient.obra_social == "Medicus"
+            assert patient.insurance_number == "MED-123"
+
+    asyncio.run(run())
+
+
 def test_invalid_option_main_menu_keeps_state(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Invalid Main", "whatsapp:+710"))
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
@@ -1032,7 +1167,7 @@ def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(clie
     assert turnos[0].external_calendar_id == "calendar-1"
     assert turnos[0].referencia_externa == "https://meet.google.com/abc-defg-hij"
     assert turnos[0].eligibility_context == {
-        "coverage": {"type": "obra_social", "entity": "OSDE"},
+            "coverage": {"type": "particular", "entity": "Particular"},
         "first_consultation": False,
         "modality": "virtual",
     }

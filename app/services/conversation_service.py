@@ -12,7 +12,7 @@ from app.models.paciente import Paciente
 from app.models.patient_contact_link import PatientContactLinkStatus
 from app.models.payment import PaymentReuseStatus
 from app.models.tenant import Tenant
-from app.models.consultorio import Consultorio
+from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.turno import AppointmentStatus, Turno
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.notification_repository import NotificationRepository
@@ -45,6 +45,7 @@ from app.services.availability_hold_service import (
     SlotAlreadyHeldError,
 )
 from app.services.payment_service import PaymentService
+from app.services.consultorio_eligibility_service import get_eligibility_config
 from app.services.tenant_ai_settings_service import get_effective_ai_settings
 from sqlalchemy import select
 
@@ -82,6 +83,8 @@ class ConversationState(str, Enum):
     ASK_VIRTUAL_OTHER_INSURANCE = "ask_virtual_other_insurance"
     ASK_VIRTUAL_OTHER_INSURANCE_NUMBER = "ask_virtual_other_insurance_number"
     ASK_VIRTUAL_FIRST_TIME = "ask_virtual_first_time"
+
+    ASK_APPOINTMENT_COVERAGE = "ask_appointment_coverage"
 
     ASK_RECIPE_KIND = "ask_recipe_kind"
     ASK_RECIPE_DETAIL = "ask_recipe_detail"
@@ -445,6 +448,41 @@ class ConversationService:
                 tenant=tenant,
                 phone=normalized_phone,
                 context=context,
+            )
+
+        if current_state == ConversationState.ASK_APPOINTMENT_COVERAGE.value:
+            appointment = context.setdefault("appointment", {})
+            options = list(appointment.get("coverage_options") or [])
+            try:
+                selected_option = int(normalize_message(text))
+            except ValueError:
+                selected_option = 0
+            selected = next(
+                (
+                    option
+                    for option in options
+                    if int(option.get("option") or 0) == selected_option
+                ),
+                None,
+            )
+            if selected is None:
+                return self._invalid_option_message(
+                    self._appointment_coverage_options_message(options)
+                )
+            context["coverage_type"] = selected["type"]
+            context["insurance"] = selected["entity"]
+            appointment["coverage_selected"] = True
+            appointment["selected_coverage"] = {
+                "type": selected["type"],
+                "entity": selected["entity"],
+            }
+            return await self._offer_appointment_slots_if_available(
+                tenant=tenant,
+                phone=normalized_phone,
+                context=context,
+                original_text=text,
+                has_media=has_media,
+                media_items=media_items,
             )
 
         if current_state == ConversationState.ASK_DNI.value:
@@ -1121,7 +1159,7 @@ class ConversationService:
             context["first_time"] = first_time
             context.setdefault("appointment", {})["is_first_time"] = first_time
             if self._ai_tools_enabled(ai_settings):
-                return await self._offer_appointment_slots_if_available(
+                return await self._ask_appointment_coverage(
                     tenant=tenant,
                     phone=normalized_phone,
                     context=context,
@@ -1236,7 +1274,7 @@ class ConversationService:
             context["first_time"] = first_time
             context.setdefault("appointment", {})["is_first_time"] = first_time
             if self._ai_tools_enabled(ai_settings):
-                return await self._offer_appointment_slots_if_available(
+                return await self._ask_appointment_coverage(
                     tenant=tenant,
                     phone=normalized_phone,
                     context=context,
@@ -1449,6 +1487,15 @@ class ConversationService:
             return f"{prefix} {self._first_time_options()}"
 
         if self._ai_tools_enabled(get_effective_ai_settings(tenant)):
+            if not (context.get("eligibility_context") or {}).get("coverage"):
+                return await self._ask_appointment_coverage(
+                    tenant=tenant,
+                    phone=phone,
+                    context=context,
+                    original_text=original_text,
+                    has_media=has_media,
+                    media_items=media_items,
+                )
             return await self._offer_appointment_slots_if_available(
                 tenant=tenant,
                 phone=phone,
@@ -1704,6 +1751,146 @@ class ConversationService:
             lines.extend(f"{slot['option']}) {slot['label']}" for slot in offered)
         lines.append("Responde con el numero de opcion que preferis.")
         lines.append("Si ninguno te sirve, escribi 'mas opciones'.")
+        return "\n".join(lines)
+
+    async def _ask_appointment_coverage(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        context: dict,
+        original_text: str,
+        has_media: bool,
+        media_items: list[dict],
+    ) -> str:
+        appointment = context.setdefault("appointment", {})
+        appointment_type = appointment.get("type") or "presential"
+        filters = [
+            Consultorio.tenant_id == tenant.id,
+            Consultorio.deleted_at.is_(None),
+        ]
+        if appointment_type != "both":
+            filters.append(
+                Consultorio.tipo
+                == (
+                    TipoConsultorio.VIRTUAL
+                    if appointment_type == "virtual"
+                    else TipoConsultorio.PRESENCIAL
+                )
+            )
+        result = await self._session.execute(
+            select(Consultorio).where(*filters).order_by(Consultorio.id.asc())
+        )
+        first_time = bool(
+            context.get("first_time")
+            if context.get("first_time") is not None
+            else appointment.get("is_first_time")
+        )
+        allows_particular = False
+        configured_entities: dict[str, str] = {}
+        for consultorio in result.scalars().all():
+            provider = str(consultorio.proveedor_turnos or "").strip().lower()
+            if provider not in {"google", "google_calendar", "drapp", "consultorio_movil"}:
+                continue
+            config = get_eligibility_config(consultorio)
+            if first_time and not config["accepts_first_consultation"]:
+                continue
+            if "particular" in config["coverage_types"]:
+                allows_particular = True
+            if "obra_social" in config["coverage_types"]:
+                for entity in config["coverage_entities"]:
+                    normalized = normalize_message(entity)
+                    if normalized:
+                        configured_entities.setdefault(
+                            f"obra_social:{normalized}", str(entity).strip()
+                        )
+            if "prepaga" in config["coverage_types"]:
+                for entity in config["prepaga_entities"]:
+                    normalized = normalize_message(entity)
+                    if normalized:
+                        configured_entities.setdefault(
+                            f"prepaga:{normalized}", str(entity).strip()
+                        )
+
+        options: list[dict] = []
+        if allows_particular:
+            options.append(
+                {
+                    "option": len(options) + 1,
+                    "type": "particular",
+                    "entity": "Particular",
+                    "label": "Particular",
+                }
+            )
+        for key, entity in sorted(
+            configured_entities.items(), key=lambda item: normalize_message(item[1])
+        ):
+            coverage_type = key.split(":", 1)[0]
+            options.append(
+                {
+                    "option": len(options) + 1,
+                    "type": coverage_type,
+                    "entity": entity,
+                    "label": (
+                        f"{entity} (prepaga)"
+                        if coverage_type == "prepaga"
+                        else f"{entity} (obra social)"
+                    ),
+                }
+            )
+
+        if not options:
+            options.append(
+                {
+                    "option": 1,
+                    "type": "particular",
+                    "entity": "Particular",
+                    "label": "Particular",
+                }
+            )
+
+        appointment["coverage_options"] = options
+        appointment["coverage_selected"] = False
+        appointment.pop("selected_coverage", None)
+        if len(options) == 1 and options[0]["type"] == "particular":
+            selected = options[0]
+            context["coverage_type"] = selected["type"]
+            context["insurance"] = selected["entity"]
+            appointment["coverage_selected"] = True
+            appointment["selected_coverage"] = {
+                "type": selected["type"],
+                "entity": selected["entity"],
+            }
+            return await self._offer_appointment_slots_if_available(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+                media_items=media_items,
+            )
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.ASK_APPOINTMENT_COVERAGE.value,
+            context,
+            conversation_category=self._appointment_category_from_context(context),
+        )
+        return self._appointment_coverage_options_message(options)
+
+    @staticmethod
+    def _appointment_coverage_options_message(options: list[dict]) -> str:
+        lines = ["Como queres gestionar este turno?"]
+        lines.extend(
+            f"{option['option']}) {option['label']}" for option in options
+        )
+        if any(option.get("type") == "prepaga" for option in options):
+            lines.append(
+                "Solo se aceptan para este turno las prepagas indicadas en la lista."
+            )
+        lines.append(
+            "La cobertura guardada en tu perfil se conserva para recetas, facturacion o reintegros."
+        )
         return "\n".join(lines)
 
     async def _reserve_selected_appointment(
@@ -2070,7 +2257,16 @@ class ConversationService:
 
     @staticmethod
     def _appointment_requires_payment(context: dict, paciente: Paciente | None) -> bool:
-        first_time = bool(context.get("first_time"))
+        appointment = context.get("appointment") or {}
+        first_time = bool(
+            context.get("first_time")
+            if context.get("first_time") is not None
+            else appointment.get("is_first_time")
+        )
+        selected_coverage = appointment.get("selected_coverage") or {}
+        selected_type = str(selected_coverage.get("type") or "").strip().lower()
+        if appointment.get("coverage_selected") and selected_type:
+            return first_time and selected_type == "particular"
         coverage_type = str(
             getattr(paciente, "health_coverage_type", "") or ""
         ).strip().lower()
@@ -2544,7 +2740,13 @@ class ConversationService:
 
     @staticmethod
     def _coverage_type_options() -> str:
-        return "Cual es tu cobertura de salud?\n1) Obra social\n2) Prepaga\n3) Particular"
+        return (
+            "Para completar tu perfil, cual es tu cobertura de salud? "
+            "Este dato puede usarse para recetas, facturacion o reintegros.\n"
+            "1) Obra social\n"
+            "2) Prepaga\n"
+            "3) Particular"
+        )
 
     @staticmethod
     def _detect_coverage_type(value: str) -> str | None:

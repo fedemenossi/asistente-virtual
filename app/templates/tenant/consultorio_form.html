@@ -235,9 +235,15 @@
         {% if errors.eligibility_coverage_types %}<p class="mt-1 text-xs text-rose-600">{{ errors.eligibility_coverage_types }}</p>{% endif %}
       </div>
       <div>
-        <label class="block text-sm font-medium text-slate-700">Entidades especificas</label>
-        <textarea class="input mt-1 min-h-24" name="eligibility_coverage_entities" placeholder="Una entidad por linea">{{ eligibility_config.coverage_entities | join('\n') }}</textarea>
-        <p class="mt-1 text-xs text-slate-500">Dejalo vacio para admitir cualquier entidad de los tipos seleccionados.</p>
+        <label class="block text-sm font-medium text-slate-700">Obras sociales especificas</label>
+        <textarea class="input mt-1 min-h-24" name="eligibility_coverage_entities" placeholder="Una obra social por linea">{{ eligibility_config.coverage_entities | join('\n') }}</textarea>
+        <p class="mt-1 text-xs text-slate-500">Dejalo vacio para admitir cualquier obra social cuando ese tipo de cobertura este habilitado.</p>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700">Prepagas admitidas para turnos</label>
+        <textarea class="input mt-1 min-h-24 {% if errors.eligibility_prepaga_entities %}border-rose-400 focus:ring-rose-300{% endif %}" name="eligibility_prepaga_entities" placeholder="Una prepaga por linea">{{ eligibility_config.prepaga_entities | join('\n') }}</textarea>
+        <p class="mt-1 text-xs text-slate-500">Estas son las unicas prepagas que el bot ofrecera para este consultorio.</p>
+        {% if errors.eligibility_prepaga_entities %}<p class="mt-1 text-xs text-rose-600">{{ errors.eligibility_prepaga_entities }}</p>{% endif %}
       </div>
     </section>
     <div class="flex items-center gap-3">
