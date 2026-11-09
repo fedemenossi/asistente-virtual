@@ -55,7 +55,9 @@ def test_calendar_test_endpoint_returns_slots(client, db_session, monkeypatch):
     assert data["items"][0]["slot_id"] == "slot-1"
 
 
-def test_calendar_settings_hides_fallback_id_and_preserves_existing_value(client, db_session):
+def test_calendar_settings_manages_global_catalog_and_preserves_existing_fallback(
+    client, db_session, monkeypatch
+):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Cal Settings", "whatsapp:+778"))
     password_hash = hash_password("secret-123")
     asyncio.run(
@@ -81,7 +83,19 @@ def test_calendar_settings_hides_fallback_id_and_preserves_existing_value(client
 
     assert "Google Calendar ID fallback opcional" not in page.text
     assert 'name="google_calendar_id"' not in page.text
-    assert "El calendario operativo se configura en cada consultorio" in page.text
+    assert 'name="google_calendar_ids"' in page.text
+    assert "Calendarios disponibles" in page.text
+
+    from app.services.calendar_service import CalendarService
+
+    monkeypatch.setattr(
+        CalendarService,
+        "register_google_calendars",
+        lambda self, calendar_settings, calendar_ids: [
+            {"id": calendar_id, "summary": f"Agenda {index}", "access_role": "writer"}
+            for index, calendar_id in enumerate(calendar_ids, start=1)
+        ],
+    )
 
     response = client.post(
         "/t/settings/calendar",
@@ -89,6 +103,8 @@ def test_calendar_settings_hides_fallback_id_and_preserves_existing_value(client
             "csrf_token": csrf,
             "default_timezone": "America/Argentina/Buenos_Aires",
             "calendar_tags": "[TURNO DISPONIBLE]",
+            "google_credentials_json": '{"client_email":"svc@example.com"}',
+            "google_calendar_ids": "agenda-uno@example.com\nagenda-dos@example.com",
         },
         follow_redirects=False,
     )
@@ -103,3 +119,11 @@ def test_calendar_settings_hides_fallback_id_and_preserves_existing_value(client
 
     settings = asyncio.run(_get_calendar_settings())
     assert settings["google_calendar_id"] == "legacy-calendar-123"
+    assert settings["google_calendar_ids"] == [
+        "agenda-uno@example.com",
+        "agenda-dos@example.com",
+    ]
+    assert settings["google_calendars"] == [
+        {"id": "agenda-uno@example.com", "summary": "Agenda 1", "access_role": "writer"},
+        {"id": "agenda-dos@example.com", "summary": "Agenda 2", "access_role": "writer"},
+    ]

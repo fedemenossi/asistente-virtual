@@ -90,16 +90,50 @@ class CalendarService:
 
     def list_google_calendars(self, tenant: Tenant, candidate_calendar_id: str | None = None) -> list[dict[str, str]]:
         settings = tenant.calendar_settings or {}
+        registered_ids = _normalize_calendar_ids(settings.get("google_calendar_ids"))
+        legacy_calendar_id = str(settings.get("google_calendar_id") or "").strip()
+        if legacy_calendar_id and legacy_calendar_id not in registered_ids:
+            registered_ids.append(legacy_calendar_id)
+        if candidate_calendar_id:
+            registered_ids.append(candidate_calendar_id)
+        return self._list_google_calendars(settings, registered_ids)
+
+    def register_google_calendars(
+        self,
+        calendar_settings: dict,
+        calendar_ids: list[str],
+    ) -> list[dict[str, str]]:
+        registered_ids = _normalize_calendar_ids(calendar_ids)
+        calendars = self._list_google_calendars(calendar_settings, registered_ids)
+        found_ids = {calendar["id"] for calendar in calendars}
+        missing_ids = [calendar_id for calendar_id in registered_ids if calendar_id not in found_ids]
+        if missing_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "No se pudo acceder a estos calendarios: "
+                    f"{', '.join(missing_ids)}. Verifica los IDs y compartilos con la service account "
+                    "con permisos para modificar eventos."
+                ),
+            )
+        return calendars
+
+    def _list_google_calendars(
+        self,
+        settings: dict,
+        candidate_calendar_ids: list[str],
+    ) -> list[dict[str, str]]:
         credentials_json, delegated_user = resolve_google_credentials(settings)
         if not credentials_json:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Credenciales de Google no configuradas",
             )
-        # Para el combo de "Calendarios detectados por Google" no usamos el
-        # fallback legacy persistido en calendar_settings.google_calendar_id.
-        # La fuente debe ser la lista real accesible para la identidad Google.
-        return GoogleCalendarProvider("primary", credentials_json, delegated_user).list_calendars(candidate_calendar_id)
+        provider = GoogleCalendarProvider("primary", credentials_json, delegated_user)
+        calendars = provider.list_calendars()
+        for calendar_id in _normalize_calendar_ids(candidate_calendar_ids):
+            calendars.extend(provider.list_calendars(calendar_id))
+        return _deduplicate_calendars(calendars)
 
     def get_google_service_account_email(self, tenant: Tenant) -> str | None:
         return get_google_service_account_email(tenant.calendar_settings or {})
@@ -195,3 +229,34 @@ def _mask_calendar_id(calendar_id: str | None) -> str:
     if len(value) <= 12:
         return value
     return f"{value[:6]}...{value[-6:]}"
+
+
+def _normalize_calendar_ids(values) -> list[str]:
+    if isinstance(values, str):
+        values = values.splitlines()
+    if not isinstance(values, (list, tuple, set)):
+        return []
+    result: list[str] = []
+    for value in values:
+        calendar_id = str(value or "").strip()
+        if calendar_id and calendar_id not in result:
+            result.append(calendar_id)
+    return result
+
+
+def _deduplicate_calendars(calendars: list[dict]) -> list[dict[str, str]]:
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for calendar in calendars:
+        calendar_id = str(calendar.get("id") or "").strip()
+        if not calendar_id or calendar_id in seen:
+            continue
+        seen.add(calendar_id)
+        result.append(
+            {
+                "id": calendar_id,
+                "summary": str(calendar.get("summary") or calendar_id),
+                "access_role": str(calendar.get("access_role") or ""),
+            }
+        )
+    return result

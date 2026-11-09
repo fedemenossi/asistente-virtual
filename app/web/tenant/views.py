@@ -547,8 +547,10 @@ def _consultorio_form_common_context(
 
 
 def _load_google_calendars_for_tenant(tenant: Tenant, candidate_calendar_id: str | None = None) -> tuple[list[dict], str | None]:
+    stored_calendars = _stored_google_calendars(tenant)
     try:
         calendars = CalendarService().list_google_calendars(tenant, candidate_calendar_id)
+        calendars = _merge_google_calendars(calendars, stored_calendars)
         if not calendars:
             email = CalendarService().get_google_service_account_email(tenant)
             suffix = f" ({email})" if email else ""
@@ -559,19 +561,45 @@ def _load_google_calendars_for_tenant(tenant: Tenant, candidate_calendar_id: str
                 )
             return [], (
                 "Google no devolvio calendarios en la lista de la service account. Para calendarios secundarios, "
-                "pega el Calendar ID en el campo del consultorio y volve a presionar Actualizar calendarios. "
+                "registralos una sola vez desde Configuracion > Calendario. "
                 f"Service account{suffix}."
             )
         return calendars, None
     except HTTPException as exc:
-        return [], str(exc.detail)
+        return (stored_calendars, None) if stored_calendars else ([], str(exc.detail))
     except Exception as exc:
+        if stored_calendars:
+            return stored_calendars, None
         email = CalendarService().get_google_service_account_email(tenant)
         suffix = f" Service account: {email}." if email else ""
         return [], (
             "No se pudieron listar calendarios. Verifica que Google Calendar API este habilitada y que el "
             f"calendario este compartido con permisos suficientes.{suffix} Detalle: {type(exc).__name__}."
         )
+
+
+def _stored_google_calendars(tenant: Tenant) -> list[dict]:
+    calendars = (tenant.calendar_settings or {}).get("google_calendars") or []
+    return _merge_google_calendars(calendars)
+
+
+def _merge_google_calendars(*groups: list[dict]) -> list[dict]:
+    result: list[dict] = []
+    seen: set[str] = set()
+    for calendars in groups:
+        for calendar in calendars or []:
+            calendar_id = str(calendar.get("id") or "").strip()
+            if not calendar_id or calendar_id in seen:
+                continue
+            seen.add(calendar_id)
+            result.append(
+                {
+                    "id": calendar_id,
+                    "summary": str(calendar.get("summary") or calendar_id),
+                    "access_role": str(calendar.get("access_role") or ""),
+                }
+            )
+    return result
 
 
 async def consultorios_new_get(
@@ -2651,6 +2679,11 @@ def _parse_payment_settings(tenant: Tenant) -> dict:
 
 def _parse_calendar_settings(tenant: Tenant) -> dict:
     settings = tenant.calendar_settings or {}
+    calendar_ids = settings.get("google_calendar_ids") or []
+    if isinstance(calendar_ids, str):
+        calendar_ids = calendar_ids.splitlines()
+    if not calendar_ids and settings.get("google_calendar_id"):
+        calendar_ids = [settings["google_calendar_id"]]
     return {
         "google_calendar_id": settings.get("google_calendar_id", ""),
         "calendar_tags": ",".join(settings.get("calendar_tags", []) or []),
@@ -2658,6 +2691,7 @@ def _parse_calendar_settings(tenant: Tenant) -> dict:
         "virtual_meet_enabled": bool(settings.get("virtual_meet_enabled", False)),
         "google_credentials_json": settings.get("google_credentials_json", ""),
         "google_delegated_user": settings.get("google_delegated_user", ""),
+        "google_calendar_ids": "\n".join(str(value) for value in calendar_ids if str(value).strip()),
     }
 
 
@@ -2760,7 +2794,11 @@ async def calendar_settings_get(
     return _template(
         request,
         "tenant/settings_calendar.html",
-        {"tenant": tenant, "calendar_settings": _parse_calendar_settings(tenant)},
+        {
+            "tenant": tenant,
+            "calendar_settings": _parse_calendar_settings(tenant),
+            "google_service_account_email": CalendarService().get_google_service_account_email(tenant),
+        },
     )
 
 
@@ -2771,16 +2809,18 @@ async def calendar_settings_post(
     virtual_meet_enabled: str | None = Form(None),
     google_credentials_json: str = Form(""),
     google_delegated_user: str = Form(""),
+    google_calendar_ids: str = Form(""),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("settings:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
     tags = [tag.strip() for tag in calendar_tags.split(",") if tag.strip()]
+    calendar_ids = list(dict.fromkeys(line.strip() for line in google_calendar_ids.splitlines() if line.strip()))
     async with session.begin_nested():
         tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
         previous_settings = tenant.calendar_settings or {}
-        tenant.calendar_settings = {
+        new_settings = {
             # Compatibilidad con tenants antiguos: el calendario operativo nuevo
             # se configura por consultorio, pero no borramos el fallback existente.
             "google_calendar_id": previous_settings.get("google_calendar_id", ""),
@@ -2789,7 +2829,27 @@ async def calendar_settings_post(
             "virtual_meet_enabled": bool(virtual_meet_enabled),
             "google_credentials_json": google_credentials_json.strip(),
             "google_delegated_user": google_delegated_user.strip(),
+            "google_calendar_ids": calendar_ids,
         }
+        if new_settings["google_credentials_json"] or calendar_ids:
+            try:
+                new_settings["google_calendars"] = CalendarService().register_google_calendars(
+                    new_settings,
+                    calendar_ids,
+                )
+            except HTTPException as exc:
+                add_flash(request, "error", str(exc.detail))
+                return RedirectResponse("/t/settings/calendar", status_code=303)
+            except Exception as exc:
+                add_flash(
+                    request,
+                    "error",
+                    f"No se pudieron validar los calendarios con Google ({type(exc).__name__}).",
+                )
+                return RedirectResponse("/t/settings/calendar", status_code=303)
+        else:
+            new_settings["google_calendars"] = []
+        tenant.calendar_settings = new_settings
         await audit_log(
             session,
             request,

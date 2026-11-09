@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime, timedelta, timezone
 
+import pytest
+from fastapi import HTTPException
+
 from app.core.security import hash_password
 from app.integrations.google_calendar_provider import GoogleCalendarProvider
 from app.models.consultorio import TipoConsultorio
@@ -100,10 +103,10 @@ def test_consultorio_form_renders_and_saves_google_calendar_config(client, db_se
     csrf = page.text.split('name="csrf_token" value="')[1].split('"')[0]
 
     assert "Google Calendar" in page.text
-    assert "gcal_calendar_id" in page.text
-    assert "ID de calendario de este consultorio" in page.text
-    assert "Cada consultorio puede usar un calendario distinto" in page.text
-    assert "Calendario cargado en settings" not in page.text
+    assert 'name="gcal_calendar_id"' in page.text
+    assert "ID de calendario de este consultorio" not in page.text
+    assert "Administra los calendarios disponibles desde Configuracion" in page.text
+    assert 'data-google-calendar-id-input' not in page.text
     assert "svc-calendar@example.com" in page.text
 
     response = client.post(
@@ -175,7 +178,48 @@ def test_new_consultorio_form_can_refresh_google_calendars_before_save(client, d
 
     assert page.status_code == 200
     assert 'data-google-calendars-url="/t/google-calendars"' in page.text
-    assert "Para calendarios secundarios, pega aca el ID y presiona Actualizar calendarios" in page.text
+    assert "Administra los calendarios disponibles desde Configuracion" in page.text
+
+
+def test_new_consultorio_uses_saved_global_calendar_catalog_when_google_list_is_empty(
+    client, db_session, monkeypatch
+):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Google Catalog",
+            "whatsapp:+9408",
+            calendar_settings={
+                "google_credentials_json": '{"client_email":"svc-calendar@example.com"}',
+                "google_calendar_ids": ["agenda-virtual@example.com"],
+                "google_calendars": [
+                    {
+                        "id": "agenda-virtual@example.com",
+                        "summary": "Agenda virtual",
+                        "access_role": "writer",
+                    }
+                ],
+            },
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-google-catalog@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    monkeypatch.setattr(CalendarService, "list_google_calendars", lambda self, tenant, candidate_calendar_id=None: [])
+    login(client, "tenant-google-catalog@test.com", "secret-123")
+
+    page = client.get("/t/consultorios/new")
+
+    assert page.status_code == 200
+    assert 'value="agenda-virtual@example.com"' in page.text
+    assert "Agenda virtual - agenda-virtual@example.com" in page.text
+    assert "Google no devolvio calendarios" not in page.text
 
 
 def test_calendar_slots_page_renders_progress_indicator(client, db_session):
@@ -522,7 +566,7 @@ def test_google_provider_lists_candidate_calendar_from_form(monkeypatch):
     ]
 
 
-def test_calendar_service_does_not_use_legacy_fallback_when_listing_google_calendars(db_session, monkeypatch):
+def test_calendar_service_registers_legacy_fallback_when_listing_google_calendars(db_session, monkeypatch):
     tenant_id = asyncio.run(
         create_tenant(
             db_session,
@@ -542,16 +586,46 @@ def test_calendar_service_does_not_use_legacy_fallback_when_listing_google_calen
             return await session.get(Tenant, tenant_id)
 
     tenant = asyncio.run(_load_tenant())
-    captured = {}
+    captured = []
 
     def _fake_list(self, candidate_calendar_id=None):
-        captured["calendar_id"] = self._calendar_id
-        captured["candidate_calendar_id"] = candidate_calendar_id
+        captured.append((self._calendar_id, candidate_calendar_id))
+        if candidate_calendar_id:
+            return [
+                {
+                    "id": candidate_calendar_id,
+                    "summary": "Agenda legacy",
+                    "access_role": "writer",
+                }
+            ]
         return []
 
     monkeypatch.setattr(GoogleCalendarProvider, "list_calendars", _fake_list)
 
     calendars = CalendarService().list_google_calendars(tenant)
 
-    assert calendars == []
-    assert captured == {"calendar_id": "primary", "candidate_calendar_id": None}
+    assert calendars == [
+        {
+            "id": "legacy-calendar@example.com",
+            "summary": "Agenda legacy",
+            "access_role": "writer",
+        }
+    ]
+    assert captured == [
+        ("primary", None),
+        ("primary", "legacy-calendar@example.com"),
+    ]
+
+
+def test_calendar_service_rejects_inaccessible_registered_calendar(monkeypatch):
+    service = CalendarService()
+    monkeypatch.setattr(service, "_list_google_calendars", lambda settings, calendar_ids: [])
+
+    with pytest.raises(HTTPException) as error:
+        service.register_google_calendars(
+            {"google_credentials_json": "{}"},
+            ["agenda-sin-permisos@example.com"],
+        )
+
+    assert error.value.status_code == 400
+    assert "agenda-sin-permisos@example.com" in str(error.value.detail)

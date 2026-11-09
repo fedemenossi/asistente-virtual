@@ -18,7 +18,7 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     <div class="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
       <h2 class="text-sm font-semibold text-slate-900">Datos generales de Google Calendar</h2>
-      <p class="text-xs text-slate-500 mt-1">Estos valores son generales del tenant. El calendario operativo se configura en cada consultorio.</p>
+      <p class="text-xs text-slate-500 mt-1">Estos valores son generales del tenant. En cada consultorio solo elegis uno de los calendarios disponibles.</p>
       <div class="mt-4 grid gap-4 md:grid-cols-2">
         <div>
           <label class="text-xs text-slate-500">Timezone por defecto</label>
@@ -32,6 +32,19 @@
       <div class="mt-4 flex items-center gap-3">
         <input class="h-4 w-4" type="checkbox" id="virtual_meet_enabled" name="virtual_meet_enabled" {% if calendar_settings.virtual_meet_enabled %}checked{% endif %} />
         <label class="text-sm text-slate-700" for="virtual_meet_enabled">Habilitar Google Meet</label>
+      </div>
+    </div>
+
+    <div class="rounded-xl border border-slate-200 bg-white p-4">
+      <h2 class="text-sm font-semibold text-slate-900">Calendarios disponibles</h2>
+      <p class="mt-1 text-xs text-slate-500">Registra una sola vez los calendarios que despues podran seleccionarse en los consultorios.</p>
+      <div class="mt-4">
+        <label class="text-xs text-slate-500">Calendar IDs (uno por linea)</label>
+        <textarea class="textarea" name="google_calendar_ids" rows="4" placeholder="xxxx@group.calendar.google.com">{{ calendar_settings.google_calendar_ids }}</textarea>
+        <p class="mt-1 text-xs text-slate-500">Cada calendario debe estar compartido con la service account con permisos para modificar eventos.</p>
+        {% if google_service_account_email %}
+          <p class="mt-1 text-xs text-slate-500">Service account: <span class="font-mono">{{ google_service_account_email }}</span></p>
+        {% endif %}
       </div>
     </div>
 

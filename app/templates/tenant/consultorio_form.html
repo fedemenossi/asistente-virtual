@@ -126,7 +126,7 @@
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700">Calendario detectado por Google</label>
-        <select class="select mt-1" data-google-calendar-select>
+        <select class="select mt-1" name="gcal_calendar_id" data-google-calendar-select>
           <option value="">Seleccionar calendario</option>
           {% for calendar in google_calendars %}
             <option value="{{ calendar.id }}" {% if google_config.calendar_id == calendar.id %}selected{% endif %}>{{ calendar.summary }} - {{ calendar.id }}</option>
@@ -135,9 +135,7 @@
             <option value="{{ google_config.calendar_id }}" selected>{{ google_config.calendar_id }}</option>
           {% endif %}
         </select>
-        <label class="mt-3 block text-sm font-medium text-slate-700">ID de calendario de este consultorio</label>
-        <input class="input mt-1" name="gcal_calendar_id" value="{{ google_config.calendar_id }}" data-google-calendar-id-input placeholder="xxxx@group.calendar.google.com" />
-        <p class="mt-1 text-xs text-slate-500">Cada consultorio puede usar un calendario distinto. Para calendarios secundarios, pega aca el ID y presiona Actualizar calendarios.</p>
+        <p class="mt-1 text-xs text-slate-500">Cada consultorio puede usar un calendario distinto. Administra los calendarios disponibles desde Configuracion &gt; Calendario.</p>
         <p class="mt-1 text-xs text-slate-500">Compartí ese calendario con la service account del tenant con permisos para modificar eventos.</p>
         {% if google_service_account_email %}
           <p class="mt-1 text-xs text-slate-500">Service account: <span class="font-mono">{{ google_service_account_email }}</span></p>
@@ -260,7 +258,6 @@
       const googleCalendarsButtons = document.querySelectorAll("[data-google-calendars-button]");
       const googleCalendarsResult = document.querySelector("[data-google-calendars-result]");
       const googleCalendarSelect = document.querySelector("[data-google-calendar-select]");
-      const googleCalendarInput = document.querySelector("[data-google-calendar-id-input]");
       const eligibilityRanges = document.querySelector("[data-eligibility-ranges]");
       const addEligibilityRange = document.querySelector("[data-add-eligibility-range]");
       const inputs = {
@@ -399,12 +396,13 @@
           });
           const data = await response.json();
           if (!response.ok || !data.ok) throw new Error(data.message || "No se pudieron listar calendarios.");
+          const selectedCalendarId = googleCalendarSelect.value;
           googleCalendarSelect.innerHTML = '<option value="">Seleccionar calendario</option>';
           data.calendars.forEach((calendar) => {
             const option = document.createElement("option");
             option.value = calendar.id;
             option.textContent = `${calendar.summary} - ${calendar.id}`;
-            if (googleCalendarInput?.value && googleCalendarInput.value === calendar.id) {
+            if (selectedCalendarId && selectedCalendarId === calendar.id) {
               option.selected = true;
             }
             googleCalendarSelect.appendChild(option);
@@ -418,11 +416,6 @@
           googleCalendarsButton.textContent = previousLabel;
         }
       }));
-      googleCalendarSelect?.addEventListener("change", () => {
-        if (googleCalendarInput) {
-          googleCalendarInput.value = googleCalendarSelect.value;
-        }
-      });
       select.addEventListener("change", toggle);
       toggle();
     })();
