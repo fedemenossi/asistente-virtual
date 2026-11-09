@@ -1,4 +1,4 @@
-const CACHE_NAME = "saas-medico-v1";
+const CACHE_NAME = "saas-medico-v2";
 const ASSET_CACHE = [
   "/static/dist/tailwind.css",
   "/static/app.js",
@@ -44,9 +44,10 @@ self.addEventListener("fetch", (event) => {
   if (request.headers.get("accept")?.includes("text/html")) {
     event.respondWith(
       fetch(request)
-        .then((response) => {
+        .then(async (response) => {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(request, copy);
           return response;
         })
         .catch(() => caches.match(request))
@@ -56,7 +57,13 @@ self.addEventListener("fetch", (event) => {
 
   if (url.pathname.startsWith("/static/")) {
     event.respondWith(
-      caches.match(request).then((cached) => cached || fetch(request))
+      fetch(request)
+        .then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          return response;
+        })
+        .catch(() => caches.match(request, { ignoreSearch: true }))
     );
   }
 });

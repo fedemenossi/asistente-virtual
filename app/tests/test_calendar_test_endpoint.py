@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime, timezone
 
 from app.core.security import hash_password
@@ -190,6 +191,7 @@ def test_calendar_settings_manages_global_catalog_and_preserves_existing_fallbac
     assert 'name="google_calendar_id"' not in page.text
     assert 'name="google_calendar_ids"' in page.text
     assert "Calendarios disponibles" in page.text
+    assert re.search(r'<script src="/static/app\.js\?v=\d+"></script>', page.text)
 
     from app.services.calendar_service import CalendarService
 
