@@ -1074,6 +1074,96 @@ async def tenant_google_calendars(
     return await _google_calendars_response(session, user, gcal_calendar_id)
 
 
+async def consultorio_calendar_test(
+    request: Request,
+    consultorio_id: int,
+    gcal_calendar_id: str = Form(""),
+    gcal_timezone: str = Form(""),
+    gcal_available_tag: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("consultorio:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> JSONResponse:
+    validate_csrf(request, csrf_token)
+    consultorio = await get_tenant_entity_or_404(
+        session,
+        Consultorio,
+        consultorio_id,
+        user.tenant_id,
+    )
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    calendar_id = gcal_calendar_id.strip()
+    if not calendar_id:
+        return JSONResponse(
+            {"ok": False, "message": "Selecciona un calendario para probar la disponibilidad.", "items": []},
+            status_code=400,
+        )
+
+    google_config = get_google_calendar_config(consultorio)
+    google_config.update(
+        {
+            "calendar_id": calendar_id,
+            "timezone": gcal_timezone.strip() or google_config["timezone"],
+            "available_tag": gcal_available_tag.strip() or google_config["available_tag"],
+        }
+    )
+    test_consultorio = SimpleNamespace(
+        id=consultorio.id,
+        tipo=consultorio.tipo,
+        proveedor_turnos="google",
+        configuracion_externa={"google_calendar": google_config},
+    )
+    try:
+        tz = _resolve_timezone(google_config["timezone"])
+        if tz is None:
+            raise ValueError("Timezone invalido")
+        start = now_ba().astimezone(tz)
+        end = start + timedelta(days=14)
+        slots = await CalendarService().list_available_slots(
+            tenant,
+            test_consultorio,
+            start,
+            end,
+        )
+    except (HTTPException, ValueError) as exc:
+        detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+        return JSONResponse(
+            {"ok": False, "message": detail, "items": []},
+            status_code=400,
+        )
+    except Exception:
+        logger.exception(
+            "consultorio_google_calendar_test_failed tenant_id=%s consultorio_id=%s",
+            tenant.id,
+            consultorio.id,
+        )
+        return JSONResponse(
+            {
+                "ok": False,
+                "message": "No se pudo consultar la disponibilidad en Google Calendar.",
+                "items": [],
+            },
+            status_code=502,
+        )
+
+    items = [
+        {
+            "slot_id": slot.slot_id,
+            "start_at": slot.start_at.isoformat(),
+            "end_at": slot.end_at.isoformat(),
+            "timezone": slot.timezone,
+            "calendar_id": slot.calendar_id,
+        }
+        for slot in slots
+    ]
+    message = (
+        "Conexion OK. No se encontraron turnos con el tag configurado en los proximos 14 dias."
+        if not items
+        else f"Conexion OK. Se encontraron {len(items)} turnos con el tag configurado."
+    )
+    return JSONResponse({"ok": True, "message": message, "count": len(items), "items": items})
+
+
 async def _google_calendars_response(
     session: AsyncSession,
     user: CurrentUser,
@@ -2868,45 +2958,42 @@ async def calendar_settings_test(
     session: AsyncSession = Depends(get_async_session),
 ):
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
-    settings = tenant.calendar_settings or {}
-    default_timezone = settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
-    tz = _resolve_timezone(default_timezone) or timezone(timedelta(hours=-3))
-
-    result = await session.execute(
-        select(Consultorio)
-        .where(
-            Consultorio.tenant_id == tenant.id,
-            Consultorio.deleted_at.is_(None),
-        )
-        .order_by(Consultorio.tipo.asc())
-    )
-    consultorios = list(result.scalars().all())
-    consultorio = next(
-        (item for item in consultorios if item.tipo == TipoConsultorio.VIRTUAL),
-        consultorios[0] if consultorios else None,
-    )
-    if consultorio is None:
-        return JSONResponse(
-            {"error": "Necesitas un consultorio para probar el calendario."},
-            status_code=400,
-        )
-
-    start = now_ba().astimezone(tz)
-    end = start + timedelta(days=14)
     service = CalendarService()
-    slots = await service.list_available_slots(tenant, consultorio, start, end)
-    payload = [
+    settings = tenant.calendar_settings or {}
+    calendar_ids = settings.get("google_calendar_ids") or []
+    if isinstance(calendar_ids, str):
+        calendar_ids = calendar_ids.splitlines()
+    calendar_ids = [str(value).strip() for value in calendar_ids if str(value).strip()]
+    legacy_calendar_id = str(settings.get("google_calendar_id") or "").strip()
+    if legacy_calendar_id and legacy_calendar_id not in calendar_ids:
+        calendar_ids.append(legacy_calendar_id)
+    try:
+        calendars = await asyncio.to_thread(
+            service.register_google_calendars,
+            settings,
+            calendar_ids,
+        )
+    except HTTPException as exc:
+        return JSONResponse({"ok": False, "error": str(exc.detail), "calendars": []}, status_code=400)
+    except Exception:
+        logger.exception("google_calendar_global_test_failed tenant_id=%s", tenant.id)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "No se pudo conectar con Google Calendar. Verifica las credenciales y permisos.",
+                "calendars": [],
+            },
+            status_code=502,
+        )
+    return JSONResponse(
         {
-            "slot_id": slot.slot_id,
-            "start_at": slot.start_at.isoformat(),
-            "end_at": slot.end_at.isoformat(),
-            "timezone": slot.timezone,
-            "provider": slot.provider,
-            "calendar_id": slot.calendar_id,
+            "ok": True,
+            "message": f"Conexion OK. Se encontraron {len(calendars)} calendarios accesibles.",
+            "count": len(calendars),
+            "calendars": calendars,
+            "service_account_email": service.get_google_service_account_email(tenant),
         }
-        for slot in slots
-    ]
-    return JSONResponse({"count": len(payload), "items": payload})
+    )
 
 
 async def notifications_settings(

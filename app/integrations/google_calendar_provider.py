@@ -75,15 +75,17 @@ class GoogleCalendarProvider(CalendarProvider):
             return True
         if generated == "true" and slot_status and slot_status != "available":
             return False
-        if DEFAULT_AVAILABLE_TAG.lower() not in summary and "[disponible]" not in summary and "slot=available" not in description:
-            return False
         if tags:
             for tag in tags:
                 tag_lower = tag.lower()
                 if tag_lower in summary or tag_lower in description:
                     return True
             return False
-        return True
+        return (
+            DEFAULT_AVAILABLE_TAG.lower() in summary
+            or "[disponible]" in summary
+            or "slot=available" in description
+        )
 
     async def list_available_slots(
         self,
@@ -94,7 +96,7 @@ class GoogleCalendarProvider(CalendarProvider):
     ) -> list[CalendarSlot]:
         settings = tenant.calendar_settings or {}
         consultorio_settings = get_google_calendar_config(consultorio)
-        tags = settings.get("calendar_tags") or []
+        tags = _available_tags_for_consultorio(consultorio, settings)
         timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
 
         service = self._build_service()
@@ -143,7 +145,7 @@ class GoogleCalendarProvider(CalendarProvider):
     ) -> list[dict[str, Any]]:
         settings = tenant.calendar_settings or {}
         consultorio_settings = get_google_calendar_config(consultorio)
-        tags = settings.get("calendar_tags") or []
+        tags = _available_tags_for_consultorio(consultorio, settings)
         timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
         require_google_meet = bool(consultorio_settings.get("require_google_meet", True))
 
@@ -376,7 +378,7 @@ class GoogleCalendarProvider(CalendarProvider):
     ) -> dict:
         settings = tenant.calendar_settings or {}
         consultorio_settings = get_google_calendar_config(consultorio)
-        tags = settings.get("calendar_tags") or []
+        tags = _available_tags_for_consultorio(consultorio, settings)
         timezone = consultorio_settings.get("timezone") or settings.get("default_timezone") or "America/Argentina/Buenos_Aires"
         require_google_meet = bool(consultorio_settings.get("require_google_meet", True))
 
@@ -603,6 +605,18 @@ def _safe_http_error_content(exc: HttpError) -> str:
         return ""
     content = " ".join(content.split())
     return content[:1000]
+
+
+def _available_tags_for_consultorio(consultorio: Consultorio, tenant_settings: dict) -> list[str]:
+    raw_config = ((getattr(consultorio, "configuracion_externa", None) or {}).get("google_calendar") or {})
+    custom_tag = str(raw_config.get("available_tag") or "").strip()
+    if custom_tag:
+        return [custom_tag]
+    legacy_values = tenant_settings.get("calendar_tags") or []
+    if isinstance(legacy_values, str):
+        legacy_values = [legacy_values]
+    legacy_tags = [str(tag).strip() for tag in legacy_values if str(tag).strip()]
+    return legacy_tags or [DEFAULT_AVAILABLE_TAG]
 
 
 def _mask_calendar_id(calendar_id: str | None) -> str:

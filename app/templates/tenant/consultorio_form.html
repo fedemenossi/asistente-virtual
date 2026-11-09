@@ -117,7 +117,9 @@
         </div>
         <div class="flex gap-2">
             {% set google_calendars_url = "/t/consultorios/" ~ consultorio.id ~ "/google-calendars" if is_edit else "/t/google-calendars" %}
-            <button class="btn btn-secondary" type="button" data-google-calendars-url="{{ google_calendars_url }}" data-google-calendars-button>Probar conexion</button>
+          {% if is_edit %}
+            <button class="btn btn-secondary" type="button" data-google-availability-url="/t/consultorios/{{ consultorio.id }}/calendar/test" data-google-availability-button>Probar disponibilidad</button>
+          {% endif %}
             <button class="btn btn-secondary" type="button" data-google-calendars-url="{{ google_calendars_url }}" data-google-calendars-button>Actualizar calendarios</button>
           {% if is_edit %}
             <a class="btn btn-secondary" href="/t/consultorios/{{ consultorio.id }}/calendar-slots">Generar slots</a>
@@ -258,6 +260,7 @@
       const googleCalendarsButtons = document.querySelectorAll("[data-google-calendars-button]");
       const googleCalendarsResult = document.querySelector("[data-google-calendars-result]");
       const googleCalendarSelect = document.querySelector("[data-google-calendar-select]");
+      const googleAvailabilityButton = document.querySelector("[data-google-availability-button]");
       const eligibilityRanges = document.querySelector("[data-eligibility-ranges]");
       const addEligibilityRange = document.querySelector("[data-add-eligibility-range]");
       const inputs = {
@@ -342,6 +345,14 @@
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+      const formatGoogleDateTime = (value) => {
+        if (!value) return "-";
+        try {
+          return new Date(value).toLocaleString("es-AR");
+        } catch (error) {
+          return value;
+        }
+      };
       const showTestResult = (kind, message, slots = []) => {
         if (!testResult) return;
         const isError = kind === "error";
@@ -416,6 +427,38 @@
           googleCalendarsButton.textContent = previousLabel;
         }
       }));
+      googleAvailabilityButton?.addEventListener("click", async () => {
+        if (!form || !googleCalendarsResult) return;
+        const previousLabel = googleAvailabilityButton.textContent;
+        googleAvailabilityButton.disabled = true;
+        googleAvailabilityButton.textContent = "Consultando...";
+        googleCalendarsResult.className = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700";
+        try {
+          const response = await fetch(googleAvailabilityButton.dataset.googleAvailabilityUrl, {
+            method: "POST",
+            body: new FormData(form),
+            headers: {"X-Requested-With": "XMLHttpRequest"},
+          });
+          const data = await response.json();
+          if (!response.ok || !data.ok) throw new Error(data.message || "No se pudo consultar la disponibilidad.");
+          const rows = (data.items || []).map((item) => `
+            <li class="rounded-md bg-white/70 px-3 py-2">
+              ${escapeHtml(formatGoogleDateTime(item.start_at))} a ${escapeHtml(formatGoogleDateTime(item.end_at))}
+            </li>
+          `).join("");
+          googleCalendarsResult.className = "rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800";
+          googleCalendarsResult.innerHTML = `
+            <p class="font-medium">${escapeHtml(data.message)}</p>
+            ${rows ? `<ol class="mt-3 space-y-2 text-slate-700">${rows}</ol>` : ""}
+          `;
+        } catch (error) {
+          googleCalendarsResult.className = "rounded-lg border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-700";
+          googleCalendarsResult.textContent = error.message || "No se pudo consultar la disponibilidad.";
+        } finally {
+          googleAvailabilityButton.disabled = false;
+          googleAvailabilityButton.textContent = previousLabel;
+        }
+      });
       select.addEventListener("change", toggle);
       toggle();
     })();

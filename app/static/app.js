@@ -538,15 +538,6 @@
   const calendarTestCount = document.querySelector("[data-calendar-test-count]");
   const calendarTestError = document.querySelector("[data-calendar-test-error]");
 
-  const formatDateTime = (value) => {
-    if (!value) return "";
-    try {
-      return new Date(value).toLocaleString("es-AR");
-    } catch (err) {
-      return value;
-    }
-  };
-
   const resetCalendarTest = () => {
     calendarTestBody.innerHTML = "";
     calendarTestError.textContent = "";
@@ -589,27 +580,32 @@
       const resp = await fetch("/t/settings/calendar/test");
       const data = await resp.json();
       if (!resp.ok) {
-        calendarTestError.textContent = data.error || "No se pudo conectar al calendario.";
+        calendarTestError.textContent = data.error || "No se pudo conectar con Google Calendar.";
         calendarTestError.classList.remove("hidden");
-        calendarTestCount.textContent = "0 slots";
+        calendarTestCount.textContent = "0 calendarios";
         return;
       }
-      const items = data.items || [];
-      calendarTestCount.textContent = `${data.count || items.length} slots`;
+      const items = data.calendars || [];
+      calendarTestCount.textContent = `${data.count || items.length} calendarios`;
       if (items.length === 0) {
-        calendarTestError.textContent = "No se encontraron slots disponibles.";
+        calendarTestError.textContent = "La conexion funciona, pero no se encontraron calendarios accesibles.";
         calendarTestError.classList.remove("hidden");
         return;
       }
       items.forEach((item) => {
         const row = document.createElement("tr");
         row.className = "border-t border-slate-200";
-        row.innerHTML = `
-          <td class="px-4 py-3 text-slate-900">${formatDateTime(item.start_at)}</td>
-          <td class="px-4 py-3 text-slate-600">${formatDateTime(item.end_at)}</td>
-          <td class="px-4 py-3 text-slate-600">${item.timezone || "-"}</td>
-          <td class="px-4 py-3 text-slate-600">${item.slot_id || "-"}</td>
-        `;
+        const values = [
+          [item.summary || "-", "px-4 py-3 text-slate-900"],
+          [item.id || "-", "px-4 py-3 font-mono text-xs text-slate-600"],
+          [item.access_role || "-", "px-4 py-3 text-slate-600"],
+        ];
+        values.forEach(([value, className]) => {
+          const cell = document.createElement("td");
+          cell.className = className;
+          cell.textContent = value;
+          row.appendChild(cell);
+        });
         calendarTestBody.appendChild(row);
       });
     } catch (err) {

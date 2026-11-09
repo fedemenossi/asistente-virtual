@@ -61,6 +61,12 @@ router.add_api_route(
     dependencies=[Depends(require_feature("consultorios"))],
 )
 router.add_api_route(
+    "/consultorios/{consultorio_id}/calendar/test",
+    views.consultorio_calendar_test,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("consultorios"))],
+)
+router.add_api_route(
     "/google-calendars",
     views.tenant_google_calendars,
     methods=["POST"],

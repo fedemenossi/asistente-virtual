@@ -343,6 +343,77 @@ def _event(event_id, start, end, *, status="available", summary="[TURNO DISPONIB
     }
 
 
+def test_google_provider_recognizes_consultorio_custom_available_tag():
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    event = _event(
+        "evt-custom-tag",
+        start,
+        start + timedelta(minutes=30),
+        status="",
+        summary="[LAURA DISPONIBLE]",
+    )
+
+    assert GoogleCalendarProvider._is_slot_available(event, ["[LAURA DISPONIBLE]"]) is True
+    assert GoogleCalendarProvider._is_slot_available(event, ["[OTRO TAG]"]) is False
+
+
+def test_google_provider_lists_slots_with_consultorio_tag_instead_of_tenant_tag(db_session, monkeypatch):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Custom Tag",
+            "whatsapp:+9409",
+            calendar_settings={"calendar_tags": ["[TAG GLOBAL]"]},
+        )
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Agenda Laura",
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {
+                    **_base_config(),
+                    "available_tag": "[LAURA DISPONIBLE]",
+                }
+            },
+        )
+    )
+
+    async def _load():
+        from app.models.consultorio import Consultorio
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            return await session.get(Tenant, tenant_id), await session.get(Consultorio, consultorio_id)
+
+    tenant, consultorio = asyncio.run(_load())
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    events = [
+        _event(
+            "evt-consultorio-tag",
+            start,
+            start + timedelta(minutes=30),
+            status="",
+            summary="[LAURA DISPONIBLE]",
+        )
+    ]
+    provider = GoogleCalendarProvider("calendar-1", "{}")
+    monkeypatch.setattr(provider, "_build_service", lambda: _FakeService(events))
+
+    slots = asyncio.run(
+        provider.list_available_slots(
+            tenant,
+            consultorio,
+            start - timedelta(hours=1),
+            start + timedelta(hours=1),
+        )
+    )
+
+    assert [slot.slot_id for slot in slots] == ["evt-consultorio-tag"]
+
+
 def test_google_provider_deduplicates_and_reserves_slot(db_session, monkeypatch):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Provider", "whatsapp:+9402"))
     consultorio_id = asyncio.run(
