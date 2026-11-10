@@ -1158,7 +1158,9 @@ class ConversationService:
                 return self._invalid_option_message(self._first_time_options())
             context["first_time"] = first_time
             context.setdefault("appointment", {})["is_first_time"] = first_time
-            if self._ai_tools_enabled(ai_settings):
+            if self._ai_tools_enabled(ai_settings) or await self._has_automated_availability_source(
+                tenant.id, "presential"
+            ):
                 return await self._ask_appointment_coverage(
                     tenant=tenant,
                     phone=normalized_phone,
@@ -1273,7 +1275,9 @@ class ConversationService:
                 return self._invalid_option_message(self._first_time_options())
             context["first_time"] = first_time
             context.setdefault("appointment", {})["is_first_time"] = first_time
-            if self._ai_tools_enabled(ai_settings):
+            if self._ai_tools_enabled(ai_settings) or await self._has_automated_availability_source(
+                tenant.id, "virtual"
+            ):
                 return await self._ask_appointment_coverage(
                     tenant=tenant,
                     phone=normalized_phone,
@@ -1441,6 +1445,13 @@ class ConversationService:
         first_time_state = getattr(ConversationState, f"ASK_{state_prefix}_FIRST_TIME").value
 
         who = context.get("for_whom") or appointment.get("for")
+        if not who and patient_id is not None:
+            # La identificacion inicial ya resolvio para que paciente se realiza
+            # la gestion. Desde este punto, "self" significa el paciente activo
+            # de la conversacion, aunque el contacto este gestionando para otro.
+            who = "self"
+            context["for_whom"] = who
+            appointment["for"] = who
         if not who:
             await self._conversacion_repo.upsert_state(
                 tenant.id,
@@ -1486,7 +1497,9 @@ class ConversationService:
                     return f"Perfecto, entiendo que el turno es para {name}. {self._first_time_options()}"
             return f"{prefix} {self._first_time_options()}"
 
-        if self._ai_tools_enabled(get_effective_ai_settings(tenant)):
+        if self._ai_tools_enabled(
+            get_effective_ai_settings(tenant)
+        ) or await self._has_automated_availability_source(tenant.id, appointment_type):
             if not (context.get("eligibility_context") or {}).get("coverage"):
                 return await self._ask_appointment_coverage(
                     tenant=tenant,
@@ -1877,6 +1890,33 @@ class ConversationService:
             conversation_category=self._appointment_category_from_context(context),
         )
         return self._appointment_coverage_options_message(options)
+
+    async def _has_automated_availability_source(
+        self,
+        tenant_id: int,
+        appointment_type: str,
+    ) -> bool:
+        filters = [
+            Consultorio.tenant_id == tenant_id,
+            Consultorio.deleted_at.is_(None),
+        ]
+        if appointment_type != "both":
+            filters.append(
+                Consultorio.tipo
+                == (
+                    TipoConsultorio.VIRTUAL
+                    if appointment_type == "virtual"
+                    else TipoConsultorio.PRESENCIAL
+                )
+            )
+        result = await self._session.execute(
+            select(Consultorio.proveedor_turnos).where(*filters)
+        )
+        return any(
+            str(provider or "").strip().lower()
+            in {"google", "google_calendar", "drapp", "consultorio_movil"}
+            for provider in result.scalars().all()
+        )
 
     @staticmethod
     def _appointment_coverage_options_message(options: list[dict]) -> str:

@@ -224,7 +224,6 @@ def test_simulator_holds_first_private_consultation_until_explicit_approval(
     send("hola")
     send("1")
     send("2")
-    send("1")
     offered = send("1")
     assert "turnos virtuales disponibles" in offered["reply"]
     send("1")
@@ -239,7 +238,6 @@ def test_simulator_holds_first_private_consultation_until_explicit_approval(
     send_competing("hola")
     send_competing("1")
     send_competing("2")
-    send_competing("1")
     competing_availability = send_competing("1")
     assert "turnos virtuales disponibles" in competing_availability["reply"]
     send_competing("1")
