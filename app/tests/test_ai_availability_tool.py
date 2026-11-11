@@ -7,7 +7,7 @@ from app.integrations.interfaces import CalendarSlot
 from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.tenant import Tenant
 from app.services.ai_tools import get_available_appointment_slots
-from app.tests.conftest import create_tenant
+from app.tests.conftest import create_paciente, create_tenant
 
 
 def test_virtual_availability_tool_returns_normalized_slots(monkeypatch, db_session):
@@ -67,6 +67,146 @@ def test_virtual_availability_tool_returns_normalized_slots(monkeypatch, db_sess
     assert result["slots"][0]["label"].startswith("Jueves")
     assert result["slots"][0]["slot_id"] != "external-0"
     assert "secret-calendar-id" not in str(result)
+
+
+def test_virtual_availability_uses_consultorio_timezone_from_the_tenant(
+    monkeypatch, db_session
+):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Timezone", "whatsapp:+904"))
+    captured = {}
+
+    async def seed():
+        async with db_session() as session:
+            async with session.begin():
+                tenant = await session.get(Tenant, tenant_id)
+                tenant.calendar_settings = {
+                    "google_credentials_json": "{}",
+                    "default_timezone": "UTC",
+                }
+                session.add(
+                    Consultorio(
+                        tenant_id=tenant_id,
+                        nombre="Virtual Buenos Aires",
+                        tipo=TipoConsultorio.VIRTUAL,
+                        proveedor_turnos="google",
+                        configuracion_externa={
+                            "google_calendar": {
+                                "calendar_id": "tenant-calendar",
+                                "timezone": "America/Argentina/Buenos_Aires",
+                            }
+                        },
+                    )
+                )
+
+    async def fake_slots(self, tenant, consultorio, start, end):
+        captured["tenant_id"] = tenant.id
+        captured["calendar_id"] = consultorio.configuracion_externa[
+            "google_calendar"
+        ]["calendar_id"]
+        captured["timezone"] = getattr(start.tzinfo, "key", str(start.tzinfo))
+        return []
+
+    asyncio.run(seed())
+    monkeypatch.setattr(
+        "app.services.calendar_service.CalendarService.list_available_slots",
+        fake_slots,
+    )
+
+    async def run():
+        async with db_session() as session:
+            return await get_available_appointment_slots(
+                session,
+                tenant_id=tenant_id,
+                consultorio_type="virtual",
+                patient_context={},
+                preferences={},
+            )
+
+    result = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert captured == {
+        "tenant_id": tenant_id,
+        "calendar_id": "tenant-calendar",
+        "timezone": "America/Argentina/Buenos_Aires",
+    }
+
+
+def test_availability_infers_coverage_type_from_tenant_consultorio_rules(
+    monkeypatch, db_session
+):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant OSDE", "whatsapp:+905"))
+    patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491190500001",
+            obra_social="OSDE",
+            health_coverage_type=None,
+        )
+    )
+    consulted = []
+
+    async def seed():
+        async with db_session() as session:
+            async with session.begin():
+                session.add(
+                    Consultorio(
+                        tenant_id=tenant_id,
+                        nombre="Roosevelt",
+                        tipo=TipoConsultorio.VIRTUAL,
+                        proveedor_turnos="google",
+                        configuracion_externa={
+                            "google_calendar": {"calendar_id": "roosevelt-calendar"},
+                            "eligibility": {
+                                "accepts_first_consultation": True,
+                                "coverage_types": ["prepaga"],
+                                "coverage_entities": [],
+                                "prepaga_entities": ["OSDE"],
+                            },
+                        },
+                    )
+                )
+
+    async def fake_slots(self, tenant, consultorio, start, end):
+        consulted.append(consultorio.nombre)
+        slot_start = datetime.now(timezone.utc) + timedelta(days=1)
+        return [
+            CalendarSlot(
+                slot_id="roosevelt-slot",
+                start_at=slot_start,
+                end_at=slot_start + timedelta(minutes=30),
+                timezone="America/Argentina/Buenos_Aires",
+                provider="google",
+                calendar_id="roosevelt-calendar",
+            )
+        ]
+
+    asyncio.run(seed())
+    monkeypatch.setattr(
+        "app.services.calendar_service.CalendarService.list_available_slots",
+        fake_slots,
+    )
+
+    async def run():
+        async with db_session() as session:
+            return await get_available_appointment_slots(
+                session,
+                tenant_id=tenant_id,
+                consultorio_type="virtual",
+                patient_context={"patient_id": patient_id, "first_time": False},
+                preferences={},
+            )
+
+    result = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert len(result["slots"]) == 1
+    assert consulted == ["Roosevelt"]
+    assert result["availability_context"]["coverage"] == {
+        "type": "prepaga",
+        "entity": "OSDE",
+    }
 
 
 def test_presential_availability_tool_returns_controlled_error_when_not_configured(db_session):

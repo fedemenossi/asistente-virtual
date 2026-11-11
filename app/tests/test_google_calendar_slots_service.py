@@ -8,7 +8,10 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.security import hash_password
-from app.integrations.google_calendar_provider import GoogleCalendarProvider
+from app.integrations.google_calendar_provider import (
+    GoogleCalendarProvider,
+    resolve_google_credentials,
+)
 from app.models.consultorio import TipoConsultorio
 from app.models.user import UserRole
 from app.services.calendar_service import CalendarService
@@ -37,6 +40,19 @@ def _base_config(**day_overrides):
         "timezone": "America/Argentina/Buenos_Aires",
         "schedule": schedule,
     }
+
+
+def test_google_credentials_are_resolved_only_from_tenant_settings(monkeypatch):
+    monkeypatch.setenv("GOOGLE_CREDENTIALS_JSON", "global-credentials")
+    monkeypatch.setenv("GOOGLE_DELEGATED_USER", "global-user@example.com")
+
+    assert resolve_google_credentials({}) == (None, None)
+    assert resolve_google_credentials(
+        {
+            "google_credentials_json": "tenant-credentials",
+            "google_delegated_user": "tenant-user@example.com",
+        }
+    ) == ("tenant-credentials", "tenant-user@example.com")
 
 
 def test_calculate_slots_with_buffer_and_end_boundary():

@@ -766,7 +766,7 @@ Principales:
 - Auth seed: `ADMIN_EMAIL`, `ADMIN_PASSWORD_SEED`
 - Twilio global fallback: `TWILIO_*`
 - MP global fallback: `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET`
-- Google fallback: `GOOGLE_CREDENTIALS_JSON`, `GOOGLE_DELEGATED_USER`
+- Google: las credenciales y el usuario delegado se resuelven exclusivamente desde `calendar_settings` de cada tenant.
 - Push: `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`
 - Jobs internos: `INTERNAL_JOB_TOKEN`
 

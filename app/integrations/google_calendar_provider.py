@@ -9,7 +9,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from app.core.config import get_settings
 from app.integrations.interfaces import CalendarProvider, CalendarSlot
 from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
@@ -526,15 +525,10 @@ class GoogleCalendarProvider(CalendarProvider):
 
 
 def resolve_google_credentials(calendar_settings: dict | None) -> tuple[str | None, str | None]:
-    settings = get_settings()
-    credentials_json = None
-    delegated_user = None
-    if calendar_settings:
-        credentials_json = calendar_settings.get("google_credentials_json") or credentials_json
-        delegated_user = calendar_settings.get("google_delegated_user") or delegated_user
-    credentials_json = credentials_json or settings.google_credentials_json
-    delegated_user = delegated_user or settings.google_delegated_user
-    return credentials_json, delegated_user
+    settings = calendar_settings or {}
+    credentials_json = str(settings.get("google_credentials_json") or "").strip()
+    delegated_user = str(settings.get("google_delegated_user") or "").strip()
+    return credentials_json or None, delegated_user or None
 
 
 def get_google_service_account_email(calendar_settings: dict | None) -> str | None:

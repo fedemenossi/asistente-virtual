@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 import hashlib
 import logging
 from typing import Any
+import unicodedata
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
@@ -22,7 +23,10 @@ from app.services.consultorio_eligibility_service import (
     has_specific_coverage_match,
     is_consultorio_eligible,
 )
-from app.services.google_calendar_slots_service import slot_is_in_schedule_ranges
+from app.services.google_calendar_slots_service import (
+    get_google_calendar_config,
+    slot_is_in_schedule_ranges,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +52,7 @@ async def get_available_appointment_slots(
             )
         consultorios = await _get_consultorios(session, tenant_id, normalized_type)
         coverage_type, coverage_entity = await _resolve_patient_coverage(
-            session, tenant_id, patient_context
+            session, tenant_id, patient_context, consultorios
         )
         first_time = bool(
             patient_context.get("first_time")
@@ -250,7 +254,12 @@ async def _get_provider_slots(
     limit: int,
     provider: str,
 ) -> dict[str, Any]:
-    tz_name = (tenant.calendar_settings or {}).get("default_timezone") or "America/Argentina/Buenos_Aires"
+    consultorio_settings = get_google_calendar_config(consultorio)
+    tz_name = (
+        consultorio_settings.get("timezone")
+        or (tenant.calendar_settings or {}).get("default_timezone")
+        or "America/Argentina/Buenos_Aires"
+    )
     tz = _resolve_timezone(tz_name)
     start, end = _availability_window(tz, preferences)
     try:
@@ -307,19 +316,24 @@ async def _resolve_patient_coverage(
     session: AsyncSession,
     tenant_id: int,
     patient_context: dict,
+    consultorios: list[Consultorio],
 ) -> tuple[str, str]:
     preserved = patient_context.get("eligibility_context") or {}
     preserved_coverage = preserved.get("coverage") or {}
     if preserved_coverage:
         entity = str(preserved_coverage.get("entity") or "").strip()
-        return _infer_coverage_type(preserved_coverage.get("type"), entity), entity
+        return _infer_coverage_type(
+            preserved_coverage.get("type"), entity, consultorios
+        ), entity
     appointment = patient_context.get("appointment") or {}
     if appointment.get("coverage_selected"):
         entity = str(patient_context.get("insurance") or "").strip()
-        return _infer_coverage_type(patient_context.get("coverage_type"), entity), entity
+        return _infer_coverage_type(
+            patient_context.get("coverage_type"), entity, consultorios
+        ), entity
     if patient_context.get("for_whom") == "other":
         entity = str(patient_context.get("other_insurance") or "").strip()
-        return _infer_coverage_type(None, entity), entity
+        return _infer_coverage_type(None, entity, consultorios), entity
     patient = None
     try:
         patient_id = int(patient_context.get("patient_id"))
@@ -331,15 +345,43 @@ async def _resolve_patient_coverage(
             patient = candidate
     entity = str(getattr(patient, "obra_social", "") or patient_context.get("insurance") or "").strip()
     explicit_type = str(getattr(patient, "health_coverage_type", "") or patient_context.get("coverage_type") or "")
-    return _infer_coverage_type(explicit_type, entity), entity
+    return _infer_coverage_type(explicit_type, entity, consultorios), entity
 
 
-def _infer_coverage_type(explicit_type: str | None, entity: str) -> str:
+def _infer_coverage_type(
+    explicit_type: str | None,
+    entity: str,
+    consultorios: list[Consultorio],
+) -> str:
     normalized_type = str(explicit_type or "").strip().lower()
     if normalized_type in {"particular", "obra_social", "prepaga"}:
         return normalized_type
-    normalized_entity = str(entity or "").strip().lower()
-    return "particular" if normalized_entity in {"", "particular", "sin cobertura"} else "obra_social"
+    normalized_entity = _normalize_coverage_entity(entity)
+    if normalized_entity in {"", "particular", "sin cobertura"}:
+        return "particular"
+
+    configured_as_prepaga = False
+    configured_as_obra_social = False
+    for consultorio in consultorios:
+        eligibility = get_eligibility_config(consultorio)
+        configured_as_prepaga = configured_as_prepaga or normalized_entity in {
+            _normalize_coverage_entity(value)
+            for value in eligibility["prepaga_entities"]
+        }
+        configured_as_obra_social = configured_as_obra_social or normalized_entity in {
+            _normalize_coverage_entity(value)
+            for value in eligibility["coverage_entities"]
+        }
+    if configured_as_prepaga and not configured_as_obra_social:
+        return "prepaga"
+    return "obra_social"
+
+
+def _normalize_coverage_entity(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").strip().casefold())
+    return "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
 
 
 def _normalize_slot(
