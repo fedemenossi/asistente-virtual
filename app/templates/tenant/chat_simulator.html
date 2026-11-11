@@ -76,7 +76,7 @@
     <form data-chat-form class="mt-4 flex gap-3">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <div class="flex-1 space-y-3">
-        <textarea data-chat-input class="textarea min-h-[96px] w-full" placeholder="Escribe un mensaje"></textarea>
+        <textarea data-chat-input class="textarea min-h-[96px] w-full" placeholder="Escribe un mensaje · Enter para enviar"></textarea>
         <div class="grid gap-3 md:grid-cols-2">
           <input data-chat-media-url class="input" type="url" placeholder="URL de adjunto simulado (opcional)" />
           <input data-chat-media-type class="input" placeholder="Tipo MIME, ej. image/jpeg" />

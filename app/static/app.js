@@ -484,6 +484,11 @@
         alert("Selecciona un paciente para reiniciar la conversacion.");
       }
     });
+    input?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+      event.preventDefault();
+      form?.requestSubmit();
+    });
 
     form?.addEventListener("submit", async (event) => {
       event.preventDefault();
