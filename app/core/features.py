@@ -46,7 +46,7 @@ FEATURE_REGISTRY: dict[str, dict] = {
     },
     "conversaciones": {
         "label": "Conversaciones",
-        "routes": ["/t/conversation-states"],
+        "routes": ["/t/conversation-states", "/t/chat-simulator"],
         "default_enabled": True,
     },
     "audit_logs": {

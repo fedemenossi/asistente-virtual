@@ -531,6 +531,26 @@ router.add_api_route(
 )
 
 router.add_api_route(
+    "/chat-simulator",
+    views.chat_simulator_get,
+    methods=["GET"],
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_feature("conversaciones"))],
+)
+router.add_api_route(
+    "/chat-simulator/api",
+    views.chat_simulator_api,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("conversaciones"))],
+)
+router.add_api_route(
+    "/chat-simulator/reset",
+    views.chat_simulator_reset,
+    methods=["POST"],
+    dependencies=[Depends(require_feature("conversaciones"))],
+)
+
+router.add_api_route(
     "/conversation-states",
     views.conversation_states,
     methods=["GET"],

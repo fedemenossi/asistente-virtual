@@ -30,7 +30,7 @@ from app.core.security import CurrentUser, require_permission, require_tenant_ad
 from app.core.templates import base_context, templates
 from app.core.timezone import now_ba
 from app.core.ui import add_flash
-from app.core.tenancy import get_entity_or_404, get_tenant_entity_or_404
+from app.core.tenancy import get_entity_or_404, get_tenant_entity_or_404, set_current_tenant_id
 from app.models.audit_log import AuditLog
 from app.models.arca_invoice import ArcaInvoice
 from app.models.arca_billable_item import ArcaBillableItem
@@ -52,6 +52,8 @@ from app.models.payment import Payment, PaymentStatus
 from app.models.payment_event import PaymentEvent
 from app.models.whatsapp_contact import WhatsappContact
 from app.repositories.conversacion_repository import ConversacionRepository
+from app.repositories.notification_repository import NotificationRepository
+from app.repositories.paciente_repository import PacienteRepository
 from app.integrations.consultorio_movil import (
     CabildoConfigError,
     list_next_presential_slots,
@@ -62,6 +64,7 @@ from app.services.conversation_intents import (
     ConversationCategory,
     SUBTYPE_LABELS,
 )
+from app.services.conversation_service import ConversationService, ConversationState
 from app.services.ai_conversation_summary_service import (
     get_ai_summary_from_context,
     sanitize_context_for_display,
@@ -167,6 +170,10 @@ def _template(request: Request, name: str, context: dict) -> Response:
     base = base_context(request)
     base.update(context)
     return templates.TemplateResponse(request, name, base)
+
+
+def _tenant_chat_session_key(tenant_id: int, suffix: str) -> str:
+    return f"tenant_chat_simulator_{tenant_id}_{suffix}"
 
 
 def _strip_optional(value: str | None) -> str | None:
@@ -2146,6 +2153,177 @@ async def _conversation_listing_context(
         "tenants": tenants,
         "scope_prefix": scope_prefix,
     }
+
+
+async def chat_simulator_get(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("conversation:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> Response:
+    tenant_id = int(user.tenant_id)
+    tenant = await get_entity_or_404(session, Tenant, tenant_id)
+    result = await session.execute(
+        select(Paciente)
+        .where(Paciente.tenant_id == tenant_id, Paciente.deleted_at.is_(None))
+        .order_by(Paciente.nombre, Paciente.apellido)
+    )
+    history_key = _tenant_chat_session_key(tenant_id, "history")
+    defaults_key = _tenant_chat_session_key(tenant_id, "defaults")
+    history = request.session.get(history_key, [])
+    request.session[history_key] = []
+    return _template(
+        request,
+        "tenant/chat_simulator.html",
+        {
+            "tenant": tenant,
+            "pacientes": list(result.scalars().all()),
+            "history": history,
+            "defaults": request.session.get(defaults_key, {}),
+        },
+    )
+
+
+async def chat_simulator_api(
+    request: Request,
+    user: CurrentUser = Depends(require_permission("conversation:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> JSONResponse:
+    payload = await request.json()
+    validate_csrf(request, request.headers.get("X-CSRF-Token", ""))
+
+    raw_patient_id = payload.get("patient_id")
+    if raw_patient_id in (None, ""):
+        return JSONResponse({"error": "Selecciona un paciente."}, status_code=400)
+    try:
+        patient_id = int(raw_patient_id)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "El paciente seleccionado no es valido."}, status_code=400)
+
+    tenant_id = int(user.tenant_id)
+    tenant = await get_entity_or_404(session, Tenant, tenant_id)
+    patient_result = await session.execute(
+        select(Paciente).where(
+            Paciente.id == patient_id,
+            Paciente.tenant_id == tenant_id,
+            Paciente.deleted_at.is_(None),
+        )
+    )
+    paciente = patient_result.scalar_one_or_none()
+    if paciente is None:
+        return JSONResponse({"error": "Paciente no encontrado."}, status_code=404)
+    from_number = (paciente.telefono or "").strip()
+    if not from_number:
+        return JSONResponse(
+            {"error": "El paciente seleccionado no tiene telefono."}, status_code=400
+        )
+
+    message = (payload.get("message") or "").strip()
+    action = (payload.get("action") or "").strip()
+    raw_media_items = payload.get("media_items") or []
+    if not isinstance(raw_media_items, list) or any(
+        not isinstance(item, dict) for item in raw_media_items
+    ):
+        return JSONResponse({"error": "Los adjuntos simulados son invalidos."}, status_code=400)
+    media_items = [
+        {
+            "url": str(item.get("url") or "").strip(),
+            "content_type": str(item.get("content_type") or "").strip(),
+        }
+        for item in raw_media_items
+        if str(item.get("url") or "").strip()
+        or str(item.get("content_type") or "").strip()
+    ]
+    if not message and not action and not media_items:
+        return JSONResponse({"error": "Escribe un mensaje o agrega un adjunto."}, status_code=400)
+
+    conversation_service = ConversationService(
+        session=session,
+        paciente_repo=PacienteRepository(session),
+        conversacion_repo=ConversacionRepository(session),
+        notification_repo=NotificationRepository(session),
+    )
+    async with session.begin_nested():
+        set_current_tenant_id(tenant_id)
+        try:
+            if action == "approve_simulated_payment":
+                reply_text = await conversation_service.approve_simulated_payment(
+                    tenant=tenant,
+                    from_phone=from_number,
+                )
+            elif action:
+                return JSONResponse({"error": "Accion no soportada."}, status_code=400)
+            else:
+                reply_text = await conversation_service.process_message(
+                    tenant=tenant,
+                    from_phone=from_number,
+                    body=message,
+                    media_items=media_items,
+                    simulator=True,
+                )
+        finally:
+            set_current_tenant_id(None)
+
+    history_key = _tenant_chat_session_key(tenant_id, "history")
+    history = request.session.get(history_key, [])
+    history.append({"message": message, "reply": reply_text, "patient_id": patient_id})
+    request.session[history_key] = history[-20:]
+    request.session[_tenant_chat_session_key(tenant_id, "defaults")] = {
+        "patient_id": patient_id
+    }
+
+    normalized_phone = "".join(character for character in from_number if character.isdigit())
+    state = await ConversacionRepository(session).get_state(tenant_id, normalized_phone)
+    actions = []
+    if (
+        state is not None
+        and (state.status or "active").lower() == "active"
+        and state.estado_actual == ConversationState.ASK_SIMULATED_PAYMENT.value
+    ):
+        actions.append(
+            {"id": "approve_simulated_payment", "label": "Aprobar pago simulado"}
+        )
+    return JSONResponse({"reply": reply_text, "actions": actions})
+
+
+async def chat_simulator_reset(
+    request: Request,
+    patient_id: str = Form(""),
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("conversation:read")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    tenant_id = int(user.tenant_id)
+    request.session[_tenant_chat_session_key(tenant_id, "history")] = []
+    try:
+        patient_id_int = int(patient_id)
+    except (TypeError, ValueError):
+        add_flash(request, "error", "Selecciona un paciente para reiniciar la conversacion.")
+        return RedirectResponse("/t/chat-simulator", status_code=303)
+
+    result = await session.execute(
+        select(Paciente).where(
+            Paciente.id == patient_id_int,
+            Paciente.tenant_id == tenant_id,
+            Paciente.deleted_at.is_(None),
+        )
+    )
+    paciente = result.scalar_one_or_none()
+    if paciente is None:
+        add_flash(request, "error", "Paciente no encontrado.")
+        return RedirectResponse("/t/chat-simulator", status_code=303)
+    async with session.begin_nested():
+        await ConversacionRepository(session).mark_resolved(
+            tenant_id,
+            paciente.telefono,
+            resolved_by=user.id,
+            close_reason="simulator_reset",
+        )
+    request.session[_tenant_chat_session_key(tenant_id, "defaults")] = {
+        "patient_id": patient_id_int
+    }
+    add_flash(request, "success", "Conversacion reiniciada.")
+    return RedirectResponse("/t/chat-simulator", status_code=303)
 
 
 async def conversation_states(

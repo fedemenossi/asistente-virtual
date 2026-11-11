@@ -90,6 +90,7 @@
       {{ section_title("Operacion") }}
       {% if features.get("appointments", true) %}{{ nav_item("/t/appointments", "Turnos", "/t/appointments", "calendar", "sidebar-tone-amber") }}{% endif %}
       {% if features.get("conversaciones", true) %}{{ nav_item("/t/conversation-states", "Conversaciones", "/t/conversation-states", "chat", "sidebar-tone-violet") }}{% endif %}
+      {% if features.get("conversaciones", true) %}{{ nav_item("/t/chat-simulator", "Simulador de chat", "/t/chat-simulator", "chat", "sidebar-tone-sky") }}{% endif %}
       {% if features.get("payments", true) %}{{ nav_item("/t/payments", "Pagos", "/t/payments", "payments", "sidebar-tone-mint") }}{% endif %}
 
       {% if features.get("billing_arca", true) %}

@@ -1,0 +1,97 @@
+{% extends "layout/base.html" %}
+{% from "layout/partials/components/button.html" import button %}
+
+{% set title = "Simulador de chat" %}
+{% set breadcrumb = "Tenant / Simulador de chat" %}
+
+{% block content %}
+  <div class="mb-6">
+    <p class="page-subtitle">Pruebas de conversacion de {{ tenant.nombre }}</p>
+    <h1 class="page-title">Simulador de chat</h1>
+  </div>
+
+  <div
+    data-chat-simulator
+    data-chat-api-url="/t/chat-simulator/api"
+    data-chat-require-patient="true"
+    data-chat-storage-scope="tenant-{{ tenant.id }}"
+    class="card mx-auto max-w-3xl p-6"
+  >
+    <div class="mb-4">
+      <h2 class="text-xl font-semibold text-slate-900">Simulador de conversacion</h2>
+      <p class="text-xs text-slate-500">
+        La conversacion se ejecuta automaticamente en este consultorio.
+      </p>
+      <p class="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+        Atencion: reservar, cancelar o reprogramar desde este simulador puede modificar el Google Calendar configurado.
+      </p>
+    </div>
+
+    <div>
+      <label class="mb-1 block text-sm font-medium text-slate-700" for="chat-patient">
+        Paciente
+      </label>
+      <select id="chat-patient" data-chat-patient class="select" required>
+        <option value="">Seleccionar paciente</option>
+        {% for paciente in pacientes %}
+          <option
+            value="{{ paciente.id }}"
+            data-phone="{{ paciente.telefono }}"
+            {% if defaults.patient_id|string == paciente.id|string %}selected{% endif %}
+          >
+            {{ paciente.nombre }} {{ paciente.apellido }} - {{ paciente.telefono }}
+          </option>
+        {% endfor %}
+      </select>
+      {% if not pacientes %}
+        <p class="mt-2 text-sm text-amber-700">
+          No hay pacientes disponibles. Crea un paciente antes de usar el simulador.
+        </p>
+      {% else %}
+        <p class="mt-1 text-xs text-slate-500">
+          El simulador usa el telefono registrado del paciente seleccionado.
+        </p>
+      {% endif %}
+    </div>
+
+    <div data-chat-log class="mt-4 h-[520px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 text-sm">
+      {% if history %}
+        {% for item in history %}
+          <div class="mb-3">
+            <div class="text-xs text-slate-500">Paciente</div>
+            <div class="text-slate-900">{{ item.message }}</div>
+          </div>
+          <div class="mb-4">
+            <div class="text-xs text-slate-500">Bot</div>
+            <div class="text-slate-900">{{ item.reply }}</div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="text-center text-sm text-slate-500">
+          Selecciona un paciente y escribe un mensaje para iniciar la conversacion.
+        </div>
+      {% endif %}
+    </div>
+
+    <form data-chat-form class="mt-4 flex gap-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <div class="flex-1 space-y-3">
+        <textarea data-chat-input class="textarea min-h-[96px] w-full" placeholder="Escribe un mensaje"></textarea>
+        <div class="grid gap-3 md:grid-cols-2">
+          <input data-chat-media-url class="input" type="url" placeholder="URL de adjunto simulado (opcional)" />
+          <input data-chat-media-type class="input" placeholder="Tipo MIME, ej. image/jpeg" />
+        </div>
+        <p class="text-xs text-slate-500">
+          Los adjuntos simulados recorren el mismo flujo que los medios recibidos por WhatsApp.
+        </p>
+      </div>
+      <div>{{ button("Enviar", variant="primary", type="submit") }}</div>
+    </form>
+
+    <form data-chat-reset method="post" action="/t/chat-simulator/reset" class="mt-4">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <input type="hidden" name="patient_id" value="{{ defaults.patient_id or '' }}" />
+      {{ button("Reiniciar conversacion", variant="secondary", type="submit") }}
+    </form>
+  </div>
+{% endblock %}

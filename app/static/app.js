@@ -291,10 +291,13 @@
     const phoneInput = chatRoot.querySelector("[data-chat-phone]");
     const mediaUrlInput = chatRoot.querySelector("[data-chat-media-url]");
     const mediaTypeInput = chatRoot.querySelector("[data-chat-media-type]");
+    const apiUrl = chatRoot.dataset.chatApiUrl || "/admin/chat-simulator/api";
+    const requirePatient = chatRoot.dataset.chatRequirePatient === "true";
+    const storageScope = chatRoot.dataset.chatStorageScope || "admin";
 
-    const STORAGE_TO = "chat_simulator_to";
-    const STORAGE_PATIENT = "chat_simulator_patient";
-    const STORAGE_PHONE = "chat_simulator_phone";
+    const STORAGE_TO = `chat_simulator_${storageScope}_to`;
+    const STORAGE_PATIENT = `chat_simulator_${storageScope}_patient`;
+    const STORAGE_PHONE = `chat_simulator_${storageScope}_phone`;
 
     const setDefaults = () => {
       const savedTo = localStorage.getItem(STORAGE_TO);
@@ -309,6 +312,11 @@
       }
       if (phoneInput && savedPhone) {
         phoneInput.value = savedPhone;
+      }
+      const savedPatient = localStorage.getItem(STORAGE_PATIENT);
+      if (patientSelect && savedPatient) {
+        const option = patientSelect.querySelector(`option[value="${savedPatient}"]`);
+        if (option) patientSelect.value = savedPatient;
       }
     };
 
@@ -325,6 +333,7 @@
       if (resetForm) {
         const toHidden = resetForm.querySelector('input[name="to_number"]');
         const fromHidden = resetForm.querySelector('input[name="from_number"]');
+        const patientHidden = resetForm.querySelector('input[name="patient_id"]');
         if (toHidden) {
           const selectedTenant = tenantSelect?.selectedOptions[0];
           toHidden.value = selectedTenant?.dataset?.whatsapp || "";
@@ -333,6 +342,9 @@
           const selected = patientSelect?.selectedOptions[0];
           const manual = phoneInput?.value?.trim() || "";
           fromHidden.value = selected?.dataset?.phone || manual;
+        }
+        if (patientHidden) {
+          patientHidden.value = patientSelect?.value || "";
         }
       }
     };
@@ -374,7 +386,9 @@
       const selectedTenant = tenantSelect?.selectedOptions[0];
       const selectedPatient = patientSelect?.selectedOptions[0];
       return {
-        toNumber: selectedTenant?.dataset?.whatsapp?.trim(),
+        toNumber:
+          chatRoot.dataset.chatToNumber?.trim() ||
+          selectedTenant?.dataset?.whatsapp?.trim(),
         fromNumber:
           selectedPatient?.dataset?.phone?.trim() || phoneInput?.value?.trim(),
       };
@@ -391,11 +405,11 @@
         actionButton.textContent = action.label;
         actionButton.addEventListener("click", async () => {
           const { toNumber, fromNumber } = simulatorIdentity();
-          if (!toNumber || !fromNumber) return;
+          if ((!toNumber && !requirePatient) || !fromNumber || (requirePatient && !patientSelect?.value)) return;
           actionButton.disabled = true;
           appendMessage("Simulador", action.label);
           try {
-            const response = await fetch("/admin/chat-simulator/api", {
+            const response = await fetch(apiUrl, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
@@ -422,7 +436,11 @@
     };
 
     const loadPatients = async () => {
-      if (!tenantSelect || !patientSelect) return;
+      if (!patientSelect) return;
+      if (!tenantSelect) {
+        syncPhoneInput();
+        return;
+      }
       const tenantId = tenantSelect.value;
       if (!tenantId) return;
       patientSelect.innerHTML = '<option value="">Seleccionar paciente</option>';
@@ -460,6 +478,12 @@
         persistDefaults();
       }
     });
+    resetForm?.addEventListener("submit", (event) => {
+      if (requirePatient && !patientSelect?.value) {
+        event.preventDefault();
+        alert("Selecciona un paciente para reiniciar la conversacion.");
+      }
+    });
 
     form?.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -474,8 +498,15 @@
       const mediaItems = mediaUrl || mediaType
         ? [{ url: mediaUrl, content_type: mediaType }]
         : [];
-      if (!toNumber || !fromNumber || (!message && !mediaItems.length)) {
-        alert("Selecciona tenant, ingresa un telefono valido y agrega un mensaje o adjunto.");
+      const identityMissing = requirePatient
+        ? !patientSelect?.value || !fromNumber
+        : !toNumber || !fromNumber;
+      if (identityMissing || (!message && !mediaItems.length)) {
+        alert(
+          requirePatient
+            ? "Selecciona un paciente y agrega un mensaje o adjunto."
+            : "Selecciona tenant, ingresa un telefono valido y agrega un mensaje o adjunto."
+        );
         return;
       }
       persistDefaults();
@@ -485,7 +516,7 @@
       if (mediaTypeInput) mediaTypeInput.value = "";
 
       try {
-        const resp = await fetch("/admin/chat-simulator/api", {
+        const resp = await fetch(apiUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
