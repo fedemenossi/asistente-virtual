@@ -14,6 +14,7 @@
     data-chat-simulator
     data-chat-api-url="/t/chat-simulator/api"
     data-chat-require-patient="true"
+    data-chat-allow-new-patient="true"
     data-chat-storage-scope="tenant-{{ tenant.id }}"
     class="card mx-auto max-w-3xl p-6"
   >
@@ -31,8 +32,8 @@
       <label class="mb-1 block text-sm font-medium text-slate-700" for="chat-patient">
         Paciente
       </label>
-      <select id="chat-patient" data-chat-patient class="select" required>
-        <option value="">Seleccionar paciente</option>
+      <select id="chat-patient" data-chat-patient class="select">
+        <option value="">Paciente nuevo (sin registrar)</option>
         {% for paciente in pacientes %}
           <option
             value="{{ paciente.id }}"
@@ -44,14 +45,32 @@
         {% endfor %}
       </select>
       {% if not pacientes %}
-        <p class="mt-2 text-sm text-amber-700">
-          No hay pacientes disponibles. Crea un paciente antes de usar el simulador.
+        <p class="mt-2 text-sm text-slate-500">
+          No hay pacientes registrados. Ingresa un telefono para probar el flujo de alta.
         </p>
       {% else %}
         <p class="mt-1 text-xs text-slate-500">
-          El simulador usa el telefono registrado del paciente seleccionado.
+          Selecciona uno existente o deja "Paciente nuevo" para recorrer el alta.
         </p>
       {% endif %}
+    </div>
+
+    <div class="mt-4">
+      <label class="mb-1 block text-sm font-medium text-slate-700" for="chat-phone">
+        Telefono
+      </label>
+      <input
+        id="chat-phone"
+        data-chat-phone
+        class="input"
+        inputmode="tel"
+        autocomplete="tel"
+        value="{{ defaults.from_number or '' }}"
+        placeholder="Ej. 5491112345678"
+      />
+      <p class="mt-1 text-xs text-slate-500">
+        Para un paciente nuevo, este telefono identifica la conversacion y se guarda al completar el alta.
+      </p>
     </div>
 
     <div data-chat-log class="mt-4 h-[520px] overflow-y-auto rounded-xl border border-slate-200 bg-white p-4 text-sm">
@@ -68,7 +87,7 @@
         {% endfor %}
       {% else %}
         <div class="text-center text-sm text-slate-500">
-          Selecciona un paciente y escribe un mensaje para iniciar la conversacion.
+          Selecciona un paciente existente o ingresa el telefono de uno nuevo y escribe un mensaje.
         </div>
       {% endif %}
     </div>
@@ -91,6 +110,7 @@
     <form data-chat-reset method="post" action="/t/chat-simulator/reset" class="mt-4">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <input type="hidden" name="patient_id" value="{{ defaults.patient_id or '' }}" />
+      <input type="hidden" name="from_number" value="{{ defaults.from_number or '' }}" />
       {{ button("Reiniciar conversacion", variant="secondary", type="submit") }}
     </form>
   </div>

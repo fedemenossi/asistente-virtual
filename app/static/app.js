@@ -293,6 +293,7 @@
     const mediaTypeInput = chatRoot.querySelector("[data-chat-media-type]");
     const apiUrl = chatRoot.dataset.chatApiUrl || "/admin/chat-simulator/api";
     const requirePatient = chatRoot.dataset.chatRequirePatient === "true";
+    const allowNewPatient = chatRoot.dataset.chatAllowNewPatient === "true";
     const storageScope = chatRoot.dataset.chatStorageScope || "admin";
 
     const STORAGE_TO = `chat_simulator_${storageScope}_to`;
@@ -326,8 +327,10 @@
       }
       if (patientSelect?.value) {
         localStorage.setItem(STORAGE_PATIENT, patientSelect.value);
+      } else if (patientSelect) {
+        localStorage.removeItem(STORAGE_PATIENT);
       }
-      if (phoneInput?.value) {
+      if (phoneInput?.value && !patientSelect?.value) {
         localStorage.setItem(STORAGE_PHONE, phoneInput.value);
       }
       if (resetForm) {
@@ -405,7 +408,11 @@
         actionButton.textContent = action.label;
         actionButton.addEventListener("click", async () => {
           const { toNumber, fromNumber } = simulatorIdentity();
-          if ((!toNumber && !requirePatient) || !fromNumber || (requirePatient && !patientSelect?.value)) return;
+          if (
+            (!toNumber && !requirePatient) ||
+            !fromNumber ||
+            (requirePatient && !allowNewPatient && !patientSelect?.value)
+          ) return;
           actionButton.disabled = true;
           appendMessage("Simulador", action.label);
           try {
@@ -479,9 +486,14 @@
       }
     });
     resetForm?.addEventListener("submit", (event) => {
-      if (requirePatient && !patientSelect?.value) {
+      const { fromNumber } = simulatorIdentity();
+      if (requirePatient && (!fromNumber || (!allowNewPatient && !patientSelect?.value))) {
         event.preventDefault();
-        alert("Selecciona un paciente para reiniciar la conversacion.");
+        alert(
+          allowNewPatient
+            ? "Selecciona un paciente o ingresa el telefono del paciente nuevo."
+            : "Selecciona un paciente para reiniciar la conversacion."
+        );
       }
     });
     input?.addEventListener("keydown", (event) => {
@@ -504,12 +516,14 @@
         ? [{ url: mediaUrl, content_type: mediaType }]
         : [];
       const identityMissing = requirePatient
-        ? !patientSelect?.value || !fromNumber
+        ? !fromNumber || (!allowNewPatient && !patientSelect?.value)
         : !toNumber || !fromNumber;
       if (identityMissing || (!message && !mediaItems.length)) {
         alert(
           requirePatient
-            ? "Selecciona un paciente y agrega un mensaje o adjunto."
+            ? allowNewPatient
+              ? "Selecciona un paciente o ingresa el telefono del paciente nuevo, y agrega un mensaje o adjunto."
+              : "Selecciona un paciente y agrega un mensaje o adjunto."
             : "Selecciona tenant, ingresa un telefono valido y agrega un mensaje o adjunto."
         );
         return;

@@ -2191,31 +2191,38 @@ async def chat_simulator_api(
     payload = await request.json()
     validate_csrf(request, request.headers.get("X-CSRF-Token", ""))
 
-    raw_patient_id = payload.get("patient_id")
-    if raw_patient_id in (None, ""):
-        return JSONResponse({"error": "Selecciona un paciente."}, status_code=400)
-    try:
-        patient_id = int(raw_patient_id)
-    except (TypeError, ValueError):
-        return JSONResponse({"error": "El paciente seleccionado no es valido."}, status_code=400)
-
     tenant_id = int(user.tenant_id)
     tenant = await get_entity_or_404(session, Tenant, tenant_id)
-    patient_result = await session.execute(
-        select(Paciente).where(
-            Paciente.id == patient_id,
-            Paciente.tenant_id == tenant_id,
-            Paciente.deleted_at.is_(None),
+    raw_patient_id = payload.get("patient_id")
+    patient_id = None
+    if raw_patient_id not in (None, ""):
+        try:
+            patient_id = int(raw_patient_id)
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"error": "El paciente seleccionado no es valido."}, status_code=400
+            )
+        patient_result = await session.execute(
+            select(Paciente).where(
+                Paciente.id == patient_id,
+                Paciente.tenant_id == tenant_id,
+                Paciente.deleted_at.is_(None),
+            )
         )
-    )
-    paciente = patient_result.scalar_one_or_none()
-    if paciente is None:
-        return JSONResponse({"error": "Paciente no encontrado."}, status_code=404)
-    from_number = (paciente.telefono or "").strip()
-    if not from_number:
-        return JSONResponse(
-            {"error": "El paciente seleccionado no tiene telefono."}, status_code=400
-        )
+        paciente = patient_result.scalar_one_or_none()
+        if paciente is None:
+            return JSONResponse({"error": "Paciente no encontrado."}, status_code=404)
+        from_number = (paciente.telefono or "").strip()
+        if not from_number:
+            return JSONResponse(
+                {"error": "El paciente seleccionado no tiene telefono."}, status_code=400
+            )
+    else:
+        from_number = _sanitize_phone(str(payload.get("from_number") or ""))
+        if not from_number:
+            return JSONResponse(
+                {"error": "Ingresa el telefono del paciente nuevo."}, status_code=400
+            )
 
     message = (payload.get("message") or "").strip()
     action = (payload.get("action") or "").strip()
@@ -2268,7 +2275,8 @@ async def chat_simulator_api(
     history.append({"message": message, "reply": reply_text, "patient_id": patient_id})
     request.session[history_key] = history[-20:]
     request.session[_tenant_chat_session_key(tenant_id, "defaults")] = {
-        "patient_id": patient_id
+        "patient_id": patient_id,
+        "from_number": from_number if patient_id is None else "",
     }
 
     normalized_phone = "".join(character for character in from_number if character.isdigit())
@@ -2288,6 +2296,7 @@ async def chat_simulator_api(
 async def chat_simulator_reset(
     request: Request,
     patient_id: str = Form(""),
+    from_number: str = Form(""),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("conversation:read")),
     session: AsyncSession = Depends(get_async_session),
@@ -2295,32 +2304,43 @@ async def chat_simulator_reset(
     validate_csrf(request, csrf_token)
     tenant_id = int(user.tenant_id)
     request.session[_tenant_chat_session_key(tenant_id, "history")] = []
-    try:
-        patient_id_int = int(patient_id)
-    except (TypeError, ValueError):
-        add_flash(request, "error", "Selecciona un paciente para reiniciar la conversacion.")
-        return RedirectResponse("/t/chat-simulator", status_code=303)
-
-    result = await session.execute(
-        select(Paciente).where(
-            Paciente.id == patient_id_int,
-            Paciente.tenant_id == tenant_id,
-            Paciente.deleted_at.is_(None),
+    patient_id_int = None
+    phone = _sanitize_phone(from_number)
+    if patient_id:
+        try:
+            patient_id_int = int(patient_id)
+        except (TypeError, ValueError):
+            add_flash(request, "error", "El paciente seleccionado no es valido.")
+            return RedirectResponse("/t/chat-simulator", status_code=303)
+        result = await session.execute(
+            select(Paciente).where(
+                Paciente.id == patient_id_int,
+                Paciente.tenant_id == tenant_id,
+                Paciente.deleted_at.is_(None),
+            )
         )
-    )
-    paciente = result.scalar_one_or_none()
-    if paciente is None:
-        add_flash(request, "error", "Paciente no encontrado.")
+        paciente = result.scalar_one_or_none()
+        if paciente is None:
+            add_flash(request, "error", "Paciente no encontrado.")
+            return RedirectResponse("/t/chat-simulator", status_code=303)
+        phone = paciente.telefono
+    if not phone:
+        add_flash(
+            request,
+            "error",
+            "Selecciona un paciente o ingresa el telefono del paciente nuevo.",
+        )
         return RedirectResponse("/t/chat-simulator", status_code=303)
     async with session.begin_nested():
         await ConversacionRepository(session).mark_resolved(
             tenant_id,
-            paciente.telefono,
+            phone,
             resolved_by=user.id,
             close_reason="simulator_reset",
         )
     request.session[_tenant_chat_session_key(tenant_id, "defaults")] = {
-        "patient_id": patient_id_int
+        "patient_id": patient_id_int,
+        "from_number": phone if patient_id_int is None else "",
     }
     add_flash(request, "success", "Conversacion reiniciada.")
     return RedirectResponse("/t/chat-simulator", status_code=303)
