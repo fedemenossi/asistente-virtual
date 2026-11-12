@@ -306,13 +306,22 @@ def test_simulator_combines_modalities_in_chronological_rounds_and_reserves_serv
     assert len(re.findall(r"^\d+\)", first_round, flags=re.MULTILINE)) == 5
     assert "(Presencial)" in first_round
     assert "(Virtual)" in first_round
-    assert first_round.index("10:00") < first_round.index("12:00") < first_round.index("13:00")
+    assert (
+        first_round.index("10:00")
+        < first_round.index("11:00")
+        < first_round.index("12:00")
+        < first_round.index("13:00")
+        < first_round.index("14:00")
+    )
+    assert "15:00" not in first_round
     assert "16:00" not in first_round
     assert "17:00" not in first_round
 
     second_round = send("mas opciones")
 
     assert "16:00" in second_round
+    assert "15:00" in second_round
+    assert "17:00" in second_round
     assert "10:00" not in second_round
     assert "12:00" not in second_round
     assert "13:00" not in second_round

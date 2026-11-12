@@ -1673,7 +1673,7 @@ class ConversationService:
             for slot in result.get("slots") or []
             if slot.get("slot_id") not in previously_offered
         ]
-        slots = self._one_slot_per_day(candidates, limit=limit)
+        slots = candidates[:limit]
         self._log_ai_tool(
             tenant_id=tenant.id,
             phone=phone,
@@ -2927,20 +2927,6 @@ class ConversationService:
         if appointment_type == "both":
             return "presencial o virtual"
         return "presencial" if appointment_type == "presential" else "virtual"
-
-    @staticmethod
-    def _one_slot_per_day(slots: list[dict], *, limit: int) -> list[dict]:
-        selected: list[dict] = []
-        seen_days: set[str] = set()
-        for slot in sorted(slots, key=lambda item: str(item.get("start_at") or "")):
-            day = str(slot.get("start_at") or "")[:10]
-            if not day or day in seen_days:
-                continue
-            selected.append(slot)
-            seen_days.add(day)
-            if len(selected) >= limit:
-                break
-        return selected
 
     @staticmethod
     def _modality_label(appointment_type: str | None) -> str:
