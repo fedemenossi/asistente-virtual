@@ -9,7 +9,13 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
-from app.integrations.interfaces import CalendarProvider, CalendarSlot
+from app.integrations.interfaces import (
+    CalendarConfigurationError,
+    CalendarProvider,
+    CalendarReservationError,
+    CalendarSlot,
+    CalendarSlotUnavailableError,
+)
 from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
@@ -44,23 +50,6 @@ class GoogleCalendarProvider(CalendarProvider):
         if self._delegated_user:
             creds = creds.with_subject(self._delegated_user)
         return build("calendar", "v3", credentials=creds, cache_discovery=False)
-
-    def _calendar_supports_google_meet(self, service) -> bool:
-        try:
-            calendar = service.calendars().get(calendarId=self._calendar_id).execute()
-        except HttpError as exc:
-            logger.exception(
-                "google_calendar_conference_capabilities_failed calendar_id=%s status=%s reason=%s content=%s",
-                _mask_calendar_id(self._calendar_id),
-                getattr(getattr(exc, "resp", None), "status", None),
-                getattr(getattr(exc, "resp", None), "reason", None),
-                _safe_http_error_content(exc),
-            )
-            return False
-        conference_types = (
-            ((calendar.get("conferenceProperties") or {}).get("allowedConferenceSolutionTypes") or [])
-        )
-        return "hangoutsMeet" in conference_types
 
     @staticmethod
     def _is_slot_available(event: dict, tags: list[str] | None) -> bool:
@@ -395,7 +384,18 @@ class GoogleCalendarProvider(CalendarProvider):
                 getattr(getattr(exc, "resp", None), "reason", None),
                 _safe_http_error_content(exc),
             )
-            raise
+            status = getattr(getattr(exc, "resp", None), "status", None)
+            if status == 404:
+                raise CalendarSlotUnavailableError(
+                    "El horario ya no existe en Google Calendar."
+                ) from exc
+            if status == 403:
+                raise CalendarConfigurationError(
+                    "La cuenta de servicio no tiene permisos para modificar este calendario."
+                ) from exc
+            raise CalendarReservationError(
+                "Google Calendar no pudo consultar el horario."
+            ) from exc
         if not self._is_slot_available(event, tags):
             logger.warning(
                 "google_calendar_reserve_slot_unavailable tenant_id=%s consultorio_id=%s calendar_id=%s event_id=%s summary=%s slot_status=%s",
@@ -410,7 +410,7 @@ class GoogleCalendarProvider(CalendarProvider):
                     or ""
                 ),
             )
-            raise RuntimeError("Slot no disponible")
+            raise CalendarSlotUnavailableError("Slot no disponible")
 
         patient_full_name = f"{patient.nombre} {patient.apellido}".strip()
         patient_block = (
@@ -439,17 +439,6 @@ class GoogleCalendarProvider(CalendarProvider):
         }
         consultorio_type = consultorio.tipo.value if hasattr(consultorio.tipo, "value") else str(consultorio.tipo)
         should_create_meet = consultorio_type == "virtual" and require_google_meet
-        if should_create_meet and not self._calendar_supports_google_meet(service):
-            logger.warning(
-                "google_calendar_reserve_meet_not_supported tenant_id=%s consultorio_id=%s calendar_id=%s event_id=%s",
-                tenant.id,
-                consultorio.id,
-                _mask_calendar_id(self._calendar_id),
-                slot_id,
-            )
-            raise RuntimeError(
-                "Este calendario no permite generar Google Meet. Revisá la configuración de Google Calendar/Workspace."
-            )
         if should_create_meet:
             body["conferenceData"] = {
                 "createRequest": {
@@ -485,10 +474,20 @@ class GoogleCalendarProvider(CalendarProvider):
                 content,
             )
             if should_create_meet and "Invalid conference type value" in content:
-                raise RuntimeError(
-                    "Este calendario no permite generar Google Meet. Revisá la configuración de Google Calendar/Workspace."
+                raise CalendarConfigurationError(
+                    "Este calendario no permite generar Google Meet. "
+                    "Revisa la configuracion de Google Calendar/Workspace."
                 ) from exc
-            raise
+            status = getattr(getattr(exc, "resp", None), "status", None)
+            if status == 403:
+                raise CalendarConfigurationError(
+                    "La cuenta de servicio no tiene permisos para modificar este calendario."
+                ) from exc
+            if status in {404, 409}:
+                raise CalendarSlotUnavailableError(
+                    "El horario ya no esta disponible en Google Calendar."
+                ) from exc
+            raise CalendarReservationError("Google Calendar rechazo la reserva.") from exc
         start_info = updated.get("start") or {}
         end_info = updated.get("end") or {}
         return {

@@ -8,6 +8,10 @@ import re
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.timezone import get_ba_tz, now_ba
+from app.integrations.interfaces import (
+    CalendarConfigurationError,
+    CalendarSlotUnavailableError,
+)
 from app.models.paciente import Paciente
 from app.models.patient_contact_link import PatientContactLinkStatus
 from app.models.payment import PaymentReuseStatus
@@ -1978,9 +1982,9 @@ class ConversationService:
                 timezone_name=str(selected.get("timezone") or "America/Argentina/Buenos_Aires"),
                 eligibility_context=self._eligibility_snapshot(context),
             )
-        except Exception:
+        except CalendarSlotUnavailableError:
             logger.exception(
-                "chat_google_booking_failed tenant_id=%s phone=%s consultorio_id=%s",
+                "chat_calendar_slot_unavailable tenant_id=%s phone=%s consultorio_id=%s",
                 tenant.id,
                 phone,
                 consultorio_id,
@@ -1991,6 +1995,22 @@ class ConversationService:
                 context=context,
                 original_text=original_text,
                 has_media=has_media,
+            )
+        except Exception as exc:
+            logger.exception(
+                "chat_calendar_booking_failed tenant_id=%s phone=%s consultorio_id=%s error=%s",
+                tenant.id,
+                phone,
+                consultorio_id,
+                type(exc).__name__,
+            )
+            return await self._booking_system_failure_reply(
+                tenant=tenant,
+                phone=phone,
+                context=context,
+                original_text=original_text,
+                has_media=has_media,
+                configuration_error=isinstance(exc, CalendarConfigurationError),
             )
 
         appointment["booking_result"] = {
@@ -2294,6 +2314,50 @@ class ConversationService:
             force_manual_on_unavailable=False,
         )
         return f"No pude reservar ese horario porque ya no esta disponible. No confirme ningun turno.\n{follow_up}"
+
+    async def _booking_system_failure_reply(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        context: dict,
+        original_text: str,
+        has_media: bool,
+        configuration_error: bool,
+    ) -> str:
+        appointment = context.setdefault("appointment", {})
+        appointment["selected_slot"] = None
+        appointment["awaiting_booking_confirmation"] = False
+        appointment["awaiting_slot_selection"] = False
+        await self._set_pending(
+            tenant=tenant,
+            phone=phone,
+            reason=(
+                "error_configuracion_calendario"
+                if configuration_error
+                else "error_reserva_calendario"
+            ),
+            message=(
+                "La agenda externa permitio consultar horarios pero rechazo la reserva. "
+                "Revisar permisos de edicion y configuracion de Google Meet."
+            ),
+            title="Error al confirmar turno en la agenda",
+            category=self._appointment_category_from_context(context),
+            subtype=None,
+            requires_human_review=True,
+            has_media=has_media,
+            last_patient_message=original_text,
+            media_items=[],
+        )
+        if configuration_error:
+            return (
+                "No pude completar la reserva por un problema de configuracion de la agenda. "
+                "No confirme ningun turno y avise al consultorio para que lo revise."
+            )
+        return (
+            "No pude completar la reserva por un problema con la agenda. "
+            "No confirme ningun turno y avise al consultorio para que lo revise."
+        )
 
     @staticmethod
     def _appointment_requires_payment(context: dict, paciente: Paciente | None) -> bool:

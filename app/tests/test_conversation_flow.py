@@ -17,7 +17,11 @@ from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.services.conversation_service import ConversationService, ConversationState
 from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_turno, create_user, get_tenant, login
-from app.integrations.interfaces import CalendarSlot
+from app.integrations.interfaces import (
+    CalendarConfigurationError,
+    CalendarSlot,
+    CalendarSlotUnavailableError,
+)
 from app.models.consultorio import TipoConsultorio
 from app.models.paciente import Paciente
 from app.models.patient_contact_link import PatientContactLink
@@ -1320,7 +1324,7 @@ def test_simulator_api_does_not_confirm_when_google_rejects_the_slot(client, db_
     asyncio.run(seed_confirmation_state())
 
     async def rejected_reservation(self, tenant, consultorio, slot_id, patient, metadata):
-        raise RuntimeError("Slot no disponible")
+        raise CalendarSlotUnavailableError("Slot no disponible")
 
     async def no_more_slots(self, tenant, consultorio, window_start, window_end):
         return []
@@ -1356,6 +1360,37 @@ def test_simulator_api_does_not_confirm_when_google_rejects_the_slot(client, db_
     assert turnos[0].status == AppointmentStatus.CANCELLED
     assert not any(turno.status == AppointmentStatus.CONFIRMED for turno in turnos)
     assert state.status == "active"
+
+    asyncio.run(seed_confirmation_state())
+
+    async def rejected_by_configuration(
+        self, tenant, consultorio, slot_id, patient, metadata
+    ):
+        raise CalendarConfigurationError(
+            "La cuenta de servicio no tiene permisos para modificar este calendario."
+        )
+
+    monkeypatch.setattr(
+        "app.services.calendar_service.CalendarService.reserve_slot",
+        rejected_by_configuration,
+    )
+    configuration_response = client.post(
+        "/admin/chat-simulator/api",
+        headers={"X-CSRF-Token": _extract_csrf(simulator_page.text)},
+        json={
+            "to_number": "whatsapp:+738",
+            "from_number": f"whatsapp:+{phone}",
+            "patient_id": paciente_id,
+            "message": "1",
+        },
+    )
+
+    assert configuration_response.status_code == 200
+    assert "problema de configuracion de la agenda" in configuration_response.json()["reply"]
+    assert "Encontre estos turnos" not in configuration_response.json()["reply"]
+
+    _, configuration_state = asyncio.run(load_result())
+    assert configuration_state.status == "pending"
 
 
 def test_tools_high_urgency_does_not_lookup(monkeypatch, db_session):

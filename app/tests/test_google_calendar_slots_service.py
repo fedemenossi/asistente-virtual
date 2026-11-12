@@ -610,7 +610,9 @@ def test_google_provider_adds_meet_only_for_virtual_consultorio(db_session, monk
     assert "conferenceData" not in presential_event[0]
 
 
-def test_google_provider_rejects_virtual_when_meet_required_and_calendar_does_not_support_it(db_session, monkeypatch):
+def test_google_provider_attempts_authoritative_meet_creation_without_preflight_false_negative(
+    db_session, monkeypatch
+):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Meet Required", "whatsapp:+9417"))
     consultorio_id = asyncio.run(
         create_consultorio(
@@ -647,13 +649,13 @@ def test_google_provider_rejects_virtual_when_meet_required_and_calendar_does_no
     provider = GoogleCalendarProvider("cal-no-meet", "{}")
     monkeypatch.setattr(provider, "_build_service", lambda: _FakeService(events, supports_meet=False))
 
-    try:
-        asyncio.run(provider.reserve_slot(tenant, consultorio, "evt-no-meet", paciente, {}))
-    except RuntimeError as exc:
-        assert "no permite generar Google Meet" in str(exc)
-    else:
-        raise AssertionError("calendario sin Meet aceptado para virtual requerido")
-    assert events[0]["summary"] == "[TURNO DISPONIBLE]"
+    reserve = asyncio.run(
+        provider.reserve_slot(tenant, consultorio, "evt-no-meet", paciente, {})
+    )
+
+    assert reserve["event_id"] == "evt-no-meet"
+    assert "conferenceData" in events[0]
+    assert events[0]["summary"] == "TURNO [Ana Gomez]"
 
 
 def test_google_provider_can_reserve_virtual_without_meet_when_not_required(db_session, monkeypatch):

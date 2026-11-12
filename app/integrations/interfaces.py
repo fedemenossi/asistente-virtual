@@ -9,6 +9,18 @@ from app.models.paciente import Paciente
 from app.models.tenant import Tenant
 
 
+class CalendarReservationError(RuntimeError):
+    """Base error for failures while committing an external reservation."""
+
+
+class CalendarSlotUnavailableError(CalendarReservationError):
+    """The selected external slot is no longer available."""
+
+
+class CalendarConfigurationError(CalendarReservationError):
+    """The external calendar cannot accept reservations with its current setup."""
+
+
 @dataclass
 class CalendarSlot:
     slot_id: str

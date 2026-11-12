@@ -458,7 +458,7 @@ def test_simulator_does_not_confirm_drapp_turno_when_provider_times_out(
 
     assert response.status_code == 200
     reply = response.json()["reply"]
-    assert "No pude reservar ese horario" in reply
+    assert "No pude completar la reserva por un problema con la agenda" in reply
     assert "Turno confirmado" not in reply
     assert "timeout-private-password" not in reply
 

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import audit_log
 from app.core.notifications import create_notification
 from app.core.timezone import get_ba_tz, now_ba
+from app.integrations.interfaces import CalendarSlotUnavailableError
 from app.models.consultorio import Consultorio, TipoConsultorio
 from app.models.paciente import Paciente
 from app.models.patient_credit import PatientCredit, PatientCreditStatus
@@ -141,18 +142,27 @@ class AppointmentService:
                 paciente,
                 {"tenant_id": tenant.id},
             )
-        except Exception:
+        except Exception as exc:
+            slot_unavailable = isinstance(exc, CalendarSlotUnavailableError)
             turno.status = AppointmentStatus.CANCELLED
             turno.estado = EstadoTurno.CANCELADO
             turno.external_status = "sync_failed"
             turno.cancelled_at = now_ba()
-            turno.cancellation_reason = "slot_unavailable"
+            turno.cancellation_reason = (
+                "slot_unavailable"
+                if slot_unavailable
+                else "calendar_reservation_failed"
+            )
             turno.rescheduled_from_id = None
             await audit_log(
                 self._session,
                 None,
                 None,
-                action="slot_unavailable",
+                action=(
+                    "slot_unavailable"
+                    if slot_unavailable
+                    else "calendar_reservation_failed"
+                ),
                 entity="turno",
                 entity_id=turno.id,
                 tenant_id=tenant.id,

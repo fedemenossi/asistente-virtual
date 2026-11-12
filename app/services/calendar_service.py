@@ -5,13 +5,18 @@ import logging
 from fastapi import HTTPException, status
 
 from app.integrations.cabildo_provider import CabildoProvider
+from app.integrations.consultorio_movil import CabildoSlotUnavailable
 from app.integrations.drapp_provider import DrAppProvider
 from app.integrations.google_calendar_provider import (
     GoogleCalendarProvider,
     get_google_service_account_email,
     resolve_google_credentials,
 )
-from app.integrations.interfaces import CalendarProvider, CalendarSlot
+from app.integrations.interfaces import (
+    CalendarProvider,
+    CalendarSlot,
+    CalendarSlotUnavailableError,
+)
 from app.models.consultorio import Consultorio
 from app.models.paciente import Paciente
 from app.models.tenant import Tenant
@@ -169,7 +174,12 @@ class CalendarService:
         metadata: dict,
     ) -> dict:
         provider = self._get_provider(tenant, consultorio)
-        return await provider.reserve_slot(tenant, consultorio, slot_id, patient, metadata)
+        try:
+            return await provider.reserve_slot(
+                tenant, consultorio, slot_id, patient, metadata
+            )
+        except CabildoSlotUnavailable as exc:
+            raise CalendarSlotUnavailableError(str(exc)) from exc
 
     async def generate_available_slots(
         self,
