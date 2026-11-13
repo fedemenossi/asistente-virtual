@@ -12,7 +12,10 @@ from app.integrations.google_calendar_provider import (
     GoogleCalendarProvider,
     resolve_google_credentials,
 )
-from app.integrations.google_oauth import resolve_google_oauth_credentials
+from app.integrations.google_oauth import (
+    build_google_oauth_flow,
+    resolve_google_oauth_credentials,
+)
 from app.models.consultorio import TipoConsultorio
 from app.models.user import UserRole
 from app.services.calendar_service import CalendarService
@@ -69,6 +72,28 @@ def test_google_oauth_credentials_are_built_from_tenant_refresh_token():
     assert credentials.client_id == "client.apps.googleusercontent.com"
     assert credentials.client_secret == "client-secret"
     assert credentials.refresh_token == "refresh-token"
+
+
+def test_google_oauth_flow_reuses_pkce_verifier_during_callback():
+    settings = {
+        "google_oauth_client_id": "client.apps.googleusercontent.com",
+        "google_oauth_client_secret": "client-secret",
+    }
+    initial_flow = build_google_oauth_flow(
+        settings,
+        "https://salud.nubelio.app/t/settings/calendar/oauth/callback",
+    )
+    initial_flow.authorization_url(access_type="offline")
+
+    callback_flow = build_google_oauth_flow(
+        settings,
+        "https://salud.nubelio.app/t/settings/calendar/oauth/callback",
+        state="oauth-state",
+        code_verifier=initial_flow.code_verifier,
+    )
+
+    assert initial_flow.code_verifier
+    assert callback_flow.code_verifier == initial_flow.code_verifier
 
 
 def test_calendar_service_prefers_tenant_oauth_for_personal_google_calendar():

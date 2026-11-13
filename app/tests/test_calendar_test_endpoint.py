@@ -146,6 +146,8 @@ def test_google_oauth_start_and_callback_store_token_only_in_current_tenant(
     )
 
     class FakeFlow:
+        code_verifier = "pkce-verifier"
+
         def authorization_url(self, **kwargs):
             assert kwargs["access_type"] == "offline"
             assert kwargs["prompt"] == "consent"
@@ -155,11 +157,15 @@ def test_google_oauth_start_and_callback_store_token_only_in_current_tenant(
         "app.web.tenant.views.build_google_oauth_flow",
         lambda settings, redirect_uri, state=None: FakeFlow(),
     )
+    exchanged = {}
+
+    def _fake_exchange(settings, redirect_uri, code, state, code_verifier):
+        exchanged["code_verifier"] = code_verifier
+        return SimpleNamespace(refresh_token="tenant-refresh-token")
+
     monkeypatch.setattr(
         "app.web.tenant.views.exchange_google_oauth_code",
-        lambda settings, redirect_uri, code, state: SimpleNamespace(
-            refresh_token="tenant-refresh-token"
-        ),
+        _fake_exchange,
     )
     monkeypatch.setattr(
         "app.web.tenant.views.get_google_oauth_account_email",
@@ -194,6 +200,7 @@ def test_google_oauth_start_and_callback_store_token_only_in_current_tenant(
     settings = asyncio.run(_get_settings(tenant_id))
     assert settings["google_oauth_refresh_token"] == "tenant-refresh-token"
     assert settings["google_oauth_email"] == "fmenossi@gmail.com"
+    assert exchanged["code_verifier"] == "pkce-verifier"
     assert (
         asyncio.run(_get_settings(other_tenant_id))["google_oauth_refresh_token"]
         == "other-token"

@@ -3213,6 +3213,7 @@ async def calendar_oauth_start(
 
     request.session["google_calendar_oauth"] = {
         "state": state,
+        "code_verifier": flow.code_verifier,
         "tenant_id": int(user.tenant_id),
         "issued_at": int(datetime.now(timezone.utc).timestamp()),
     }
@@ -3229,6 +3230,7 @@ async def calendar_oauth_callback(
 ) -> RedirectResponse:
     oauth_session = request.session.pop("google_calendar_oauth", None) or {}
     expected_state = str(oauth_session.get("state") or "")
+    code_verifier = str(oauth_session.get("code_verifier") or "")
     issued_at = int(oauth_session.get("issued_at") or 0)
     now_timestamp = int(datetime.now(timezone.utc).timestamp())
     valid_state = bool(
@@ -3236,6 +3238,7 @@ async def calendar_oauth_callback(
         and expected_state
         and secrets.compare_digest(state, expected_state)
         and int(oauth_session.get("tenant_id") or 0) == int(user.tenant_id)
+        and code_verifier
         and 0 <= now_timestamp - issued_at <= 600
     )
     if error:
@@ -3255,6 +3258,7 @@ async def calendar_oauth_callback(
             redirect_uri,
             code,
             state,
+            code_verifier,
         )
         refresh_token = str(credentials.refresh_token or "").strip()
         if not refresh_token:

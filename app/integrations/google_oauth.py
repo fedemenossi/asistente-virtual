@@ -33,6 +33,7 @@ def build_google_oauth_flow(
     redirect_uri: str,
     *,
     state: str | None = None,
+    code_verifier: str | None = None,
 ) -> Flow:
     client_config = {
         "web": {
@@ -51,6 +52,8 @@ def build_google_oauth_flow(
         client_config,
         scopes=GOOGLE_CALENDAR_SCOPES,
         state=state,
+        code_verifier=code_verifier,
+        autogenerate_code_verifier=code_verifier is None,
     )
     flow.redirect_uri = redirect_uri
     return flow
@@ -61,8 +64,14 @@ def exchange_google_oauth_code(
     redirect_uri: str,
     code: str,
     state: str,
+    code_verifier: str,
 ) -> Credentials:
-    flow = build_google_oauth_flow(calendar_settings, redirect_uri, state=state)
+    flow = build_google_oauth_flow(
+        calendar_settings,
+        redirect_uri,
+        state=state,
+        code_verifier=code_verifier,
+    )
     flow.fetch_token(code=code)
     return flow.credentials
 
