@@ -12,6 +12,7 @@ from app.integrations.google_calendar_provider import (
     get_google_service_account_email,
     resolve_google_credentials,
 )
+from app.integrations.google_oauth import resolve_google_oauth_credentials
 from app.integrations.interfaces import (
     CalendarProvider,
     CalendarSlot,
@@ -71,7 +72,10 @@ class CalendarService:
             bool(consultorio_settings.get("calendar_id")),
             bool(settings.get("google_calendar_id")),
             _mask_calendar_id(calendar_id),
-            bool(settings.get("google_credentials_json")),
+            bool(
+                settings.get("google_oauth_refresh_token")
+                or settings.get("google_credentials_json")
+            ),
             bool(settings.get("google_delegated_user")),
         )
         if not calendar_id:
@@ -80,7 +84,8 @@ class CalendarService:
                 detail="Calendario no configurado",
             )
         credentials_json, delegated_user = resolve_google_credentials(settings)
-        if not credentials_json:
+        oauth_credentials = resolve_google_oauth_credentials(settings)
+        if not oauth_credentials and not credentials_json:
             logger.warning(
                 "calendar_provider_missing_google_credentials tenant_id=%s consultorio_id=%s calendar_id=%s",
                 tenant.id,
@@ -91,7 +96,12 @@ class CalendarService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Credenciales de Google no configuradas",
             )
-        return GoogleCalendarProvider(calendar_id, credentials_json, delegated_user)
+        return GoogleCalendarProvider(
+            calendar_id,
+            credentials_json or "",
+            delegated_user,
+            oauth_credentials=oauth_credentials,
+        )
 
     def list_google_calendars(self, tenant: Tenant, candidate_calendar_id: str | None = None) -> list[dict[str, str]]:
         settings = tenant.calendar_settings or {}
@@ -117,8 +127,8 @@ class CalendarService:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
                     "No se pudo acceder a estos calendarios: "
-                    f"{', '.join(missing_ids)}. Verifica los IDs y compartilos con la service account "
-                    "con permisos para modificar eventos."
+                    f"{', '.join(missing_ids)}. Verifica los IDs y que la cuenta de Google "
+                    "conectada tenga permisos para modificar eventos."
                 ),
             )
         return calendars
@@ -129,12 +139,18 @@ class CalendarService:
         candidate_calendar_ids: list[str],
     ) -> list[dict[str, str]]:
         credentials_json, delegated_user = resolve_google_credentials(settings)
-        if not credentials_json:
+        oauth_credentials = resolve_google_oauth_credentials(settings)
+        if not oauth_credentials and not credentials_json:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Credenciales de Google no configuradas",
             )
-        provider = GoogleCalendarProvider("primary", credentials_json, delegated_user)
+        provider = GoogleCalendarProvider(
+            "primary",
+            credentials_json or "",
+            delegated_user,
+            oauth_credentials=oauth_credentials,
+        )
         calendars = provider.list_calendars()
         for calendar_id in _normalize_calendar_ids(candidate_calendar_ids):
             calendars.extend(provider.list_calendars(calendar_id))

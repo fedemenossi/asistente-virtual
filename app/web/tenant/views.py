@@ -58,6 +58,13 @@ from app.integrations.consultorio_movil import (
     CabildoConfigError,
     list_next_presential_slots,
 )
+from app.integrations.google_oauth import (
+    build_google_oauth_flow,
+    exchange_google_oauth_code,
+    get_google_oauth_account_email,
+    has_google_oauth_client,
+    has_google_oauth_connection,
+)
 from app.services.appointment_service import AppointmentService
 from app.services.conversation_intents import (
     CATEGORY_LABELS,
@@ -2953,7 +2960,21 @@ def _parse_calendar_settings(tenant: Tenant) -> dict:
         "google_credentials_json": settings.get("google_credentials_json", ""),
         "google_delegated_user": settings.get("google_delegated_user", ""),
         "google_calendar_ids": "\n".join(str(value) for value in calendar_ids if str(value).strip()),
+        "google_oauth_client_id": settings.get("google_oauth_client_id", ""),
+        "google_oauth_client_secret_configured": bool(
+            settings.get("google_oauth_client_secret")
+        ),
+        "google_oauth_connected": has_google_oauth_connection(settings),
+        "google_oauth_email": settings.get("google_oauth_email", ""),
     }
+
+
+def _google_oauth_redirect_uri(request: Request) -> str:
+    callback_path = request.url_for("tenant_calendar_oauth_callback").path
+    public_base_url = (get_settings().public_base_url or "").strip().rstrip("/")
+    if public_base_url:
+        return f"{public_base_url}{callback_path}"
+    return str(request.url_for("tenant_calendar_oauth_callback"))
 
 
 def _parse_whatsapp_settings(tenant: Tenant) -> dict:
@@ -3059,6 +3080,7 @@ async def calendar_settings_get(
             "tenant": tenant,
             "calendar_settings": _parse_calendar_settings(tenant),
             "google_service_account_email": CalendarService().get_google_service_account_email(tenant),
+            "google_oauth_redirect_uri": _google_oauth_redirect_uri(request),
         },
     )
 
@@ -3071,6 +3093,8 @@ async def calendar_settings_post(
     google_credentials_json: str = Form(""),
     google_delegated_user: str = Form(""),
     google_calendar_ids: str = Form(""),
+    google_oauth_client_id: str = Form(""),
+    google_oauth_client_secret: str = Form(""),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("settings:write")),
     session: AsyncSession = Depends(get_async_session),
@@ -3091,8 +3115,20 @@ async def calendar_settings_post(
             "google_credentials_json": google_credentials_json.strip(),
             "google_delegated_user": google_delegated_user.strip(),
             "google_calendar_ids": calendar_ids,
+            "google_oauth_client_id": google_oauth_client_id.strip(),
+            "google_oauth_client_secret": (
+                google_oauth_client_secret.strip()
+                or previous_settings.get("google_oauth_client_secret", "")
+            ),
+            "google_oauth_refresh_token": previous_settings.get(
+                "google_oauth_refresh_token", ""
+            ),
+            "google_oauth_email": previous_settings.get("google_oauth_email", ""),
         }
-        if new_settings["google_credentials_json"] or calendar_ids:
+        if (
+            new_settings["google_credentials_json"]
+            or new_settings["google_oauth_refresh_token"]
+        ):
             try:
                 new_settings["google_calendars"] = CalendarService().register_google_calendars(
                     new_settings,
@@ -3109,7 +3145,11 @@ async def calendar_settings_post(
                 )
                 return RedirectResponse("/t/settings/calendar", status_code=303)
         else:
-            new_settings["google_calendars"] = []
+            # En el alta inicial de OAuth todavia no existe un refresh token.
+            # Permitimos guardar el Client ID/Secret antes de redirigir a Google.
+            new_settings["google_calendars"] = previous_settings.get(
+                "google_calendars", []
+            )
         tenant.calendar_settings = new_settings
         await audit_log(
             session,
@@ -3120,6 +3160,140 @@ async def calendar_settings_post(
             entity_id=tenant.id,
         )
     add_flash(request, "success", "Configuracion de calendario actualizada")
+    return RedirectResponse("/t/settings/calendar", status_code=303)
+
+
+async def calendar_oauth_start(
+    request: Request,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("settings:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    settings = tenant.calendar_settings or {}
+    if not has_google_oauth_client(settings):
+        add_flash(
+            request,
+            "error",
+            "Guarda primero el OAuth Client ID y el OAuth Client Secret de Google.",
+        )
+        return RedirectResponse("/t/settings/calendar", status_code=303)
+
+    redirect_uri = _google_oauth_redirect_uri(request)
+    try:
+        flow = build_google_oauth_flow(settings, redirect_uri)
+        authorization_url, state = flow.authorization_url(
+            access_type="offline",
+            prompt="consent",
+            include_granted_scopes="true",
+        )
+    except Exception:
+        logger.exception("google_oauth_start_failed tenant_id=%s", tenant.id)
+        add_flash(request, "error", "No se pudo iniciar la conexion con Google.")
+        return RedirectResponse("/t/settings/calendar", status_code=303)
+
+    request.session["google_calendar_oauth"] = {
+        "state": state,
+        "tenant_id": int(user.tenant_id),
+        "issued_at": int(datetime.now(timezone.utc).timestamp()),
+    }
+    return RedirectResponse(authorization_url, status_code=303)
+
+
+async def calendar_oauth_callback(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    user: CurrentUser = Depends(require_permission("settings:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    oauth_session = request.session.pop("google_calendar_oauth", None) or {}
+    expected_state = str(oauth_session.get("state") or "")
+    issued_at = int(oauth_session.get("issued_at") or 0)
+    now_timestamp = int(datetime.now(timezone.utc).timestamp())
+    valid_state = bool(
+        state
+        and expected_state
+        and secrets.compare_digest(state, expected_state)
+        and int(oauth_session.get("tenant_id") or 0) == int(user.tenant_id)
+        and 0 <= now_timestamp - issued_at <= 600
+    )
+    if error:
+        add_flash(request, "error", "Google no autorizo el acceso al calendario.")
+        return RedirectResponse("/t/settings/calendar", status_code=303)
+    if not code or not valid_state:
+        add_flash(request, "error", "La autorizacion de Google vencio o no es valida.")
+        return RedirectResponse("/t/settings/calendar", status_code=303)
+
+    tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+    settings = dict(tenant.calendar_settings or {})
+    redirect_uri = _google_oauth_redirect_uri(request)
+    try:
+        credentials = await asyncio.to_thread(
+            exchange_google_oauth_code,
+            settings,
+            redirect_uri,
+            code,
+            state,
+        )
+        refresh_token = str(credentials.refresh_token or "").strip()
+        if not refresh_token:
+            raise ValueError("Google no devolvio un refresh token")
+        account_email = await asyncio.to_thread(
+            get_google_oauth_account_email,
+            credentials,
+        )
+        if not account_email:
+            raise ValueError("Google no devolvio la cuenta del calendario principal")
+    except Exception:
+        logger.exception("google_oauth_callback_failed tenant_id=%s", tenant.id)
+        add_flash(
+            request,
+            "error",
+            "No se pudo completar la conexion con Google. Revisa el Client ID, el secreto y la URL de redireccion.",
+        )
+        return RedirectResponse("/t/settings/calendar", status_code=303)
+
+    async with session.begin_nested():
+        settings["google_oauth_refresh_token"] = refresh_token
+        settings["google_oauth_email"] = account_email
+        tenant.calendar_settings = settings
+        await audit_log(
+            session,
+            request,
+            user,
+            action="connect",
+            entity="google_calendar_oauth",
+            entity_id=tenant.id,
+        )
+    add_flash(request, "success", f"Google Calendar conectado como {account_email}.")
+    return RedirectResponse("/t/settings/calendar", status_code=303)
+
+
+async def calendar_oauth_disconnect(
+    request: Request,
+    csrf_token: str = Form(""),
+    user: CurrentUser = Depends(require_permission("settings:write")),
+    session: AsyncSession = Depends(get_async_session),
+) -> RedirectResponse:
+    validate_csrf(request, csrf_token)
+    async with session.begin_nested():
+        tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
+        settings = dict(tenant.calendar_settings or {})
+        settings.pop("google_oauth_refresh_token", None)
+        settings.pop("google_oauth_email", None)
+        tenant.calendar_settings = settings
+        await audit_log(
+            session,
+            request,
+            user,
+            action="disconnect",
+            entity="google_calendar_oauth",
+            entity_id=tenant.id,
+        )
+    add_flash(request, "success", "Cuenta de Google desconectada.")
     return RedirectResponse("/t/settings/calendar", status_code=303)
 
 

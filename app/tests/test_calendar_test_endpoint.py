@@ -3,12 +3,194 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import datetime, timezone
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
+
+import pytest
 
 from app.core.security import hash_password
 from app.integrations.interfaces import CalendarSlot
 from app.models.user import UserRole
 from app.services.google_calendar_slots_service import get_google_calendar_config
 from app.tests.conftest import create_consultorio, create_tenant, create_user, login
+
+
+def test_calendar_settings_shows_personal_google_oauth_connection(client, db_session):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant OAuth",
+            "whatsapp:+782",
+            calendar_settings={
+                "google_oauth_client_id": "client.apps.googleusercontent.com",
+                "google_oauth_client_secret": "secret",
+                "google_oauth_email": "fmenossi@gmail.com",
+                "google_oauth_refresh_token": "refresh-token",
+            },
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "oauth@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    login(client, "oauth@test.com", "secret-123")
+    response = client.get("/t/settings/calendar")
+
+    assert response.status_code == 200
+    assert "Conectado como" in response.text
+    assert "fmenossi@gmail.com" in response.text
+    assert 'name="google_oauth_client_id"' in response.text
+    assert 'name="google_oauth_client_secret"' in response.text
+    assert "refresh-token" not in response.text
+
+
+def test_google_oauth_start_and_callback_store_token_only_in_current_tenant(
+    client, db_session, monkeypatch
+):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant OAuth Connect",
+            "whatsapp:+783",
+            calendar_settings={
+                "google_oauth_client_id": "client.apps.googleusercontent.com",
+                "google_oauth_client_secret": "secret",
+            },
+        )
+    )
+    other_tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant OAuth Other",
+            "whatsapp:+784",
+            calendar_settings={"google_oauth_refresh_token": "other-token"},
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "oauthconnect@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    class FakeFlow:
+        def authorization_url(self, **kwargs):
+            assert kwargs["access_type"] == "offline"
+            assert kwargs["prompt"] == "consent"
+            return "https://accounts.google.com/o/oauth2/auth?state=oauth-state", "oauth-state"
+
+    monkeypatch.setattr(
+        "app.web.tenant.views.build_google_oauth_flow",
+        lambda settings, redirect_uri, state=None: FakeFlow(),
+    )
+    monkeypatch.setattr(
+        "app.web.tenant.views.exchange_google_oauth_code",
+        lambda settings, redirect_uri, code, state: SimpleNamespace(
+            refresh_token="tenant-refresh-token"
+        ),
+    )
+    monkeypatch.setattr(
+        "app.web.tenant.views.get_google_oauth_account_email",
+        lambda credentials: "fmenossi@gmail.com",
+    )
+
+    login(client, "oauthconnect@test.com", "secret-123")
+    page = client.get("/t/settings/calendar")
+    csrf = page.text.split('name="csrf_token" value="')[1].split('"')[0]
+    start = client.post(
+        "/t/settings/calendar/oauth/start",
+        data={"csrf_token": csrf},
+        follow_redirects=False,
+    )
+    assert start.status_code == 303
+    assert parse_qs(urlparse(start.headers["location"]).query)["state"] == ["oauth-state"]
+
+    callback = client.get(
+        "/t/settings/calendar/oauth/callback?code=authorization-code&state=oauth-state",
+        follow_redirects=False,
+    )
+    assert callback.status_code == 303
+    assert callback.headers["location"] == "/t/settings/calendar"
+
+    async def _get_settings(tenant_pk):
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_pk)
+            return tenant.calendar_settings
+
+    settings = asyncio.run(_get_settings(tenant_id))
+    assert settings["google_oauth_refresh_token"] == "tenant-refresh-token"
+    assert settings["google_oauth_email"] == "fmenossi@gmail.com"
+    assert (
+        asyncio.run(_get_settings(other_tenant_id))["google_oauth_refresh_token"]
+        == "other-token"
+    )
+
+
+def test_calendar_settings_can_save_oauth_client_before_google_authorization(
+    client, db_session, monkeypatch
+):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant OAuth Setup",
+            "whatsapp:+785",
+            calendar_settings={"google_calendar_ids": ["fmenossi@gmail.com"]},
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "oauthsetup@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    from app.services.calendar_service import CalendarService
+
+    monkeypatch.setattr(
+        CalendarService,
+        "register_google_calendars",
+        lambda *args, **kwargs: pytest.fail("No debe consultar Google antes de autorizar OAuth"),
+    )
+    login(client, "oauthsetup@test.com", "secret-123")
+    page = client.get("/t/settings/calendar")
+    csrf = page.text.split('name="csrf_token" value="')[1].split('"')[0]
+    response = client.post(
+        "/t/settings/calendar",
+        data={
+            "csrf_token": csrf,
+            "google_calendar_ids": "fmenossi@gmail.com",
+            "google_oauth_client_id": "client.apps.googleusercontent.com",
+            "google_oauth_client_secret": "secret",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+
+    async def _get_settings():
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            tenant = await session.get(Tenant, tenant_id)
+            return tenant.calendar_settings
+
+    settings = asyncio.run(_get_settings())
+    assert settings["google_oauth_client_id"] == "client.apps.googleusercontent.com"
+    assert settings["google_oauth_client_secret"] == "secret"
 
 
 def test_calendar_test_endpoint_validates_global_connection_without_consultorio(client, db_session, monkeypatch):

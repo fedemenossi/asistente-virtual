@@ -7,6 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -37,13 +38,22 @@ class GoogleCalendarProvider(CalendarProvider):
         calendar_id: str,
         credentials_json: str,
         delegated_user: str | None = None,
+        oauth_credentials: Credentials | None = None,
     ) -> None:
         self._calendar_id = calendar_id
         self._credentials_json = credentials_json
         self._delegated_user = delegated_user
+        self._oauth_credentials = oauth_credentials
         self._scopes = ["https://www.googleapis.com/auth/calendar"]
 
     def _build_service(self):
+        if self._oauth_credentials is not None:
+            return build(
+                "calendar",
+                "v3",
+                credentials=self._oauth_credentials,
+                cache_discovery=False,
+            )
         info = json.loads(self._credentials_json)
         creds = service_account.Credentials.from_service_account_info(
             info, scopes=self._scopes

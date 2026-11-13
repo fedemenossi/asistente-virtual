@@ -662,6 +662,27 @@ router.add_api_route(
     dependencies=[Depends(require_feature("settings_calendar"))],
 )
 router.add_api_route(
+    "/settings/calendar/oauth/start",
+    views.calendar_oauth_start,
+    methods=["POST"],
+    name="tenant_calendar_oauth_start",
+    dependencies=[Depends(require_feature("settings_calendar"))],
+)
+router.add_api_route(
+    "/settings/calendar/oauth/callback",
+    views.calendar_oauth_callback,
+    methods=["GET"],
+    name="tenant_calendar_oauth_callback",
+    dependencies=[Depends(require_feature("settings_calendar"))],
+)
+router.add_api_route(
+    "/settings/calendar/oauth/disconnect",
+    views.calendar_oauth_disconnect,
+    methods=["POST"],
+    name="tenant_calendar_oauth_disconnect",
+    dependencies=[Depends(require_feature("settings_calendar"))],
+)
+router.add_api_route(
     "/settings/billing-arca",
     views.billing_arca_settings,
     methods=["GET"],

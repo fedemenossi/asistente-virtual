@@ -12,6 +12,7 @@ from app.integrations.google_calendar_provider import (
     GoogleCalendarProvider,
     resolve_google_credentials,
 )
+from app.integrations.google_oauth import resolve_google_oauth_credentials
 from app.models.consultorio import TipoConsultorio
 from app.models.user import UserRole
 from app.services.calendar_service import CalendarService
@@ -53,6 +54,47 @@ def test_google_credentials_are_resolved_only_from_tenant_settings(monkeypatch):
             "google_delegated_user": "tenant-user@example.com",
         }
     ) == ("tenant-credentials", "tenant-user@example.com")
+
+
+def test_google_oauth_credentials_are_built_from_tenant_refresh_token():
+    credentials = resolve_google_oauth_credentials(
+        {
+            "google_oauth_client_id": "client.apps.googleusercontent.com",
+            "google_oauth_client_secret": "client-secret",
+            "google_oauth_refresh_token": "refresh-token",
+        }
+    )
+
+    assert credentials is not None
+    assert credentials.client_id == "client.apps.googleusercontent.com"
+    assert credentials.client_secret == "client-secret"
+    assert credentials.refresh_token == "refresh-token"
+
+
+def test_calendar_service_prefers_tenant_oauth_for_personal_google_calendar():
+    tenant = SimpleNamespace(
+        id=1,
+        calendar_settings={
+            "google_credentials_json": '{"client_email":"legacy@example.com"}',
+            "google_oauth_client_id": "client.apps.googleusercontent.com",
+            "google_oauth_client_secret": "client-secret",
+            "google_oauth_refresh_token": "refresh-token",
+        },
+    )
+    consultorio = SimpleNamespace(
+        id=2,
+        proveedor_turnos="google",
+        configuracion_externa={
+            "google_calendar": {"calendar_id": "fmenossi@gmail.com"}
+        },
+    )
+
+    provider = CalendarService()._get_provider(tenant, consultorio)
+
+    assert isinstance(provider, GoogleCalendarProvider)
+    assert provider._calendar_id == "fmenossi@gmail.com"
+    assert provider._oauth_credentials is not None
+    assert provider._oauth_credentials.refresh_token == "refresh-token"
 
 
 def test_calculate_slots_with_buffer_and_end_boundary():
