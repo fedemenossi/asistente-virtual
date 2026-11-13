@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import json
 import re
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlunsplit
 
 from fastapi import Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
@@ -2973,8 +2973,26 @@ def _google_oauth_redirect_uri(request: Request) -> str:
     callback_path = request.url_for("tenant_calendar_oauth_callback").path
     public_base_url = (get_settings().public_base_url or "").strip().rstrip("/")
     if public_base_url:
+        if public_base_url.startswith("http://") and not public_base_url.startswith(
+            ("http://localhost", "http://127.0.0.1", "http://[::1]")
+        ):
+            public_base_url = f"https://{public_base_url.removeprefix('http://')}"
         return f"{public_base_url}{callback_path}"
-    return str(request.url_for("tenant_calendar_oauth_callback"))
+
+    # Los proxies TLS suelen comunicarse con Uvicorn por HTTP. Starlette no
+    # siempre confia en esos encabezados para url_for(), por eso reconstruimos
+    # explicitamente la URL publica usada por el callback OAuth.
+    forwarded_proto = (
+        request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    )
+    forwarded_host = (
+        request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+    )
+    scheme = forwarded_proto or ("https" if forwarded_host else request.url.scheme)
+    if scheme not in {"http", "https"}:
+        scheme = "https"
+    host = forwarded_host or request.url.netloc
+    return urlunsplit((scheme, host, callback_path, "", ""))
 
 
 def _parse_whatsapp_settings(tenant: Tenant) -> dict:

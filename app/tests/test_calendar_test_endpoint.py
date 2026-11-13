@@ -50,6 +50,69 @@ def test_calendar_settings_shows_personal_google_oauth_connection(client, db_ses
     assert "refresh-token" not in response.text
 
 
+def test_calendar_settings_uses_forwarded_https_for_oauth_callback(client, db_session):
+    tenant_id = asyncio.run(
+        create_tenant(db_session, "Tenant OAuth HTTPS", "whatsapp:+786")
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "oauthhttps@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+
+    login(client, "oauthhttps@test.com", "secret-123")
+    response = client.get(
+        "/t/settings/calendar",
+        headers={
+            "x-forwarded-proto": "https",
+            "x-forwarded-host": "salud.nubelio.app",
+        },
+    )
+
+    assert response.status_code == 200
+    assert (
+        "https://salud.nubelio.app/t/settings/calendar/oauth/callback"
+        in response.text
+    )
+    assert (
+        "http://salud.nubelio.app/t/settings/calendar/oauth/callback"
+        not in response.text
+    )
+
+
+def test_calendar_settings_upgrades_public_oauth_callback_to_https(
+    client, db_session, monkeypatch
+):
+    tenant_id = asyncio.run(
+        create_tenant(db_session, "Tenant OAuth Public HTTPS", "whatsapp:+787")
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "oauthpublichttps@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    monkeypatch.setattr(
+        "app.web.tenant.views.get_settings",
+        lambda: SimpleNamespace(public_base_url="http://salud.nubelio.app"),
+    )
+
+    login(client, "oauthpublichttps@test.com", "secret-123")
+    response = client.get("/t/settings/calendar")
+
+    assert (
+        "https://salud.nubelio.app/t/settings/calendar/oauth/callback"
+        in response.text
+    )
+
+
 def test_google_oauth_start_and_callback_store_token_only_in_current_tenant(
     client, db_session, monkeypatch
 ):
