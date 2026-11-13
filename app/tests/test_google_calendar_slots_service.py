@@ -361,8 +361,18 @@ class _FakeEvents:
     def list(self, **kwargs):
         return _FakeCall({"items": list(self.store)})
 
-    def insert(self, calendarId, body):
+    def insert(self, calendarId, body, **kwargs):
         body = {**body, "id": f"evt-{len(self.store) + 1}"}
+        if body.get("conferenceData") and kwargs.get("conferenceDataVersion") == 1:
+            body["hangoutLink"] = "https://meet.google.com/generated-slot"
+            body["conferenceData"] = {
+                "entryPoints": [
+                    {
+                        "entryPointType": "video",
+                        "uri": "https://meet.google.com/generated-slot",
+                    }
+                ]
+            }
         self.store.append(body)
         return _FakeCall(body)
 
@@ -372,6 +382,16 @@ class _FakeEvents:
 
     def patch(self, calendarId, eventId, body, **kwargs):
         event = next(item for item in self.store if item["id"] == eventId)
+        if body.get("conferenceData") and kwargs.get("conferenceDataVersion") == 1:
+            body = {**body, "hangoutLink": "https://meet.google.com/generated-slot"}
+            body["conferenceData"] = {
+                "entryPoints": [
+                    {
+                        "entryPointType": "video",
+                        "uri": "https://meet.google.com/generated-slot",
+                    }
+                ]
+            }
         event.update(body)
         return _FakeCall(event)
 
@@ -555,6 +575,128 @@ def test_google_provider_deduplicates_and_reserves_slot(db_session, monkeypatch)
         pass
     else:
         raise AssertionError("slot reservado aceptado de nuevo")
+
+
+def test_google_provider_generates_meet_only_for_virtual_slot_and_reuses_it_on_reservation(
+    db_session, monkeypatch
+):
+    tenant_id = asyncio.run(
+        create_tenant(db_session, "Tenant Generated Meet", "whatsapp:+94022")
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Generated Meet",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {
+                    **_base_config(monday={"enabled": True}),
+                    "require_google_meet": True,
+                }
+            },
+        )
+    )
+    presential_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Presential Without Meet",
+            tipo=TipoConsultorio.PRESENCIAL,
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {
+                    **_base_config(monday={"enabled": True}),
+                    "require_google_meet": True,
+                }
+            },
+        )
+    )
+    patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "whatsapp:+940221",
+            nombre="Ana",
+            apellido="Gomez",
+        )
+    )
+
+    async def _load():
+        from app.models.consultorio import Consultorio
+        from app.models.paciente import Paciente
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            return (
+                await session.get(Tenant, tenant_id),
+                await session.get(Consultorio, consultorio_id),
+                await session.get(Consultorio, presential_id),
+                await session.get(Paciente, patient_id),
+            )
+
+    tenant, consultorio, presential, patient = asyncio.run(_load())
+    events = []
+    provider = GoogleCalendarProvider("cal-generated-meet", "{}")
+    monkeypatch.setattr(provider, "_build_service", lambda: _FakeService(events))
+    slots = calculate_slots(
+        _base_config(
+            monday={
+                "enabled": True,
+                "start": "09:00",
+                "end": "09:30",
+                "slot_minutes": 30,
+            }
+        ),
+        date(2026, 5, 4),
+        date(2026, 5, 4),
+    )
+
+    generated = provider.generate_available_slots(tenant, consultorio, slots)
+
+    assert generated["created"] == 1
+    assert events[0]["hangoutLink"] == "https://meet.google.com/generated-slot"
+    assert events[0]["conferenceData"]["entryPoints"][0]["entryPointType"] == "video"
+
+    reservation = asyncio.run(
+        provider.reserve_slot(tenant, consultorio, events[0]["id"], patient, {})
+    )
+
+    assert reservation["meet_link"] == "https://meet.google.com/generated-slot"
+    assert "createRequest" not in events[0]["conferenceData"]
+
+    legacy_events = [
+        _event(
+            "evt-legacy-without-meet",
+            slots[0].start_at,
+            slots[0].end_at,
+        )
+    ]
+    legacy_provider = GoogleCalendarProvider("cal-legacy-meet", "{}")
+    monkeypatch.setattr(
+        legacy_provider,
+        "_build_service",
+        lambda: _FakeService(legacy_events),
+    )
+
+    regenerated = legacy_provider.generate_available_slots(tenant, consultorio, slots)
+
+    assert regenerated["duplicates"] == 1
+    assert legacy_events[0]["hangoutLink"] == "https://meet.google.com/generated-slot"
+
+    presential_events = []
+    presential_provider = GoogleCalendarProvider("cal-presential-slot", "{}")
+    monkeypatch.setattr(
+        presential_provider,
+        "_build_service",
+        lambda: _FakeService(presential_events),
+    )
+
+    presential_provider.generate_available_slots(tenant, presential, slots)
+
+    assert "conferenceData" not in presential_events[0]
+    assert "hangoutLink" not in presential_events[0]
 
 
 def test_google_provider_adds_meet_only_for_virtual_consultorio(db_session, monkeypatch):

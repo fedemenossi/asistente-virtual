@@ -4,6 +4,7 @@ import json
 import logging
 from datetime import datetime
 from typing import Any
+from uuid import uuid4
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -217,6 +218,15 @@ class GoogleCalendarProvider(CalendarProvider):
         slots: list[CalculatedSlot],
     ) -> dict[str, Any]:
         config = get_google_calendar_config(consultorio)
+        consultorio_type = (
+            consultorio.tipo.value
+            if hasattr(consultorio.tipo, "value")
+            else str(consultorio.tipo)
+        )
+        should_create_meet = (
+            consultorio_type == "virtual"
+            and bool(config.get("require_google_meet", True))
+        )
         logger.info(
             "google_calendar_generate_start tenant_id=%s consultorio_id=%s calendar_id=%s slots=%s timezone=%s",
             tenant.id,
@@ -294,7 +304,15 @@ class GoogleCalendarProvider(CalendarProvider):
             return summary
 
         for slot in slots:
-            duplicate = False
+            conference_data = None
+            if should_create_meet:
+                conference_data = {
+                    "createRequest": {
+                        "requestId": f"slot-{uuid4().hex}",
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    }
+                }
+            duplicate_event = None
             conflict = False
             for event in existing:
                 event_start = _event_datetime(event, "start")
@@ -302,13 +320,40 @@ class GoogleCalendarProvider(CalendarProvider):
                 if not event_start or not event_end:
                     continue
                 if _same_slot(event, tenant.id, consultorio.id, slot.start_at, slot.end_at):
-                    duplicate = True
+                    duplicate_event = event
                     break
                 if _overlaps(slot.start_at, slot.end_at, event_start, event_end) and not self._is_slot_available(event, None):
                     conflict = True
                     break
-            if duplicate:
+            if duplicate_event is not None:
                 summary["duplicates"] += 1
+                if conference_data and not (
+                    duplicate_event.get("hangoutLink")
+                    or duplicate_event.get("conferenceData")
+                ):
+                    try:
+                        updated = (
+                            service.events()
+                            .patch(
+                                calendarId=self._calendar_id,
+                                eventId=duplicate_event["id"],
+                                body={"conferenceData": conference_data},
+                                conferenceDataVersion=1,
+                            )
+                            .execute()
+                        )
+                        duplicate_event.update(updated)
+                    except Exception as exc:
+                        error = _safe_google_error(exc)
+                        summary["errors"].append(error)
+                        logger.exception(
+                            "google_calendar_generate_meet_patch_failed tenant_id=%s consultorio_id=%s calendar_id=%s event_id=%s error=%s",
+                            tenant.id,
+                            consultorio.id,
+                            _mask_calendar_id(self._calendar_id),
+                            duplicate_event.get("id"),
+                            error,
+                        )
                 continue
             if conflict:
                 summary["conflicts"] += 1
@@ -327,8 +372,18 @@ class GoogleCalendarProvider(CalendarProvider):
                     }
                 },
             }
+            if conference_data:
+                body["conferenceData"] = conference_data
             try:
-                created = service.events().insert(calendarId=self._calendar_id, body=body).execute()
+                created = (
+                    service.events()
+                    .insert(
+                        calendarId=self._calendar_id,
+                        body=body,
+                        conferenceDataVersion=1 if should_create_meet else 0,
+                    )
+                    .execute()
+                )
                 existing.append(created)
                 summary["created"] += 1
             except Exception as exc:
@@ -439,7 +494,9 @@ class GoogleCalendarProvider(CalendarProvider):
         }
         consultorio_type = consultorio.tipo.value if hasattr(consultorio.tipo, "value") else str(consultorio.tipo)
         should_create_meet = consultorio_type == "virtual" and require_google_meet
-        if should_create_meet:
+        if should_create_meet and not (
+            event.get("hangoutLink") or event.get("conferenceData")
+        ):
             body["conferenceData"] = {
                 "createRequest": {
                     "requestId": f"meet-{slot_id}",
@@ -497,7 +554,8 @@ class GoogleCalendarProvider(CalendarProvider):
             "end_at": end_info.get("dateTime"),
             "timezone": start_info.get("timeZone") or timezone,
             "html_link": updated.get("htmlLink"),
-            "meet_link": (updated.get("conferenceData") or {}).get("entryPoints", [{}])[0].get("uri"),
+            "meet_link": _extract_google_meet_link(updated)
+            or _extract_google_meet_link(event),
         }
 
     async def cancel_slot(self, external_event_id: str) -> None:
@@ -551,6 +609,20 @@ def _parse_datetime(value: str):
 def _event_datetime(event: dict, field: str):
     value = (event.get(field) or {}).get("dateTime")
     return _parse_datetime(value) if value else None
+
+
+def _extract_google_meet_link(event: dict) -> str | None:
+    hangout_link = str(event.get("hangoutLink") or "").strip()
+    if hangout_link:
+        return hangout_link
+    entry_points = (event.get("conferenceData") or {}).get("entryPoints") or []
+    for entry_point in entry_points:
+        if str(entry_point.get("entryPointType") or "").lower() != "video":
+            continue
+        uri = str(entry_point.get("uri") or "").strip()
+        if uri:
+            return uri
+    return None
 
 
 def _same_slot(event: dict, tenant_id: int, consultorio_id: int, start_at, end_at) -> bool:
