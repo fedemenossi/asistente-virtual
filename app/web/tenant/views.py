@@ -11,10 +11,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import json
 import re
 from pathlib import Path
-from urllib.parse import urlencode, urlunsplit
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from fastapi import Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -2995,6 +2996,27 @@ def _google_oauth_redirect_uri(request: Request) -> str:
     return urlunsplit((scheme, host, callback_path, "", ""))
 
 
+GOOGLE_OAUTH_TRANSACTION_COOKIE = "google_calendar_oauth_transaction"
+GOOGLE_OAUTH_TRANSACTION_PATH = "/t/settings/calendar/oauth"
+GOOGLE_OAUTH_TRANSACTION_MAX_AGE = 600
+
+
+def _google_oauth_transaction_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(
+        get_settings().secret_key,
+        salt="google-calendar-oauth-transaction",
+    )
+
+
+def _calendar_oauth_callback_redirect() -> RedirectResponse:
+    response = RedirectResponse("/t/settings/calendar", status_code=303)
+    response.delete_cookie(
+        GOOGLE_OAUTH_TRANSACTION_COOKIE,
+        path=GOOGLE_OAUTH_TRANSACTION_PATH,
+    )
+    return response
+
+
 def _parse_whatsapp_settings(tenant: Tenant) -> dict:
     settings = tenant.whatsapp_settings or {}
     return {
@@ -3211,13 +3233,24 @@ async def calendar_oauth_start(
         add_flash(request, "error", "No se pudo iniciar la conexion con Google.")
         return RedirectResponse("/t/settings/calendar", status_code=303)
 
-    request.session["google_calendar_oauth"] = {
-        "state": state,
-        "code_verifier": flow.code_verifier,
-        "tenant_id": int(user.tenant_id),
-        "issued_at": int(datetime.now(timezone.utc).timestamp()),
-    }
-    return RedirectResponse(authorization_url, status_code=303)
+    transaction = _google_oauth_transaction_serializer().dumps(
+        {
+            "state": state,
+            "code_verifier": flow.code_verifier,
+            "tenant_id": int(user.tenant_id),
+        }
+    )
+    response = RedirectResponse(authorization_url, status_code=303)
+    response.set_cookie(
+        GOOGLE_OAUTH_TRANSACTION_COOKIE,
+        transaction,
+        max_age=GOOGLE_OAUTH_TRANSACTION_MAX_AGE,
+        path=GOOGLE_OAUTH_TRANSACTION_PATH,
+        secure=urlsplit(redirect_uri).scheme == "https",
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
 async def calendar_oauth_callback(
@@ -3228,25 +3261,44 @@ async def calendar_oauth_callback(
     user: CurrentUser = Depends(require_permission("settings:write")),
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
-    oauth_session = request.session.pop("google_calendar_oauth", None) or {}
-    expected_state = str(oauth_session.get("state") or "")
-    code_verifier = str(oauth_session.get("code_verifier") or "")
-    issued_at = int(oauth_session.get("issued_at") or 0)
-    now_timestamp = int(datetime.now(timezone.utc).timestamp())
+    transaction_cookie = request.cookies.get(GOOGLE_OAUTH_TRANSACTION_COOKIE, "")
+    try:
+        oauth_transaction = _google_oauth_transaction_serializer().loads(
+            transaction_cookie,
+            max_age=GOOGLE_OAUTH_TRANSACTION_MAX_AGE,
+        )
+    except BadSignature:
+        oauth_transaction = {}
+    expected_state = str(oauth_transaction.get("state") or "")
+    code_verifier = str(oauth_transaction.get("code_verifier") or "")
     valid_state = bool(
         state
         and expected_state
         and secrets.compare_digest(state, expected_state)
-        and int(oauth_session.get("tenant_id") or 0) == int(user.tenant_id)
+        and int(oauth_transaction.get("tenant_id") or 0) == int(user.tenant_id)
         and code_verifier
-        and 0 <= now_timestamp - issued_at <= 600
     )
     if error:
         add_flash(request, "error", "Google no autorizo el acceso al calendario.")
-        return RedirectResponse("/t/settings/calendar", status_code=303)
+        return _calendar_oauth_callback_redirect()
     if not code or not valid_state:
+        logger.warning(
+            "google_oauth_invalid_transaction tenant_id=%s has_code=%s has_cookie=%s "
+            "has_signed_transaction=%s state_matches=%s tenant_matches=%s has_verifier=%s",
+            user.tenant_id,
+            bool(code),
+            bool(transaction_cookie),
+            bool(oauth_transaction),
+            bool(
+                state
+                and expected_state
+                and secrets.compare_digest(state, expected_state)
+            ),
+            int(oauth_transaction.get("tenant_id") or 0) == int(user.tenant_id),
+            bool(code_verifier),
+        )
         add_flash(request, "error", "La autorizacion de Google vencio o no es valida.")
-        return RedirectResponse("/t/settings/calendar", status_code=303)
+        return _calendar_oauth_callback_redirect()
 
     tenant = await get_entity_or_404(session, Tenant, user.tenant_id)
     settings = dict(tenant.calendar_settings or {})
@@ -3276,7 +3328,7 @@ async def calendar_oauth_callback(
             "error",
             "No se pudo completar la conexion con Google. Revisa el Client ID, el secreto y la URL de redireccion.",
         )
-        return RedirectResponse("/t/settings/calendar", status_code=303)
+        return _calendar_oauth_callback_redirect()
 
     async with session.begin_nested():
         settings["google_oauth_refresh_token"] = refresh_token
@@ -3291,7 +3343,7 @@ async def calendar_oauth_callback(
             entity_id=tenant.id,
         )
     add_flash(request, "success", f"Google Calendar conectado como {account_email}.")
-    return RedirectResponse("/t/settings/calendar", status_code=303)
+    return _calendar_oauth_callback_redirect()
 
 
 async def calendar_oauth_disconnect(

@@ -182,6 +182,7 @@ def test_google_oauth_start_and_callback_store_token_only_in_current_tenant(
     )
     assert start.status_code == 303
     assert parse_qs(urlparse(start.headers["location"]).query)["state"] == ["oauth-state"]
+    assert "google_calendar_oauth_transaction=" in start.headers["set-cookie"]
 
     callback = client.get(
         "/t/settings/calendar/oauth/callback?code=authorization-code&state=oauth-state",
