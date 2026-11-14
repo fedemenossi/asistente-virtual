@@ -18,6 +18,8 @@ from app.models.paciente import Paciente
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONSULTORIO_MOVIL_PATIENTS_CSV = Path("ListadoPacientes.csv")
+MAX_ROW_ERROR_LOGS = 10
+MAX_ROW_ERROR_MESSAGES = 5
 
 
 @dataclass(frozen=True)
@@ -53,6 +55,7 @@ class PatientSyncResult:
     existing: int
     missing_document: int
     errors: int
+    error_messages: tuple[str, ...] = ()
 
 
 def normalize_document(value: str | None) -> str:
@@ -84,6 +87,16 @@ def _email_value(value: Any) -> str:
     if match:
         return match.group(0)[:200]
     return _limit(text, 200)
+
+
+def _safe_error_detail(exc: Exception) -> tuple[str, str]:
+    original = getattr(exc, "orig", None) or exc
+    error_type = type(original).__name__
+    detail = " ".join(str(original).split()) or error_type
+    detail = re.sub(r"(?i)(duplicate entry) '[^']*'", r"\1 '***'", detail)
+    detail = re.sub(r"(?i)(value:) '[^']*'", r"\1 '***'", detail)
+    detail = re.sub(r"(?i)(key \([^)]*\)=)\([^)]*\)", r"\1(***)", detail)
+    return error_type, detail[:300]
 
 
 def _normalize_key(value: Any) -> str:
@@ -200,6 +213,8 @@ class PatientSyncService:
         existing = 0
         missing_document = 0
         errors = 0
+        error_messages: list[str] = []
+        seen_documents: set[tuple[str, str]] = set()
         synced_at = now_ba().replace(tzinfo=None)
         logger.info(
             "patient_sync_start",
@@ -207,41 +222,76 @@ class PatientSyncService:
         )
 
         for index, row in enumerate(rows, start=1):
+            document_key = (row.tipo_documento, row.document_number_normalized)
             try:
                 if not row.tipo_documento or not row.document_number_normalized:
                     missing_document += 1
-                    if progress_callback:
-                        progress_callback(index, created, updated, existing, missing_document, errors)
-                    continue
-                paciente = await self._find_by_document(tenant_id, row.tipo_documento, row.document_number_normalized)
-                if paciente is not None:
-                    if update_existing:
-                        self._apply_row_to_paciente(paciente, row, sync_source=sync_source, synced_at=synced_at)
+                elif document_key in seen_documents:
+                    existing += 1
+                else:
+                    action = ""
+                    async with self._session.begin_nested():
+                        paciente = await self._find_by_document(
+                            tenant_id,
+                            row.tipo_documento,
+                            row.document_number_normalized,
+                        )
+                        if paciente is not None:
+                            if paciente.deleted_at is not None:
+                                action = "existing"
+                            elif update_existing:
+                                self._apply_row_to_paciente(
+                                    paciente,
+                                    row,
+                                    sync_source=sync_source,
+                                    synced_at=synced_at,
+                                )
+                                await self._session.flush()
+                                action = "updated"
+                            else:
+                                action = "existing"
+                        else:
+                            paciente = self._build_paciente(
+                                tenant_id,
+                                row,
+                                sync_source=sync_source,
+                                synced_at=synced_at,
+                            )
+                            self._session.add(paciente)
+                            await self._session.flush()
+                            action = "created"
+
+                    if action == "created":
+                        created += 1
+                    elif action == "updated":
                         updated += 1
                     else:
                         existing += 1
-                    if progress_callback:
-                        progress_callback(index, created, updated, existing, missing_document, errors)
-                    continue
-                paciente = self._build_paciente(tenant_id, row, sync_source=sync_source, synced_at=synced_at)
-                self._session.add(paciente)
-                created += 1
-                if progress_callback:
-                    progress_callback(index, created, updated, existing, missing_document, errors)
-            except Exception:
+                    seen_documents.add(document_key)
+            except Exception as exc:
                 errors += 1
-                logger.exception(
-                    "patient_sync_row_failed",
-                    extra={
-                        "tenant_id": tenant_id,
-                        "tipo_documento": row.tipo_documento,
-                        "document_number_normalized": row.document_number_normalized,
-                    },
-                )
+                error_type, error_detail = _safe_error_detail(exc)
+                if len(error_messages) < MAX_ROW_ERROR_MESSAGES:
+                    error_messages.append(f"Fila {index}: {error_type}: {error_detail}")
+                if errors <= MAX_ROW_ERROR_LOGS:
+                    logger.error(
+                        "patient_sync_row_failed",
+                        extra={
+                            "tenant_id": tenant_id,
+                            "row_index": index,
+                            "error_type": error_type,
+                            "database_error": error_detail,
+                        },
+                    )
+                elif errors == MAX_ROW_ERROR_LOGS + 1:
+                    logger.warning(
+                        "patient_sync_row_errors_suppressed",
+                        extra={"tenant_id": tenant_id, "logged_errors": MAX_ROW_ERROR_LOGS},
+                    )
+            finally:
                 if progress_callback:
                     progress_callback(index, created, updated, existing, missing_document, errors)
 
-        await self._session.flush()
         result = PatientSyncResult(
             total_rows=len(rows),
             created=created,
@@ -249,6 +299,7 @@ class PatientSyncService:
             existing=existing,
             missing_document=missing_document,
             errors=errors,
+            error_messages=tuple(error_messages),
         )
         logger.info(
             "patient_sync_done",
@@ -350,10 +401,9 @@ class PatientSyncService:
         result = await self._session.execute(
             select(Paciente).where(
                 Paciente.tenant_id == tenant_id,
-                Paciente.deleted_at.is_(None),
                 Paciente.tipo_documento == tipo_documento,
                 Paciente.document_number_normalized == document_number_normalized,
-            )
+            ).order_by(Paciente.deleted_at.is_not(None).asc(), Paciente.id.asc()).limit(1)
         )
         paciente = result.scalar_one_or_none()
         if paciente is not None:
@@ -362,9 +412,8 @@ class PatientSyncService:
         legacy = await self._session.execute(
             select(Paciente).where(
                 Paciente.tenant_id == tenant_id,
-                Paciente.deleted_at.is_(None),
                 Paciente.dni_normalized == document_number_normalized,
-            )
+            ).order_by(Paciente.deleted_at.is_not(None).asc(), Paciente.id.asc()).limit(1)
         )
         return legacy.scalar_one_or_none()
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -14,6 +15,7 @@ from app.services.patient_sync_service import (
     PatientSyncService,
     normalize_document,
     parse_consultorio_movil_patients_csv,
+    patient_sync_row_from_payload,
 )
 from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_user, login
 
@@ -60,6 +62,20 @@ def test_consultorio_movil_patients_csv_parser_maps_real_columns(tmp_path):
 def test_normalize_document_keeps_letters_for_passport():
     assert normalize_document("13028843-K") == "13028843K"
     assert normalize_document(" D 0042215 ") == "D0042215"
+
+
+def test_patient_sync_error_detail_redacts_document_values():
+    from app.services.patient_sync_service import _safe_error_detail
+
+    _, mysql_detail = _safe_error_detail(
+        ValueError("Duplicate entry '28077008' for key 'uq_paciente_tenant_dni'")
+    )
+    _, postgres_detail = _safe_error_detail(
+        ValueError("Key (tenant_id, dni_normalized)=(1, 28077008) already exists")
+    )
+
+    assert "28077008" not in mysql_detail
+    assert "28077008" not in postgres_detail
 
 
 def test_patient_payload_limits_long_email_field():
@@ -494,6 +510,262 @@ def test_patient_sync_upsert_updates_existing_by_document(db_session, tmp_path):
     assert paciente.apellido == "Misitti"
     assert paciente.email == "nuevo@example.com"
     assert paciente.direccion == "Calle Falsa"
+
+
+def test_patient_sync_rolls_back_only_the_invalid_row_and_continues(db_session, monkeypatch):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Savepoint", "whatsapp:+722"))
+    rows = [
+        patient_sync_row_from_payload(
+            {
+                "Apellido": "Invalido",
+                "Nombres": "Paciente",
+                "Tipo de documento": "DNI",
+                "Numero de documento": "11111111",
+            }
+        ),
+        patient_sync_row_from_payload(
+            {
+                "Apellido": "Valido",
+                "Nombres": "Paciente",
+                "Tipo de documento": "DNI",
+                "Numero de documento": "22222222",
+            }
+        ),
+    ]
+    original_build = PatientSyncService._build_paciente
+
+    def _build_with_invalid_name(self, tenant_id, row, *, sync_source, synced_at):
+        paciente = original_build(
+            self,
+            tenant_id,
+            row,
+            sync_source=sync_source,
+            synced_at=synced_at,
+        )
+        if row.document_number_normalized == "11111111":
+            paciente.nombre = None
+        return paciente
+
+    monkeypatch.setattr(PatientSyncService, "_build_paciente", _build_with_invalid_name)
+
+    async def _run():
+        async with db_session() as session:
+            async with session.begin():
+                return await PatientSyncService(session).sync_rows(
+                    tenant_id,
+                    rows,
+                    sync_source="csv",
+                    log_source="pacientes.csv",
+                )
+
+    result = asyncio.run(_run())
+
+    assert result.created == 1
+    assert result.errors == 1
+    assert result.error_messages[0].startswith("Fila 1:")
+
+    async def _documents():
+        async with db_session() as session:
+            values = await session.scalars(
+                select(Paciente.document_number_normalized).where(Paciente.tenant_id == tenant_id)
+            )
+            return list(values)
+
+    assert asyncio.run(_documents()) == ["22222222"]
+
+
+def test_patient_sync_counts_duplicate_rows_as_existing(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Duplicates", "whatsapp:+723"))
+    row = patient_sync_row_from_payload(
+        {
+            "Apellido": "Duplicado",
+            "Nombres": "Paciente",
+            "Tipo de documento": "DNI",
+            "Numero de documento": "33333333",
+        }
+    )
+
+    async def _run():
+        async with db_session() as session:
+            async with session.begin():
+                return await PatientSyncService(session).sync_rows(
+                    tenant_id,
+                    [row, row],
+                    sync_source="csv",
+                    log_source="pacientes.csv",
+                    update_existing=True,
+                )
+
+    result = asyncio.run(_run())
+
+    assert result.created == 1
+    assert result.updated == 0
+    assert result.existing == 1
+    assert result.errors == 0
+
+
+def test_patient_sync_does_not_recreate_a_soft_deleted_patient(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Deleted", "whatsapp:+724"))
+    paciente_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491111111124",
+            dni="44444444",
+            tipo_documento="DNI",
+            numero_documento="44444444",
+            document_number_normalized="44444444",
+        )
+    )
+
+    async def _delete():
+        async with db_session() as session:
+            async with session.begin():
+                paciente = await session.get(Paciente, paciente_id)
+                paciente.deleted_at = datetime(2026, 11, 13, 18, 0, 0)
+
+    asyncio.run(_delete())
+    row = patient_sync_row_from_payload(
+        {
+            "Apellido": "Eliminado",
+            "Nombres": "Paciente",
+            "Tipo de documento": "DNI",
+            "Numero de documento": "44444444",
+        }
+    )
+
+    async def _run():
+        async with db_session() as session:
+            async with session.begin():
+                return await PatientSyncService(session).sync_rows(
+                    tenant_id,
+                    [row],
+                    sync_source="csv",
+                    log_source="pacientes.csv",
+                    update_existing=True,
+                )
+
+    result = asyncio.run(_run())
+
+    assert result.created == 0
+    assert result.updated == 0
+    assert result.existing == 1
+    assert result.errors == 0
+
+
+def test_patient_sync_limits_row_error_logs(db_session, monkeypatch, caplog):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Log Limit", "whatsapp:+725"))
+    rows = [
+        patient_sync_row_from_payload(
+            {
+                "Apellido": "Invalido",
+                "Nombres": "Paciente",
+                "Tipo de documento": "DNI",
+                "Numero de documento": str(50000000 + index),
+            }
+        )
+        for index in range(12)
+    ]
+    original_build = PatientSyncService._build_paciente
+
+    def _always_invalid(self, tenant_id, row, *, sync_source, synced_at):
+        paciente = original_build(
+            self,
+            tenant_id,
+            row,
+            sync_source=sync_source,
+            synced_at=synced_at,
+        )
+        paciente.nombre = None
+        return paciente
+
+    monkeypatch.setattr(PatientSyncService, "_build_paciente", _always_invalid)
+
+    async def _run():
+        async with db_session() as session:
+            async with session.begin():
+                return await PatientSyncService(session).sync_rows(
+                    tenant_id,
+                    rows,
+                    sync_source="csv",
+                    log_source="pacientes.csv",
+                )
+
+    result = asyncio.run(_run())
+
+    messages = [record.message for record in caplog.records]
+    assert result.errors == 12
+    assert len(result.error_messages) == 5
+    assert messages.count("patient_sync_row_failed") == 10
+    assert messages.count("patient_sync_row_errors_suppressed") == 1
+
+
+def test_patient_import_job_exposes_a_compact_row_error_summary(db_session, monkeypatch):
+    from app.services import patient_import_job_service as job_service
+    from app.services.patient_sync_service import PatientSyncResult
+
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Import Summary", "whatsapp:+726"))
+    job = job_service.PatientImportJob(
+        id="job-with-row-errors",
+        tenant_id=tenant_id,
+        filename="pacientes.csv",
+        total_rows=3,
+    )
+    job_service._jobs[job.id] = job
+
+    async def _sync_rows(*args, **kwargs):
+        return PatientSyncResult(
+            total_rows=3,
+            created=2,
+            updated=0,
+            existing=0,
+            missing_document=0,
+            errors=1,
+            error_messages=("Fila 2: IntegrityError: dato invalido",),
+        )
+
+    monkeypatch.setattr(job_service, "AsyncSessionLocal", db_session)
+    monkeypatch.setattr(PatientSyncService, "sync_rows", _sync_rows)
+
+    asyncio.run(job_service._run_patient_csv_import_job(job.id, []))
+
+    assert job.status == "completed_with_errors"
+    assert job.error_message == "1 fila no pudo importarse. Fila 2: IntegrityError: dato invalido"
+
+
+def test_patient_settings_shows_a_completed_import_error_summary(client, db_session):
+    from app.services import patient_import_job_service as job_service
+
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Import Error UI", "whatsapp:+727"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-import-error-ui@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    job = job_service.PatientImportJob(
+        id="completed-job-with-errors",
+        tenant_id=tenant_id,
+        filename="pacientes.csv",
+        total_rows=3,
+        status="completed_with_errors",
+        processed=3,
+        created=2,
+        errors=1,
+        error_message="1 fila no pudo importarse. Fila 2: dato invalido",
+    )
+    job_service._jobs[job.id] = job
+    job_service._tenant_latest[tenant_id] = job.id
+    login(client, "tenant-import-error-ui@test.com", "secret-123")
+
+    response = client.get("/t/settings/patients")
+
+    assert response.status_code == 200
+    assert 'class="rounded-lg bg-rose-50' in response.text
+    assert "1 fila no pudo importarse. Fila 2: dato invalido" in response.text
 
 def test_patient_form_saves_extended_fields(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient Form", "whatsapp:+715"))

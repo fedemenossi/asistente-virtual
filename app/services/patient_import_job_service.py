@@ -125,6 +125,12 @@ async def _run_patient_csv_import_job(job_id: str, rows: list[PatientSyncRow]) -
                 job.missing_document = result.missing_document
                 job.errors = result.errors
         job.status = "completed" if job.errors == 0 else "completed_with_errors"
+        if result.errors:
+            row_label = "fila no pudo" if result.errors == 1 else "filas no pudieron"
+            summary = f"{result.errors} {row_label} importarse."
+            if result.error_messages:
+                summary = f"{summary} {' | '.join(result.error_messages)}"
+            job.error_message = summary[:2000]
     except Exception as exc:
         logger.exception("patient_csv_import_job_failed", extra={"job_id": job.id, "tenant_id": job.tenant_id})
         job.status = "failed"

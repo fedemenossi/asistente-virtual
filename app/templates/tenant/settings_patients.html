@@ -64,7 +64,7 @@
             <div><dt class="text-slate-500">Sin documento</dt><dd class="font-medium text-slate-900" data-job-missing>{{ job.missing_document }}</dd></div>
             <div><dt class="text-slate-500">Errores</dt><dd class="font-medium text-slate-900" data-job-errors>{{ job.errors }}</dd></div>
           </dl>
-          <p class="hidden rounded-lg bg-rose-50 p-3 text-sm text-rose-700" data-job-error>{{ job.error_message }}</p>
+          <p class="{% if not job.error_message %}hidden {% endif %}rounded-lg bg-rose-50 p-3 text-sm text-rose-700" data-job-error>{{ job.error_message }}</p>
         </div>
       {% else %}
         <p class="mt-3 text-sm text-slate-600">Todavia no hay importaciones CSV en ejecucion.</p>
