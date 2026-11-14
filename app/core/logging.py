@@ -23,6 +23,7 @@ SAFE_EXTRA_FIELDS = (
     "sync_updated",
     "sync_existing",
     "sync_missing_document",
+    "sync_conflicts",
     "sync_errors",
 )
 

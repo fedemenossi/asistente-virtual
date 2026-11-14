@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONSULTORIO_MOVIL_PATIENTS_CSV = Path("ListadoPacientes.csv")
 MAX_ROW_ERROR_LOGS = 10
 MAX_ROW_ERROR_MESSAGES = 5
+MAX_SYNC_ISSUES = 200
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,20 @@ class PatientSyncRow:
 
 
 @dataclass(frozen=True)
+class PatientSyncIssue:
+    row_index: int
+    code: str
+    patient_name: str
+    document_type: str
+    document_number: str
+    message: str
+    resolution: str
+    related_row_index: int | None = None
+    document_patient_id: int | None = None
+    dni_patient_id: int | None = None
+
+
+@dataclass(frozen=True)
 class PatientSyncResult:
     total_rows: int
     created: int
@@ -56,6 +71,8 @@ class PatientSyncResult:
     missing_document: int
     errors: int
     error_messages: tuple[str, ...] = ()
+    conflicts: int = 0
+    issues: tuple[PatientSyncIssue, ...] = ()
 
 
 def normalize_document(value: str | None) -> str:
@@ -70,8 +87,16 @@ def normalize_phone(value: str | None) -> str:
     return re.sub(r"\D+", "", value or "")
 
 
+def normalize_dni(value: str | None) -> str:
+    return re.sub(r"\D+", "", value or "")
+
+
 def _clean(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _patient_name(paciente: Paciente) -> str:
+    return " ".join(part for part in (paciente.nombre, paciente.apellido) if part) or f"Paciente {paciente.id}"
 
 
 def _limit(value: Any, max_length: int) -> str:
@@ -213,8 +238,11 @@ class PatientSyncService:
         existing = 0
         missing_document = 0
         errors = 0
+        conflicts = 0
         error_messages: list[str] = []
+        issues: list[PatientSyncIssue] = []
         seen_documents: set[tuple[str, str]] = set()
+        seen_dni_rows: dict[str, tuple[int, tuple[str, str]]] = {}
         synced_at = now_ba().replace(tzinfo=None)
         logger.info(
             "patient_sync_start",
@@ -223,20 +251,98 @@ class PatientSyncService:
 
         for index, row in enumerate(rows, start=1):
             document_key = (row.tipo_documento, row.document_number_normalized)
+            dni_normalized = normalize_dni(row.numero_documento)
             try:
                 if not row.tipo_documento or not row.document_number_normalized:
                     missing_document += 1
+                    if len(issues) < MAX_SYNC_ISSUES:
+                        if not row.tipo_documento and not row.document_number_normalized:
+                            missing_message = "Faltan el tipo y el numero de documento."
+                        elif not row.tipo_documento:
+                            missing_message = "Falta el tipo de documento."
+                        else:
+                            missing_message = "Falta el numero de documento."
+                        issues.append(
+                            PatientSyncIssue(
+                                row_index=index,
+                                code="missing_document",
+                                patient_name=" ".join(part for part in (row.nombres, row.apellido) if part),
+                                document_type=row.tipo_documento,
+                                document_number=row.numero_documento,
+                                message=missing_message,
+                                resolution=(
+                                    "Completa las columnas de tipo y numero de documento en el CSV y vuelve "
+                                    "a importar esta fila."
+                                ),
+                            )
+                        )
                 elif document_key in seen_documents:
                     existing += 1
+                elif (
+                    dni_normalized
+                    and dni_normalized in seen_dni_rows
+                    and seen_dni_rows[dni_normalized][1] != document_key
+                ):
+                    related_row_index = seen_dni_rows[dni_normalized][0]
+                    conflicts += 1
+                    if len(issues) < MAX_SYNC_ISSUES:
+                        issues.append(
+                            PatientSyncIssue(
+                                row_index=index,
+                                related_row_index=related_row_index,
+                                code="duplicate_dni_in_file",
+                                patient_name=" ".join(part for part in (row.nombres, row.apellido) if part),
+                                document_type=row.tipo_documento,
+                                document_number=row.numero_documento,
+                                message=(
+                                    f"El mismo DNI aparece en las filas {related_row_index} y {index} "
+                                    "con distinto tipo de documento."
+                                ),
+                                resolution=(
+                                    "Revisa ambas filas del CSV y conserva el tipo y los datos que correspondan "
+                                    "al paciente correcto."
+                                ),
+                            )
+                        )
                 else:
                     action = ""
                     async with self._session.begin_nested():
-                        paciente = await self._find_by_document(
+                        document_patient, dni_patient = await self._find_by_document_candidates(
                             tenant_id,
                             row.tipo_documento,
                             row.document_number_normalized,
+                            dni_normalized,
                         )
-                        if paciente is not None:
+                        paciente = dni_patient or document_patient
+                        if (
+                            document_patient is not None
+                            and dni_patient is not None
+                            and document_patient.id != dni_patient.id
+                        ):
+                            conflicts += 1
+                            action = "conflict"
+                            if len(issues) < MAX_SYNC_ISSUES:
+                                issues.append(
+                                    PatientSyncIssue(
+                                        row_index=index,
+                                        code="identity_conflict",
+                                        patient_name=" ".join(part for part in (row.nombres, row.apellido) if part),
+                                        document_type=row.tipo_documento,
+                                        document_number=row.numero_documento,
+                                        message=(
+                                            f"El documento coincide con {_patient_name(document_patient)}, "
+                                            f"pero el DNI pertenece a {_patient_name(dni_patient)}. Son dos "
+                                            "pacientes diferentes del tenant."
+                                        ),
+                                        resolution=(
+                                            "Revisa ambos pacientes y corrige o unifica sus documentos antes "
+                                            "de volver a importar esta fila."
+                                        ),
+                                        document_patient_id=document_patient.id,
+                                        dni_patient_id=dni_patient.id,
+                                    )
+                                )
+                        elif paciente is not None:
                             if paciente.deleted_at is not None:
                                 action = "existing"
                             elif update_existing:
@@ -265,12 +371,30 @@ class PatientSyncService:
                         created += 1
                     elif action == "updated":
                         updated += 1
-                    else:
+                    elif action == "existing":
                         existing += 1
-                    seen_documents.add(document_key)
+                    if action != "conflict":
+                        seen_documents.add(document_key)
+                        if dni_normalized:
+                            seen_dni_rows[dni_normalized] = (index, document_key)
             except Exception as exc:
                 errors += 1
                 error_type, error_detail = _safe_error_detail(exc)
+                if len(issues) < MAX_SYNC_ISSUES:
+                    issues.append(
+                        PatientSyncIssue(
+                            row_index=index,
+                            code="import_error",
+                            patient_name=" ".join(part for part in (row.nombres, row.apellido) if part),
+                            document_type=row.tipo_documento,
+                            document_number=row.numero_documento,
+                            message=f"No se pudo guardar esta fila: {error_detail}",
+                            resolution=(
+                                "Revisa los datos de la fila y los pacientes existentes con el mismo documento. "
+                                "Luego vuelve a importarla."
+                            ),
+                        )
+                    )
                 if len(error_messages) < MAX_ROW_ERROR_MESSAGES:
                     error_messages.append(f"Fila {index}: {error_type}: {error_detail}")
                 if errors <= MAX_ROW_ERROR_LOGS:
@@ -300,6 +424,8 @@ class PatientSyncService:
             missing_document=missing_document,
             errors=errors,
             error_messages=tuple(error_messages),
+            conflicts=conflicts,
+            issues=tuple(issues),
         )
         logger.info(
             "patient_sync_done",
@@ -311,6 +437,7 @@ class PatientSyncService:
                 "sync_updated": result.updated,
                 "sync_existing": result.existing,
                 "sync_missing_document": result.missing_document,
+                "sync_conflicts": result.conflicts,
                 "sync_errors": result.errors,
             },
         )
@@ -398,6 +525,21 @@ class PatientSyncService:
         tipo_documento: str,
         document_number_normalized: str,
     ) -> Paciente | None:
+        document_patient, dni_patient = await self._find_by_document_candidates(
+            tenant_id,
+            tipo_documento,
+            document_number_normalized,
+            normalize_dni(document_number_normalized),
+        )
+        return dni_patient or document_patient
+
+    async def _find_by_document_candidates(
+        self,
+        tenant_id: int,
+        tipo_documento: str,
+        document_number_normalized: str,
+        dni_normalized: str,
+    ) -> tuple[Paciente | None, Paciente | None]:
         result = await self._session.execute(
             select(Paciente).where(
                 Paciente.tenant_id == tenant_id,
@@ -405,17 +547,18 @@ class PatientSyncService:
                 Paciente.document_number_normalized == document_number_normalized,
             ).order_by(Paciente.deleted_at.is_not(None).asc(), Paciente.id.asc()).limit(1)
         )
-        paciente = result.scalar_one_or_none()
-        if paciente is not None:
-            return paciente
+        document_patient = result.scalar_one_or_none()
 
-        legacy = await self._session.execute(
-            select(Paciente).where(
-                Paciente.tenant_id == tenant_id,
-                Paciente.dni_normalized == document_number_normalized,
-            ).order_by(Paciente.deleted_at.is_not(None).asc(), Paciente.id.asc()).limit(1)
-        )
-        return legacy.scalar_one_or_none()
+        dni_patient = None
+        if dni_normalized:
+            legacy = await self._session.execute(
+                select(Paciente).where(
+                    Paciente.tenant_id == tenant_id,
+                    Paciente.dni_normalized == dni_normalized,
+                ).order_by(Paciente.deleted_at.is_not(None).asc(), Paciente.id.asc()).limit(1)
+            )
+            dni_patient = legacy.scalar_one_or_none()
+        return document_patient, dni_patient
 
     async def _exists_by_document(
         self,

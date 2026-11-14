@@ -3,12 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 
 from app.core.db import AsyncSessionLocal
 from app.core.timezone import now_ba
-from app.services.patient_sync_service import PatientSyncRow, PatientSyncService
+from app.services.patient_sync_service import PatientSyncIssue, PatientSyncRow, PatientSyncService
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,9 @@ class PatientImportJob:
     updated: int = 0
     existing: int = 0
     missing_document: int = 0
+    conflicts: int = 0
     errors: int = 0
+    issues: list[PatientSyncIssue] = field(default_factory=list)
     error_message: str = ""
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -34,7 +36,8 @@ class PatientImportJob:
     @property
     def percent(self) -> int:
         if self.total_rows <= 0:
-            return 100 if self.status in {"completed", "failed"} else 0
+            finished_statuses = {"completed", "completed_with_issues", "completed_with_errors", "failed"}
+            return 100 if self.status in finished_statuses else 0
         return min(100, int((self.processed / self.total_rows) * 100))
 
     def public_dict(self) -> dict:
@@ -50,7 +53,9 @@ class PatientImportJob:
             "updated": self.updated,
             "existing": self.existing,
             "missing_document": self.missing_document,
+            "conflicts": self.conflicts,
             "errors": self.errors,
+            "issues": [asdict(issue) for issue in self.issues],
             "error_message": self.error_message,
             "started_at": self.started_at.isoformat(sep=" ") if self.started_at else "",
             "finished_at": self.finished_at.isoformat(sep=" ") if self.finished_at else "",
@@ -123,14 +128,27 @@ async def _run_patient_csv_import_job(job_id: str, rows: list[PatientSyncRow]) -
                 job.updated = result.updated
                 job.existing = result.existing
                 job.missing_document = result.missing_document
+                job.conflicts = result.conflicts
                 job.errors = result.errors
-        job.status = "completed" if job.errors == 0 else "completed_with_errors"
+                job.issues = list(result.issues)
+        if job.errors:
+            job.status = "completed_with_errors"
+        elif job.conflicts or job.missing_document:
+            job.status = "completed_with_issues"
+        else:
+            job.status = "completed"
         if result.errors:
             row_label = "fila no pudo" if result.errors == 1 else "filas no pudieron"
             summary = f"{result.errors} {row_label} importarse."
             if result.error_messages:
                 summary = f"{summary} {' | '.join(result.error_messages)}"
             job.error_message = summary[:2000]
+        elif job.conflicts or job.missing_document:
+            review_count = job.conflicts + job.missing_document
+            row_label = "fila requiere" if review_count == 1 else "filas requieren"
+            job.error_message = (
+                f"{review_count} {row_label} revision. Las demas filas se importaron correctamente."
+            )
     except Exception as exc:
         logger.exception("patient_csv_import_job_failed", extra={"job_id": job.id, "tenant_id": job.tenant_id})
         job.status = "failed"

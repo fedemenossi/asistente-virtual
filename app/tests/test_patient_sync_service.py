@@ -292,6 +292,9 @@ def test_patient_sync_creates_new_patients_and_skips_missing_document(db_session
     assert result.total_rows == 2
     assert result.created == 1
     assert result.missing_document == 1
+    assert result.issues[0].row_index == 2
+    assert result.issues[0].code == "missing_document"
+    assert result.issues[0].patient_name == "Ana SinDoc"
 
     async def _fetch():
         async with db_session() as session:
@@ -563,6 +566,10 @@ def test_patient_sync_rolls_back_only_the_invalid_row_and_continues(db_session, 
     assert result.created == 1
     assert result.errors == 1
     assert result.error_messages[0].startswith("Fila 1:")
+    assert result.issues[0].code == "import_error"
+    assert result.issues[0].row_index == 1
+    assert result.issues[0].patient_name == "Paciente Invalido"
+    assert "No se pudo guardar" in result.issues[0].message
 
     async def _documents():
         async with db_session() as session:
@@ -572,6 +579,126 @@ def test_patient_sync_rolls_back_only_the_invalid_row_and_continues(db_session, 
             return list(values)
 
     assert asyncio.run(_documents()) == ["22222222"]
+
+
+def test_patient_sync_reports_an_identity_conflict_and_continues(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync Identity Conflict", "whatsapp:+728"))
+    document_patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491111111728",
+            nombre="Candela",
+            apellido="Misitti",
+            dni="11111111",
+            tipo_documento="DNI",
+            numero_documento="42249215",
+            document_number_normalized="42249215",
+        )
+    )
+    dni_patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            "5491111111729",
+            nombre="Otro",
+            apellido="Paciente",
+            dni="42249215",
+            tipo_documento="DNI",
+            numero_documento="99999999",
+            document_number_normalized="99999999",
+        )
+    )
+    rows = [
+        patient_sync_row_from_payload(
+            {
+                "Apellido": "Misitti",
+                "Nombres": "Candela",
+                "Tipo de documento": "DNI",
+                "Numero de documento": "42249215",
+            }
+        ),
+        patient_sync_row_from_payload(
+            {
+                "Apellido": "Valido",
+                "Nombres": "Paciente",
+                "Tipo de documento": "DNI",
+                "Numero de documento": "55555555",
+            }
+        ),
+    ]
+
+    async def _run():
+        async with db_session() as session:
+            async with session.begin():
+                return await PatientSyncService(session).sync_rows(
+                    tenant_id,
+                    rows,
+                    sync_source="csv",
+                    log_source="pacientes.csv",
+                    update_existing=True,
+                )
+
+    result = asyncio.run(_run())
+
+    assert result.created == 1
+    assert result.updated == 0
+    assert result.errors == 0
+    assert result.conflicts == 1
+    assert len(result.issues) == 1
+    issue = result.issues[0]
+    assert issue.row_index == 1
+    assert issue.code == "identity_conflict"
+    assert issue.patient_name == "Candela Misitti"
+    assert issue.document_number == "42249215"
+    assert issue.document_patient_id == document_patient_id
+    assert issue.dni_patient_id == dni_patient_id
+    assert "dos pacientes diferentes" in issue.message
+
+
+def test_patient_sync_reports_same_dni_on_different_csv_rows(db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Sync CSV Conflict", "whatsapp:+729"))
+    rows = [
+        patient_sync_row_from_payload(
+            {
+                "Apellido": "Kirillova",
+                "Nombres": "Milena",
+                "Tipo de documento": "CI",
+                "Numero de documento": "736340920",
+            }
+        ),
+        patient_sync_row_from_payload(
+            {
+                "Apellido": "Kirillova",
+                "Nombres": "Nika",
+                "Tipo de documento": "CEDULA DE EXTRANJERIA",
+                "Numero de documento": "736340920",
+            }
+        ),
+    ]
+
+    async def _run():
+        async with db_session() as session:
+            async with session.begin():
+                return await PatientSyncService(session).sync_rows(
+                    tenant_id,
+                    rows,
+                    sync_source="csv",
+                    log_source="pacientes.csv",
+                    update_existing=True,
+                )
+
+    result = asyncio.run(_run())
+
+    assert result.created == 1
+    assert result.updated == 0
+    assert result.errors == 0
+    assert result.conflicts == 1
+    issue = result.issues[0]
+    assert issue.row_index == 2
+    assert issue.related_row_index == 1
+    assert issue.code == "duplicate_dni_in_file"
+    assert "filas 1 y 2" in issue.message
 
 
 def test_patient_sync_counts_duplicate_rows_as_existing(db_session):
@@ -733,6 +860,66 @@ def test_patient_import_job_exposes_a_compact_row_error_summary(db_session, monk
     assert job.error_message == "1 fila no pudo importarse. Fila 2: IntegrityError: dato invalido"
 
 
+def test_patient_import_job_exposes_structured_issues(db_session, monkeypatch):
+    from app.services import patient_import_job_service as job_service
+    from app.services.patient_sync_service import PatientSyncIssue, PatientSyncResult
+
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Import Issues", "whatsapp:+730"))
+    job = job_service.PatientImportJob(
+        id="job-with-structured-issues",
+        tenant_id=tenant_id,
+        filename="pacientes.csv",
+        total_rows=2,
+    )
+    job_service._jobs[job.id] = job
+    issue = PatientSyncIssue(
+        row_index=1,
+        code="identity_conflict",
+        patient_name="Candela Misitti",
+        document_type="DNI",
+        document_number="42249215",
+        message="El documento y el DNI coinciden con dos pacientes diferentes del tenant.",
+        resolution="Revisa ambos pacientes.",
+        document_patient_id=10,
+        dni_patient_id=11,
+    )
+
+    async def _sync_rows(*args, **kwargs):
+        return PatientSyncResult(
+            total_rows=2,
+            created=1,
+            updated=0,
+            existing=0,
+            missing_document=0,
+            errors=0,
+            conflicts=1,
+            issues=(issue,),
+        )
+
+    monkeypatch.setattr(job_service, "AsyncSessionLocal", db_session)
+    monkeypatch.setattr(PatientSyncService, "sync_rows", _sync_rows)
+
+    asyncio.run(job_service._run_patient_csv_import_job(job.id, []))
+
+    assert job.status == "completed_with_issues"
+    assert job.conflicts == 1
+    assert job.error_message == "1 fila requiere revision. Las demas filas se importaron correctamente."
+    assert job.public_dict()["issues"] == [
+        {
+            "row_index": 1,
+            "code": "identity_conflict",
+            "patient_name": "Candela Misitti",
+            "document_type": "DNI",
+            "document_number": "42249215",
+            "message": "El documento y el DNI coinciden con dos pacientes diferentes del tenant.",
+            "resolution": "Revisa ambos pacientes.",
+            "related_row_index": None,
+            "document_patient_id": 10,
+            "dni_patient_id": 11,
+        }
+    ]
+
+
 def test_patient_settings_shows_a_completed_import_error_summary(client, db_session):
     from app.services import patient_import_job_service as job_service
 
@@ -766,6 +953,59 @@ def test_patient_settings_shows_a_completed_import_error_summary(client, db_sess
     assert response.status_code == 200
     assert 'class="rounded-lg bg-rose-50' in response.text
     assert "1 fila no pudo importarse. Fila 2: dato invalido" in response.text
+
+
+def test_patient_settings_shows_actionable_import_issues(client, db_session):
+    from app.services import patient_import_job_service as job_service
+    from app.services.patient_sync_service import PatientSyncIssue
+
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Import Issues UI", "whatsapp:+731"))
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-import-issues-ui@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    issue = PatientSyncIssue(
+        row_index=129,
+        code="identity_conflict",
+        patient_name="Lucia Paula Conte",
+        document_type="DNI",
+        document_number="27087640",
+        message="El documento y el DNI coinciden con dos pacientes diferentes del tenant.",
+        resolution="Revisa ambos pacientes y corrige sus documentos.",
+        document_patient_id=21,
+        dni_patient_id=22,
+    )
+    job = job_service.PatientImportJob(
+        id="completed-job-with-actionable-issues",
+        tenant_id=tenant_id,
+        filename="pacientes.csv",
+        total_rows=130,
+        status="completed_with_issues",
+        processed=130,
+        created=129,
+        conflicts=1,
+        issues=[issue],
+        error_message="1 fila requiere revision. Las demas filas se importaron correctamente.",
+    )
+    job_service._jobs[job.id] = job
+    job_service._tenant_latest[tenant_id] = job.id
+    login(client, "tenant-import-issues-ui@test.com", "secret-123")
+
+    response = client.get("/t/settings/patients")
+
+    assert response.status_code == 200
+    assert "Filas que requieren revision" in response.text
+    assert "Fila 129" in response.text
+    assert "Lucia Paula Conte" in response.text
+    assert "DNI 27087640" in response.text
+    assert "Revisa ambos pacientes y corrige sus documentos." in response.text
+    assert 'href="/t/pacientes/21/edit"' in response.text
+    assert 'href="/t/pacientes/22/edit"' in response.text
 
 def test_patient_form_saves_extended_fields(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Patient Form", "whatsapp:+715"))

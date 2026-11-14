@@ -2,6 +2,14 @@
 
 {% set title = "Datos pacientes" %}
 {% set breadcrumb = "Tenant / Datos pacientes" %}
+{% set status_labels = {
+  "queued": "En espera",
+  "running": "Importando",
+  "completed": "Completado",
+  "completed_with_issues": "Completado con filas para revisar",
+  "completed_with_errors": "Completado con errores",
+  "failed": "Fallido"
+} %}
 
 {% block content %}
   <div class="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -16,7 +24,8 @@
     <section class="card p-6">
       <h2 class="text-lg font-semibold text-slate-900">Importacion CSV</h2>
       <p class="mt-1 text-sm text-slate-600">
-        El CSV actualiza pacientes existentes por tipo y numero de documento normalizado. Si no existe, crea el paciente.
+        El CSV actualiza pacientes existentes por DNI y documento normalizado. Las filas ambiguas se omiten y se
+        muestran debajo para que puedas corregirlas sin interrumpir el resto de la carga.
       </p>
 
       <form class="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center" method="post" action="/t/pacientes/import-csv" enctype="multipart/form-data" data-patient-csv-form>
@@ -42,13 +51,13 @@
       </div>
     </section>
 
-    <aside class="card p-6" data-patient-job {% if job %}data-patient-job-id="{{ job.id }}"{% endif %}>
+    <aside class="card p-6" data-patient-job {% if job %}data-patient-job-id="{{ job.id }}" data-patient-job-status="{{ job.status }}"{% endif %}>
       <h2 class="text-lg font-semibold text-slate-900">Ultimo proceso</h2>
       {% if job %}
         <div class="mt-4 space-y-4">
           <div>
             <div class="flex items-center justify-between text-sm">
-              <span class="font-medium text-slate-700" data-job-status>{{ job.status }}</span>
+              <span class="font-medium text-slate-700" data-job-status>{{ status_labels.get(job.status, job.status) }}</span>
               <span class="font-semibold text-slate-900" data-job-percent>{{ job.percent }}%</span>
             </div>
             <div class="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
@@ -62,15 +71,55 @@
             <div><dt class="text-slate-500">Actualizados</dt><dd class="font-medium text-slate-900" data-job-updated>{{ job.updated }}</dd></div>
             <div><dt class="text-slate-500">Existentes</dt><dd class="font-medium text-slate-900" data-job-existing>{{ job.existing }}</dd></div>
             <div><dt class="text-slate-500">Sin documento</dt><dd class="font-medium text-slate-900" data-job-missing>{{ job.missing_document }}</dd></div>
-            <div><dt class="text-slate-500">Errores</dt><dd class="font-medium text-slate-900" data-job-errors>{{ job.errors }}</dd></div>
+            <div><dt class="text-slate-500">Conflictos</dt><dd class="font-medium text-slate-900" data-job-conflicts>{{ job.conflicts }}</dd></div>
+            <div><dt class="text-slate-500">Errores tecnicos</dt><dd class="font-medium text-slate-900" data-job-errors>{{ job.errors }}</dd></div>
           </dl>
-          <p class="{% if not job.error_message %}hidden {% endif %}rounded-lg bg-rose-50 p-3 text-sm text-rose-700" data-job-error>{{ job.error_message }}</p>
+          <p class="{% if not job.error_message %}hidden {% endif %}rounded-lg {% if job.status == 'completed_with_issues' %}bg-amber-50 text-amber-800{% else %}bg-rose-50 text-rose-700{% endif %} p-3 text-sm" data-job-error>{{ job.error_message }}</p>
         </div>
       {% else %}
         <p class="mt-3 text-sm text-slate-600">Todavia no hay importaciones CSV en ejecucion.</p>
       {% endif %}
     </aside>
   </div>
+
+  <section class="{% if not job or not job.issues %}hidden {% endif %}card mt-6 p-6" data-patient-issues>
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <h2 class="text-lg font-semibold text-slate-900">Filas que requieren revision</h2>
+        <p class="mt-1 text-sm text-slate-600">
+          Estas filas no se modificaron. Las demas se importaron normalmente.
+        </p>
+      </div>
+      <span class="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800" data-issues-count>{{ job.issues|length if job else 0 }} para revisar</span>
+    </div>
+    <div class="mt-4 grid gap-3 lg:grid-cols-2" data-issues-list>
+      {% if job %}
+        {% for issue in job.issues %}
+          <article class="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-amber-800">Fila {{ issue.row_index }}</span>
+              <span class="text-xs font-medium text-slate-500">{{ issue.document_type }} {{ issue.document_number }}</span>
+            </div>
+            <h3 class="mt-3 font-semibold text-slate-900">{{ issue.patient_name or "Paciente sin nombre" }}</h3>
+            <p class="mt-1 text-sm text-slate-700">{{ issue.message }}</p>
+            <div class="mt-3 rounded-lg bg-white p-3 text-sm text-slate-700">
+              <span class="font-semibold text-slate-900">Como resolverlo:</span> {{ issue.resolution }}
+            </div>
+            {% if issue.document_patient_id or issue.dni_patient_id %}
+              <div class="mt-3 flex flex-wrap gap-2">
+                {% if issue.document_patient_id %}
+                  <a class="btn btn-secondary" href="/t/pacientes/{{ issue.document_patient_id }}/edit">Abrir paciente por documento</a>
+                {% endif %}
+                {% if issue.dni_patient_id %}
+                  <a class="btn btn-secondary" href="/t/pacientes/{{ issue.dni_patient_id }}/edit">Abrir paciente por DNI</a>
+                {% endif %}
+              </div>
+            {% endif %}
+          </article>
+        {% endfor %}
+      {% endif %}
+    </div>
+  </section>
 
   <script>
     (() => {
@@ -96,15 +145,81 @@
       const jobBox = document.querySelector("[data-patient-job]");
       const jobId = jobBox?.dataset.patientJobId;
       if (!jobId) return;
+      const statusLabels = {
+        queued: "En espera",
+        running: "Importando",
+        completed: "Completado",
+        completed_with_issues: "Completado con filas para revisar",
+        completed_with_errors: "Completado con errores",
+        failed: "Fallido",
+      };
       const setText = (selector, value) => {
         const node = document.querySelector(selector);
         if (node) node.textContent = value;
+      };
+      const renderIssues = (issues) => {
+        const section = document.querySelector("[data-patient-issues]");
+        const list = document.querySelector("[data-issues-list]");
+        if (!section || !list) return;
+        list.replaceChildren();
+        if (!issues || issues.length === 0) {
+          section.classList.add("hidden");
+          return;
+        }
+        section.classList.remove("hidden");
+        setText("[data-issues-count]", `${issues.length} para revisar`);
+        issues.forEach((issue) => {
+          const card = document.createElement("article");
+          card.className = "rounded-xl border border-amber-200 bg-amber-50/50 p-4";
+
+          const meta = document.createElement("div");
+          meta.className = "flex flex-wrap items-center justify-between gap-2";
+          const row = document.createElement("span");
+          row.className = "rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-amber-800";
+          row.textContent = `Fila ${issue.row_index}`;
+          const documentLabel = document.createElement("span");
+          documentLabel.className = "text-xs font-medium text-slate-500";
+          documentLabel.textContent = [issue.document_type, issue.document_number].filter(Boolean).join(" ") || "Sin documento";
+          meta.append(row, documentLabel);
+
+          const name = document.createElement("h3");
+          name.className = "mt-3 font-semibold text-slate-900";
+          name.textContent = issue.patient_name || "Paciente sin nombre";
+          const message = document.createElement("p");
+          message.className = "mt-1 text-sm text-slate-700";
+          message.textContent = issue.message;
+          const resolution = document.createElement("div");
+          resolution.className = "mt-3 rounded-lg bg-white p-3 text-sm text-slate-700";
+          const resolutionLabel = document.createElement("span");
+          resolutionLabel.className = "font-semibold text-slate-900";
+          resolutionLabel.textContent = "Como resolverlo: ";
+          resolution.append(resolutionLabel, document.createTextNode(issue.resolution));
+          card.append(meta, name, message, resolution);
+
+          const links = [
+            [issue.document_patient_id, "Abrir paciente por documento"],
+            [issue.dni_patient_id, "Abrir paciente por DNI"],
+          ].filter(([patientId]) => patientId);
+          if (links.length > 0) {
+            const actions = document.createElement("div");
+            actions.className = "mt-3 flex flex-wrap gap-2";
+            links.forEach(([patientId, label]) => {
+              const link = document.createElement("a");
+              link.className = "btn btn-secondary";
+              link.href = `/t/pacientes/${patientId}/edit`;
+              link.textContent = label;
+              actions.append(link);
+            });
+            card.append(actions);
+          }
+          list.append(card);
+        });
       };
       const refresh = async () => {
         const response = await fetch(`/t/settings/patients/import-jobs/${jobId}`);
         if (!response.ok) return;
         const job = await response.json();
-        setText("[data-job-status]", job.status);
+        setText("[data-job-status]", statusLabels[job.status] || job.status);
         setText("[data-job-percent]", `${job.percent}%`);
         setText("[data-job-processed]", job.processed);
         setText("[data-job-total]", job.total_rows);
@@ -112,19 +227,29 @@
         setText("[data-job-updated]", job.updated);
         setText("[data-job-existing]", job.existing);
         setText("[data-job-missing]", job.missing_document);
+        setText("[data-job-conflicts]", job.conflicts);
         setText("[data-job-errors]", job.errors);
+        renderIssues(job.issues);
+        jobBox.dataset.patientJobStatus = job.status;
         const jobBar = document.querySelector("[data-job-bar]");
         if (jobBar) jobBar.style.width = `${job.percent}%`;
         const error = document.querySelector("[data-job-error]");
         if (error && job.error_message) {
           error.textContent = job.error_message;
           error.classList.remove("hidden");
+          const hasReviewIssues = job.status === "completed_with_issues";
+          error.classList.toggle("bg-amber-50", hasReviewIssues);
+          error.classList.toggle("text-amber-800", hasReviewIssues);
+          error.classList.toggle("bg-rose-50", !hasReviewIssues);
+          error.classList.toggle("text-rose-700", !hasReviewIssues);
+        } else if (error) {
+          error.classList.add("hidden");
         }
         if (["queued", "running"].includes(job.status)) {
           window.setTimeout(refresh, 1200);
         }
       };
-      if (["queued", "running"].includes(document.querySelector("[data-job-status]")?.textContent || "")) {
+      if (["queued", "running"].includes(jobBox.dataset.patientJobStatus || "")) {
         window.setTimeout(refresh, 800);
       }
     })();
