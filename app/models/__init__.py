@@ -28,6 +28,7 @@ from app.models.tenant import Tenant
 from app.models.turno import Turno
 from app.models.user import User
 from app.models.whatsapp_contact import WhatsappContact
+from app.models.whatsapp_inbound_message import WhatsappInboundMessage
 
 __all__ = [
     "AuditLog",
@@ -61,4 +62,5 @@ __all__ = [
     "Turno",
     "User",
     "WhatsappContact",
+    "WhatsappInboundMessage",
 ]

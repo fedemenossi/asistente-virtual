@@ -63,9 +63,11 @@ Estado actual real
   - agenda por fecha (`/t/appointments`)
   - detalle de turno (`/t/appointments/{turno_id}`)
 - Bot conversacional:
-  - hoy sigue usando la bandeja operativa/manual para la mayoria de solicitudes
-  - no debe asumirse que todo pedido por WhatsApp ya crea automaticamente un turno local
-  - la automatizacion desde bot debe integrarse por categoria en etapas posteriores
+  - ofrece disponibilidades elegibles de Google Calendar, DrApp y Consultorio Movil
+  - para el propio Paciente, confirma automaticamente los turnos sin requisito de pago
+  - las primeras consultas particulares retienen el horario y esperan el pago antes de confirmar
+  - las solicitudes para otra persona y las agendas no automatizables siguen derivandose a la bandeja operativa
+  - los reintentos de Twilio se deduplican por `tenant_id + MessageSid` y reutilizan la respuesta original
 
 Matriz de sincronizacion
 - `provider=google`
@@ -80,7 +82,7 @@ Matriz de sincronizacion
 
 Riesgos actuales
 - Conviven vistas legacy `/t/turnos` y agenda real `/t/appointments`.
-- El bot de WhatsApp no debe tratarse como agenda automatica end-to-end: hoy deriva la mayoria de solicitudes a bandeja operativa.
+- La reserva automatica depende de una Fuente de agenda configurada y elegible; los casos no automatizables se derivan a la bandeja operativa.
 - `ReminderService` tiene flags `reminder_24h_sent` / `reminder_2h_sent`, pero tambien usa `reminder_sent_at` unico; revisar antes de activar dos ventanas de recordatorio en produccion.
 
 Pruebas manuales

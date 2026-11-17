@@ -6,6 +6,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from twilio.request_validator import RequestValidator
@@ -19,6 +20,7 @@ from app.repositories.paciente_repository import PacienteRepository
 from app.repositories.notification_repository import NotificationRepository
 from app.repositories.tenant_repository import TenantRepository
 from app.models.tenant import Tenant
+from app.models.whatsapp_inbound_message import WhatsappInboundMessage
 from app.schemas.webhook import TwilioWebhookPayload
 from app.services.conversation_service import ConversationService
 from app.services.tenant_service import TenantService
@@ -178,6 +180,30 @@ async def _process_whatsapp_webhook(
 
     set_current_tenant_id(tenant.id)
     try:
+        receipt = None
+        if payload.message_sid:
+            receipt = await session.scalar(
+                select(WhatsappInboundMessage).where(
+                    WhatsappInboundMessage.tenant_id == tenant.id,
+                    WhatsappInboundMessage.message_sid == payload.message_sid,
+                )
+            )
+            if receipt is not None and receipt.reply_text is not None:
+                logger.info(
+                    "whatsapp_webhook_duplicate tenant_id=%s from=%s message_sid=%s",
+                    tenant.id,
+                    _mask_phone(payload.from_number),
+                    payload.message_sid,
+                )
+                return _twilio_response(receipt.reply_text)
+            if receipt is None:
+                receipt = WhatsappInboundMessage(
+                    tenant_id=tenant.id,
+                    message_sid=payload.message_sid,
+                    from_phone=payload.from_number,
+                )
+                session.add(receipt)
+                await session.flush()
         logger.info(
             "whatsapp_webhook_processing tenant_id=%s from=%s message_sid=%s body_len=%s media_count=%s",
             tenant.id,
@@ -192,6 +218,9 @@ async def _process_whatsapp_webhook(
             body=payload.body,
             media_items=media_items,
         )
+        if receipt is not None:
+            receipt.reply_text = reply_text
+            await session.flush()
         logger.info(
             "whatsapp_webhook_processed tenant_id=%s from=%s message_sid=%s reply_len=%s",
             tenant.id,

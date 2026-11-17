@@ -80,6 +80,7 @@ Snapshot de la conversacion al cerrarse, incluyendo categoria operativa y nota i
 6. Marcar como resuelta o volver a pendiente segun corresponda.
 
 Estado actual real
-- El bot clasifica solicitudes entrantes y las deja en `pending` para gestion operativa.
-- No asumir que una solicitud de turno por WhatsApp crea automaticamente un `turno` local.
+- El bot clasifica las solicitudes y reserva automaticamente cuando el Paciente gestiona su propio turno y existe una Fuente de agenda elegible y automatizable.
+- Las primeras consultas particulares quedan retenidas hasta el pago; los casos no automatizables o que requieren revision quedan en `pending` para gestion operativa.
+- El webhook conserva la respuesta por `tenant_id + MessageSid`, por lo que un reintento de Twilio no vuelve a avanzar la conversacion ni repite una reserva.
 - El historial cerrado se conserva en `conversaciones_historial`; no se elimina al resolver.
