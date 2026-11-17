@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -411,6 +412,57 @@ def test_calendar_slots_page_renders_progress_indicator(client, db_session):
     assert 'data-calendar-slots-action-input' in response.text
     assert "Consultando Google Calendar" in response.text
     assert "Generando..." in response.text
+
+
+def test_calendar_slots_preview_displays_weekdays_in_spanish(client, db_session):
+    tenant_id = asyncio.run(
+        create_tenant(db_session, "Tenant Slots Spanish", "whatsapp:+9409")
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Spanish",
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": _base_config(
+                    tuesday={
+                        "enabled": True,
+                        "start": "09:00",
+                        "end": "09:45",
+                        "slot_minutes": 45,
+                    }
+                )
+            },
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-slots-spanish@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-slots-spanish@test.com", "secret-123")
+    page = client.get(f"/t/consultorios/{consultorio_id}/calendar-slots")
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
+    assert csrf is not None
+
+    response = client.post(
+        f"/t/consultorios/{consultorio_id}/calendar-slots",
+        data={
+            "csrf_token": csrf.group(1),
+            "date_from": "2026-11-17",
+            "date_to": "2026-11-17",
+            "action": "preview",
+        },
+    )
+
+    assert response.status_code == 200
+    assert ">Martes<" in response.text
+    assert ">tuesday<" not in response.text
 
 
 class _FakeCall:

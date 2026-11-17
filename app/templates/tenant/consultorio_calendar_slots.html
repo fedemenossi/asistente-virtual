@@ -115,7 +115,7 @@
             <tr class="border-t border-slate-200">
               <td class="px-4 py-3 text-slate-900">{{ slot.start_at|format_ba('%Y-%m-%d %H:%M') }}</td>
               <td class="px-4 py-3 text-slate-600">{{ slot.end_at|format_ba('%H:%M') }}</td>
-              <td class="px-4 py-3 text-slate-600">{{ slot.weekday }}</td>
+              <td class="px-4 py-3 text-slate-600">{{ weekday_labels.get(slot.weekday, slot.weekday) }}</td>
             </tr>
           {% endfor %}
         </tbody>
