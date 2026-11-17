@@ -199,13 +199,15 @@ class ConversationService:
             return "Conversacion finalizada. Escribi cualquier mensaje para comenzar una conversacion nueva."
 
         if state is None:
+            approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
+            welcome_patient = approved_patients[0] if len(approved_patients) == 1 else None
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
                 ConversationState.ASK_MANAGED_FOR.value,
                 {"contact_id": contact.id},
             )
-            return self._managed_for_greeting(tenant)
+            return self._managed_for_greeting(tenant, welcome_patient)
 
         context = state.contexto_json or {}
         current_state = state.estado_actual
@@ -2691,10 +2693,20 @@ class ConversationService:
             "Para continuar con cualquier gestion, indicame el DNI del Paciente."
         )
 
-    def _managed_for_greeting(self, tenant: Tenant) -> str:
+    def _managed_for_greeting(
+        self,
+        tenant: Tenant,
+        patient: Paciente | None = None,
+    ) -> str:
         tenant_name = self._tenant_display_name(tenant)
+        patient_name = (
+            f"{patient.nombre or ''} {patient.apellido or ''}".strip()
+            if patient is not None
+            else ""
+        )
+        greeting = f"Hola {patient_name}" if patient_name else "Hola"
         return (
-            f"Hola, te contactaste con la asistente de {tenant_name}. "
+            f"{greeting}, te contactaste con la asistente de {tenant_name}. "
             f"{self._managed_for_options()}"
         )
 

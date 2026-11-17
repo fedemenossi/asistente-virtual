@@ -60,8 +60,10 @@ Flujo para paciente NO registrado
 6) Pasa a main_menu y muestra opciones.
 
 Flujo para paciente registrado
-1) Si el paciente no tiene email, se fuerza collect_email.
-2) Si tiene email, entra a main_menu.
+1) El sistema normaliza el numero y busca los Pacientes aprobados asociados al Contacto de WhatsApp.
+2) Si existe un unico Paciente asociado, la bienvenida incluye su nombre sin asumir todavia que la gestion es para esa persona.
+3) Siempre pregunta si la gestion es para el propio Paciente o para otra persona.
+4) Si el Contacto representa a varios Pacientes, usa una bienvenida neutra y permite elegir uno despues de indicar para quien es la gestion.
 
 Menu principal (main_menu)
 Detecta opcion con mapping:

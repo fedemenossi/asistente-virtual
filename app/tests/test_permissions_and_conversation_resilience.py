@@ -61,7 +61,7 @@ def test_timeout_restarts_registered_patient_flow(db_session):
 
     reply, state = asyncio.run(seed_and_run())
     assert "para vos o para otra persona" in reply
-    assert "Maria Lopez" not in reply
+    assert "Hola Maria Lopez" in reply
     assert state is not None
     assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
 

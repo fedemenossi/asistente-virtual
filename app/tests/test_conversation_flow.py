@@ -683,7 +683,7 @@ def test_simulator_api_identifies_existing_associated_patient_before_menu(client
 
     first_reply = send("hola")
     assert "para vos" in first_reply.lower()
-    assert "Ana Identificada" not in first_reply
+    assert "Hola Ana Identificada" in first_reply
     assert "Turno presencial" not in first_reply
 
     identified_reply = send("1")
