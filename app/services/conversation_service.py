@@ -24,6 +24,7 @@ from app.repositories.paciente_repository import PacienteRepository
 from app.repositories.patient_contact_repository import PatientContactRepository
 from app.services.conversation_intents import (
     ConversationCategory,
+    IntentResult,
     PrescriptionSubtype,
     classify_main_intent,
     detect_for_whom,
@@ -152,6 +153,7 @@ class ConversationService:
         media_items = list(media_items or [])
         has_media = bool(media_items)
         contact = await self._patient_contact_repo.get_or_create_contact(tenant.id, normalized_phone)
+        ai_settings = get_effective_ai_settings(tenant)
 
         state = await self._conversacion_repo.get_state(tenant.id, normalized_phone)
         if state is None and normalized_phone != from_phone:
@@ -201,17 +203,46 @@ class ConversationService:
         if state is None:
             approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
             welcome_patient = approved_patients[0] if len(approved_patients) == 1 else None
+            ai_result = await self._ai_intent_classifier.classify(
+                text,
+                tenant=tenant,
+                ai_settings=ai_settings,
+                conversation_state=None,
+                context={},
+            )
+            self._log_ai_intent(
+                tenant_id=tenant.id,
+                phone=normalized_phone,
+                current_state="initial_message",
+                message=text,
+                result=ai_result,
+            )
+            initial_context = self._context_with_ai_result(
+                {"contact_id": contact.id},
+                ai_result,
+            )
+            initial_intent = self._initial_intent(text, ai_result, ai_settings)
+            initial_option = self._main_menu_option_for_intent(initial_intent)
+            if initial_option:
+                initial_context["initial_request_option"] = initial_option
+                initial_context["initial_request_message"] = text
+            elif initial_intent.requires_clarification:
+                initial_context["initial_request_requires_modality"] = True
+                initial_context["initial_request_message"] = text
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
                 ConversationState.ASK_MANAGED_FOR.value,
-                {"contact_id": contact.id},
+                initial_context,
             )
-            return self._managed_for_greeting(tenant, welcome_patient)
+            return self._managed_for_greeting(
+                tenant,
+                welcome_patient,
+                request_summary=self._initial_request_summary(initial_intent),
+            )
 
         context = state.contexto_json or {}
         current_state = state.estado_actual
-        ai_settings = get_effective_ai_settings(tenant)
         identification_states = {
             ConversationState.ASK_MANAGED_FOR.value,
             ConversationState.ASK_ASSOCIATED_PATIENT.value,
@@ -251,24 +282,31 @@ class ConversationService:
                         patient=approved_patients[0],
                         contact_id=contact.id,
                         managed_for=managed_for,
+                        context=context,
                     )
                 patient_ids = [patient.id for patient in approved_patients]
-                await self._conversacion_repo.upsert_state(
-                    tenant.id,
-                    normalized_phone,
-                    ConversationState.ASK_ASSOCIATED_PATIENT.value,
+                next_context = dict(context)
+                next_context.update(
                     {
                         "contact_id": contact.id,
                         "managed_for": managed_for,
                         "patient_options": patient_ids,
-                    },
+                    }
+                )
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.ASK_ASSOCIATED_PATIENT.value,
+                    next_context,
                 )
                 return self._associated_patient_options(approved_patients, allow_new=managed_for == "other")
+            next_context = dict(context)
+            next_context.update({"contact_id": contact.id, "managed_for": managed_for})
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
                 ConversationState.ASK_PATIENT_DNI.value,
-                {"contact_id": contact.id, "managed_for": managed_for},
+                next_context,
             )
             return "Indicame el DNI del Paciente."
 
@@ -306,7 +344,7 @@ class ConversationService:
                     tenant.id,
                     normalized_phone,
                     ConversationState.ASK_MANAGED_FOR.value,
-                    {"contact_id": contact.id},
+                    {**context, "contact_id": contact.id},
                 )
                 return "No pude validar ese Paciente. Volvamos a empezar: la gestion es para vos o para otra persona?"
             return await self._select_patient(
@@ -315,6 +353,7 @@ class ConversationService:
                 patient=patient,
                 contact_id=contact.id,
                 managed_for=str(context.get("managed_for") or "other"),
+                context=context,
             )
 
         if current_state == ConversationState.AWAITING_CONTACT_APPROVAL.value:
@@ -333,6 +372,7 @@ class ConversationService:
                     patient=patient,
                     contact_id=contact.id,
                     managed_for=str(context.get("managed_for") or "other"),
+                    context=context,
                 )
             if link.status == PatientContactLinkStatus.REJECTED.value:
                 return self._rejected_contact_link_message()
@@ -352,6 +392,7 @@ class ConversationService:
                         patient=existing,
                         contact_id=contact.id,
                         managed_for=str(context.get("managed_for") or "self"),
+                        context=context,
                     )
                 if link is None:
                     link = await self._patient_contact_repo.link_patient(
@@ -363,14 +404,22 @@ class ConversationService:
                     tenant.id,
                     normalized_phone,
                     ConversationState.AWAITING_CONTACT_APPROVAL.value,
-                    {"contact_id": contact.id, "contact_link_id": link.id},
+                    {
+                        **context,
+                        "contact_id": contact.id,
+                        "contact_link_id": link.id,
+                    },
                 )
                 return self._contact_link_status_message(link.status)
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
                 ConversationState.ASK_FIRST_NAME.value,
-                {"dni": normalized_dni, "identification_started": True},
+                {
+                    **context,
+                    "dni": normalized_dni,
+                    "identification_started": True,
+                },
             )
             return "No encontre un Paciente con ese DNI. Para darte de alta, decime tu nombre."
 
@@ -596,20 +645,27 @@ class ConversationService:
                     tenant.id,
                     normalized_phone,
                     ConversationState.AWAITING_CONTACT_APPROVAL.value,
-                    {"contact_id": contact.id, "contact_link_id": link.id},
+                    {
+                        **context,
+                        "contact_id": contact.id,
+                        "contact_link_id": link.id,
+                    },
                 )
                 return self._contact_link_status_message(link.status)
-            await self._conversacion_repo.upsert_state(
-                tenant.id,
-                normalized_phone,
-                ConversationState.MAIN_REASON_MENU.value,
+            next_context = dict(context)
+            next_context.update(
                 {
                     "contact_id": contact.id,
                     "patient_id": paciente.id,
                     "insurance_number": context.get("insurance_number"),
-                },
+                }
             )
-            return await self._known_patient_greeting(tenant, paciente)
+            return await self._continue_after_patient_identification(
+                tenant=tenant,
+                phone=normalized_phone,
+                patient=paciente,
+                context=next_context,
+            )
 
         if current_state in {ConversationState.MAIN_REASON_MENU.value, ConversationState.MAIN_MENU.value}:
             if self._is_direct_main_menu_option(text):
@@ -2697,6 +2753,8 @@ class ConversationService:
         self,
         tenant: Tenant,
         patient: Paciente | None = None,
+        *,
+        request_summary: str | None = None,
     ) -> str:
         tenant_name = self._tenant_display_name(tenant)
         patient_name = (
@@ -2705,10 +2763,57 @@ class ConversationService:
             else ""
         )
         greeting = f"Hola {patient_name}" if patient_name else "Hola"
+        understood = f"{request_summary} " if request_summary else ""
         return (
             f"{greeting}, te contactaste con la asistente de {tenant_name}. "
+            f"{understood}"
             f"{self._managed_for_options()}"
         )
+
+    def _initial_intent(
+        self,
+        text: str,
+        ai_result: AIIntentResult,
+        ai_settings: dict,
+    ) -> IntentResult:
+        rule_intent = classify_main_intent(text)
+        if rule_intent.requires_clarification:
+            return rule_intent
+        ai_intent = self._intent_from_ai_result(
+            ai_result,
+            min_confidence=ai_settings["min_confidence"],
+        )
+        if ai_intent.pending_reason or ai_intent.category:
+            return ai_intent
+        return rule_intent
+
+    @staticmethod
+    def _main_menu_option_for_intent(intent: IntentResult) -> str | None:
+        return {
+            "turno_presencial": "1",
+            "turno_virtual": "2",
+            "receta_orden": "3",
+            "otra_consulta": "4",
+            "humano": "5",
+            "cancelar_turno": "6",
+            "reprogramar_turno": "7",
+            "factura_reintegro": "8",
+        }.get(intent.pending_reason)
+
+    @staticmethod
+    def _initial_request_summary(intent: IntentResult) -> str | None:
+        if intent.requires_clarification:
+            return "Entendi que queres solicitar un turno."
+        return {
+            "turno_presencial": "Entendi que queres solicitar un turno presencial.",
+            "turno_virtual": "Entendi que queres solicitar un turno virtual.",
+            "receta_orden": "Entendi que queres solicitar una receta u orden medica.",
+            "otra_consulta": "Entendi que queres realizar otra consulta.",
+            "humano": "Entendi que queres hablar con una persona.",
+            "cancelar_turno": "Entendi que queres cancelar un turno.",
+            "reprogramar_turno": "Entendi que queres reprogramar un turno.",
+            "factura_reintegro": "Entendi que queres solicitar una factura para reintegro.",
+        }.get(intent.pending_reason)
 
     @staticmethod
     def _managed_for_options() -> str:
@@ -2780,18 +2885,52 @@ class ConversationService:
         patient: Paciente,
         contact_id: int,
         managed_for: str,
+        context: dict | None = None,
     ) -> str:
-        await self._conversacion_repo.upsert_state(
-            tenant.id,
-            phone,
-            ConversationState.MAIN_REASON_MENU.value,
+        next_context = dict(context or {})
+        next_context.pop("patient_options", None)
+        next_context.pop("contact_link_id", None)
+        next_context.update(
             {
                 "contact_id": contact_id,
                 "patient_id": patient.id,
                 "dni": patient.dni_normalized,
                 "managed_for": managed_for,
-            },
+            }
         )
+        return await self._continue_after_patient_identification(
+            tenant=tenant,
+            phone=phone,
+            patient=patient,
+            context=next_context,
+        )
+
+    async def _continue_after_patient_identification(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        patient: Paciente,
+        context: dict,
+    ) -> str:
+        next_context = dict(context)
+        initial_option = next_context.pop("initial_request_option", None)
+        requires_modality = bool(next_context.pop("initial_request_requires_modality", False))
+        next_context.pop("initial_request_message", None)
+        await self._conversacion_repo.upsert_state(
+            tenant.id,
+            phone,
+            ConversationState.MAIN_REASON_MENU.value,
+            next_context,
+        )
+        if initial_option:
+            return await self.process_message(tenant, phone, str(initial_option))
+        if requires_modality:
+            return (
+                "Perfecto, te ayudo con tu turno. Indica por favor:\n"
+                "1) Turno presencial\n"
+                "2) Turno virtual"
+            )
         return await self._known_patient_greeting(tenant, patient)
 
     async def _complete_patient_registration(
@@ -2838,21 +2977,28 @@ class ConversationService:
                 tenant.id,
                 phone,
                 ConversationState.AWAITING_CONTACT_APPROVAL.value,
-                {"contact_id": contact.id, "contact_link_id": link.id},
+                {
+                    **context,
+                    "contact_id": contact.id,
+                    "contact_link_id": link.id,
+                },
             )
             return self._contact_link_status_message(link.status)
-        await self._conversacion_repo.upsert_state(
-            tenant.id,
-            phone,
-            ConversationState.MAIN_REASON_MENU.value,
+        next_context = dict(context)
+        next_context.update(
             {
                 "contact_id": contact.id,
                 "patient_id": paciente.id,
                 "dni": normalized_dni,
                 "managed_for": context.get("managed_for"),
-            },
+            }
         )
-        return await self._known_patient_greeting(tenant, paciente)
+        return await self._continue_after_patient_identification(
+            tenant=tenant,
+            phone=phone,
+            patient=paciente,
+            context=next_context,
+        )
 
     @staticmethod
     def _coverage_type_options() -> str:

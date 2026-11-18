@@ -16,6 +16,7 @@ from app.models.user import UserRole
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.services.conversation_service import ConversationService, ConversationState
+from app.services.ai_intent_classifier import AIIntent, AIIntentResult
 from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_turno, create_user, get_tenant, login
 from app.integrations.interfaces import (
     CalendarConfigurationError,
@@ -95,6 +96,131 @@ def _extract_csrf(html: str) -> str:
     match = re.search(r'name="csrf_token" value="([^"]+)"', html)
     assert match, "CSRF token no encontrado"
     return match.group(1)
+
+
+def test_first_message_is_interpreted_and_resumed_after_patient_identification(
+    db_session,
+    monkeypatch,
+):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Initial Intent",
+            "whatsapp:+699",
+            ai_settings={"enabled": True, "api_key": "sk-test"},
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491169900001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone, nombre="Federico", apellido="Menossi"))
+    classified_messages = []
+
+    async def fake_classify(self, message, **kwargs):
+        classified_messages.append(message)
+        return AIIntentResult(
+            intent=AIIntent.UNKNOWN,
+            confidence=0.45,
+            source="ai",
+        )
+
+    monkeypatch.setattr(
+        "app.services.ai_intent_classifier.AIIntentClassifier.classify",
+        fake_classify,
+    )
+
+    async def run():
+        async with db_session() as session:
+            service = ConversationService(
+                session=session,
+                paciente_repo=PacienteRepository(session),
+                conversacion_repo=ConversacionRepository(session),
+            )
+            first_reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "Hola hoy quiero pedir un turno",
+            )
+
+            assert "Entendi que queres solicitar un turno" in first_reply
+            assert "para vos o para otra persona" in first_reply
+            assert classified_messages == ["Hola hoy quiero pedir un turno"]
+
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
+            assert state.contexto_json["initial_request_requires_modality"] is True
+            assert state.contexto_json["ai"]["last_source"] == "ai"
+
+            second_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+
+            assert "Turno presencial" in second_reply
+            assert "Turno virtual" in second_reply
+            assert classified_messages == ["Hola hoy quiero pedir un turno"]
+
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+            assert "initial_request_message" not in state.contexto_json
+
+    asyncio.run(run())
+
+
+def test_ai_intent_from_first_message_starts_requested_flow_after_identification(
+    db_session,
+    monkeypatch,
+):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Initial AI Intent",
+            "whatsapp:+698",
+            ai_settings={"enabled": True, "api_key": "sk-test"},
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491169800001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone, nombre="Laura", apellido="Diaz"))
+
+    async def fake_classify(self, message, **kwargs):
+        return AIIntentResult(
+            intent=AIIntent.BOOK_VIRTUAL_APPOINTMENT,
+            confidence=0.94,
+            extracted={"appointment_type": "virtual"},
+            source="ai",
+        )
+
+    monkeypatch.setattr(
+        "app.services.ai_intent_classifier.AIIntentClassifier.classify",
+        fake_classify,
+    )
+
+    async def run():
+        async with db_session() as session:
+            service = ConversationService(
+                session=session,
+                paciente_repo=PacienteRepository(session),
+                conversacion_repo=ConversacionRepository(session),
+            )
+            first_reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "Quisiera una consulta a distancia",
+            )
+
+            assert "Entendi que queres solicitar un turno virtual" in first_reply
+
+            second_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+
+            assert "entiendo que queres un turno virtual" in second_reply
+            assert "Es primera vez" in second_reply
+
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_VIRTUAL_FIRST_TIME.value
+            assert state.contexto_json["appointment"]["type"] == "virtual"
+            assert state.contexto_json["ai"]["last_source"] == "ai"
+
+    asyncio.run(run())
 
 
 def test_text_outside_menu_does_not_break_state(db_session):
