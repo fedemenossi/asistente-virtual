@@ -687,6 +687,9 @@ def test_google_provider_deduplicates_and_reserves_slot(db_session, monkeypatch)
     assert reserve["event_id"] == "evt-1"
     assert existing[0]["extendedProperties"]["private"]["slot_status"] == "reserved"
     assert existing[0]["summary"] == "TURNO [Ana Gomez]"
+    assert "Paciente: Ana Gomez" in existing[0]["description"]
+    assert "Metadata:" not in existing[0]["description"]
+    assert "tenant_id" not in existing[0]["description"]
 
     try:
         asyncio.run(provider.reserve_slot(tenant, consultorio, "evt-1", paciente, {}))

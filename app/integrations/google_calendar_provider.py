@@ -483,8 +483,7 @@ class GoogleCalendarProvider(CalendarProvider):
             f"DNI: {patient.dni or '-'}\n"
             f"Telefono: {patient.telefono or '-'}\n"
             f"Obra social: {patient.obra_social or '-'}\n"
-            f"Email: {patient.email or '-'}\n"
-            f"Metadata: {json.dumps(metadata, ensure_ascii=True)}"
+            f"Email: {patient.email or '-'}"
         )
         template = consultorio_settings.get("reserved_tag_template") or DEFAULT_RESERVED_TAG_TEMPLATE
         summary = template.replace("{patient_full_name}", patient_full_name)
