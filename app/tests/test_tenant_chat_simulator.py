@@ -108,6 +108,7 @@ def test_tenant_chat_simulator_registers_new_patient_in_authenticated_tenant(
 
     messages = [
         "Hola",
+        "quiero pedir un turno",
         "1",
         "30123123",
         "Lucia",
@@ -127,7 +128,8 @@ def test_tenant_chat_simulator_registers_new_patient_in_authenticated_tenant(
         assert response.status_code == 200
         responses.append(response.json()["reply"])
 
-    assert "Hola Lucia Suarez" in responses[-1]
+    assert "Turno presencial" in responses[-1]
+    assert "Turno virtual" in responses[-1]
 
     async def get_registered_patients():
         async with db_session() as session:

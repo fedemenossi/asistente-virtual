@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 
 
 class ConversationState(str, Enum):
+    ASK_INITIAL_REQUEST = "ask_initial_request"
     ASK_MANAGED_FOR = "ask_managed_for"
     ASK_ASSOCIATED_PATIENT = "ask_associated_patient"
     AWAITING_CONTACT_APPROVAL = "awaiting_contact_approval"
@@ -203,38 +204,27 @@ class ConversationService:
         if state is None:
             approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
             welcome_patient = approved_patients[0] if len(approved_patients) == 1 else None
-            ai_result = await self._ai_intent_classifier.classify(
-                text,
+            initial_context, initial_intent = await self._interpret_initial_request(
                 tenant=tenant,
-                ai_settings=ai_settings,
-                conversation_state=None,
-                context={},
-            )
-            self._log_ai_intent(
-                tenant_id=tenant.id,
                 phone=normalized_phone,
+                text=text,
+                ai_settings=ai_settings,
+                context={"contact_id": contact.id},
                 current_state="initial_message",
-                message=text,
-                result=ai_result,
             )
-            initial_context = self._context_with_ai_result(
-                {"contact_id": contact.id},
-                ai_result,
-            )
-            initial_intent = self._initial_intent(text, ai_result, ai_settings)
-            initial_option = self._main_menu_option_for_intent(initial_intent)
-            if initial_option:
-                initial_context["initial_request_option"] = initial_option
-                initial_context["initial_request_message"] = text
-            elif initial_intent.requires_clarification:
-                initial_context["initial_request_requires_modality"] = True
-                initial_context["initial_request_message"] = text
+            has_request = self._has_initial_request(initial_context)
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
-                ConversationState.ASK_MANAGED_FOR.value,
+                (
+                    ConversationState.ASK_MANAGED_FOR.value
+                    if has_request
+                    else ConversationState.ASK_INITIAL_REQUEST.value
+                ),
                 initial_context,
             )
+            if not has_request:
+                return self._initial_request_greeting(tenant, welcome_patient)
             return self._managed_for_greeting(
                 tenant,
                 welcome_patient,
@@ -244,6 +234,7 @@ class ConversationService:
         context = state.contexto_json or {}
         current_state = state.estado_actual
         identification_states = {
+            ConversationState.ASK_INITIAL_REQUEST.value,
             ConversationState.ASK_MANAGED_FOR.value,
             ConversationState.ASK_ASSOCIATED_PATIENT.value,
             ConversationState.AWAITING_CONTACT_APPROVAL.value,
@@ -268,6 +259,37 @@ class ConversationService:
                 {},
             )
             return self._patient_identification_greeting(tenant)
+
+        if current_state == ConversationState.ASK_INITIAL_REQUEST.value:
+            context, initial_intent = await self._interpret_initial_request(
+                tenant=tenant,
+                phone=normalized_phone,
+                text=text,
+                ai_settings=ai_settings,
+                context=context,
+                current_state=current_state,
+            )
+            if not self._has_initial_request(context):
+                await self._conversacion_repo.upsert_state(
+                    tenant.id,
+                    normalized_phone,
+                    ConversationState.ASK_INITIAL_REQUEST.value,
+                    context,
+                )
+                return "Contame brevemente que gestion necesitas realizar."
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_MANAGED_FOR.value,
+                context,
+            )
+            approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
+            welcome_patient = approved_patients[0] if len(approved_patients) == 1 else None
+            return self._managed_for_greeting(
+                tenant,
+                welcome_patient,
+                request_summary=self._initial_request_summary(initial_intent),
+            )
 
         if current_state == ConversationState.ASK_MANAGED_FOR.value:
             managed_for = self._detect_managed_for(text)
@@ -2770,12 +2792,84 @@ class ConversationService:
             f"{self._managed_for_options()}"
         )
 
+    async def _interpret_initial_request(
+        self,
+        *,
+        tenant: Tenant,
+        phone: str,
+        text: str,
+        ai_settings: dict,
+        context: dict,
+        current_state: str,
+    ) -> tuple[dict, IntentResult]:
+        ai_result = await self._ai_intent_classifier.classify(
+            text,
+            tenant=tenant,
+            ai_settings=ai_settings,
+            conversation_state=current_state,
+            context=context,
+        )
+        self._log_ai_intent(
+            tenant_id=tenant.id,
+            phone=phone,
+            current_state=current_state,
+            message=text,
+            result=ai_result,
+        )
+        next_context = self._context_with_ai_result(context, ai_result)
+        next_context.pop("initial_request_option", None)
+        next_context.pop("initial_request_requires_modality", None)
+        next_context.pop("initial_request_flexible", None)
+        next_context.pop("initial_request_message", None)
+        initial_intent = self._initial_intent(text, ai_result, ai_settings)
+        initial_option = self._main_menu_option_for_intent(initial_intent)
+        if initial_intent.pending_reason == "turno_ambos":
+            next_context["initial_request_flexible"] = True
+            next_context["initial_request_message"] = text
+        elif initial_option:
+            next_context["initial_request_option"] = initial_option
+            next_context["initial_request_message"] = text
+        elif initial_intent.requires_clarification:
+            next_context["initial_request_requires_modality"] = True
+            next_context["initial_request_message"] = text
+        return next_context, initial_intent
+
+    @staticmethod
+    def _has_initial_request(context: dict) -> bool:
+        return bool(
+            context.get("initial_request_option")
+            or context.get("initial_request_requires_modality")
+            or context.get("initial_request_flexible")
+        )
+
+    def _initial_request_greeting(
+        self,
+        tenant: Tenant,
+        patient: Paciente | None = None,
+    ) -> str:
+        tenant_name = self._tenant_display_name(tenant)
+        patient_name = (
+            f"{patient.nombre or ''} {patient.apellido or ''}".strip()
+            if patient is not None
+            else ""
+        )
+        greeting = f"Hola {patient_name}" if patient_name else "Hola"
+        return (
+            f"{greeting}, te contactaste con la asistente de {tenant_name}. "
+            "En que puedo ayudarte hoy?"
+        )
+
     def _initial_intent(
         self,
         text: str,
         ai_result: AIIntentResult,
         ai_settings: dict,
     ) -> IntentResult:
+        if self._requests_flexible_modality(text):
+            return IntentResult(
+                pending_reason="turno_ambos",
+                category=ConversationCategory.FLEXIBLE_APPOINTMENT,
+            )
         rule_intent = classify_main_intent(text)
         if rule_intent.requires_clarification:
             return rule_intent
@@ -2805,6 +2899,7 @@ class ConversationService:
         if intent.requires_clarification:
             return "Entendi que queres solicitar un turno."
         return {
+            "turno_ambos": "Entendi que queres solicitar un turno presencial o virtual.",
             "turno_presencial": "Entendi que queres solicitar un turno presencial.",
             "turno_virtual": "Entendi que queres solicitar un turno virtual.",
             "receta_orden": "Entendi que queres solicitar una receta u orden medica.",
@@ -2916,7 +3011,8 @@ class ConversationService:
         next_context = dict(context)
         initial_option = next_context.pop("initial_request_option", None)
         requires_modality = bool(next_context.pop("initial_request_requires_modality", False))
-        next_context.pop("initial_request_message", None)
+        flexible = bool(next_context.pop("initial_request_flexible", False))
+        initial_message = next_context.pop("initial_request_message", None)
         await self._conversacion_repo.upsert_state(
             tenant.id,
             phone,
@@ -2925,6 +3021,8 @@ class ConversationService:
         )
         if initial_option:
             return await self.process_message(tenant, phone, str(initial_option))
+        if flexible and initial_message:
+            return await self.process_message(tenant, phone, str(initial_message))
         if requires_modality:
             return (
                 "Perfecto, te ayudo con tu turno. Indica por favor:\n"

@@ -59,6 +59,7 @@ def _create_pending_link(client, db_session, *, suffix: str = "list") -> tuple[i
         return response.json()["reply"]
 
     send("hola")
+    send("quiero pedir un turno")
     send("2")
     reply = send("39.444.555")
     assert "pendiente" in reply.lower()
@@ -142,8 +143,8 @@ def test_operator_approval_is_idempotent_audited_and_enables_contact(client, db_
         from_number=from_number,
         message="continuar",
     )
-    assert "Dalia Reservada" in reply
     assert "Turno presencial" in reply
+    assert "Turno virtual" in reply
 
 
 def test_operator_rejection_is_idempotent_audited_and_keeps_contact_blocked(client, db_session):
@@ -174,7 +175,7 @@ def test_operator_rejection_is_idempotent_audited_and_keeps_contact_blocked(clie
     assert "Dalia" not in reply
     assert "Turno presencial" not in reply
 
-    for message in ("salir", "hola", "2"):
+    for message in ("salir", "hola", "quiero pedir un turno", "2"):
         _send_as_super(
             client,
             suffix="reject",
