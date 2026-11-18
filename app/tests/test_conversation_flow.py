@@ -236,6 +236,82 @@ def test_greeting_asks_for_request_before_patient_identification(db_session, mon
     asyncio.run(run())
 
 
+def test_user_can_change_initial_request_while_patient_is_being_identified(
+    db_session,
+    monkeypatch,
+):
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Initial Intent Change",
+            "whatsapp:+696",
+            ai_settings={"enabled": True, "api_key": "sk-test"},
+        )
+    )
+    tenant = asyncio.run(get_tenant(db_session, tenant_id))
+    phone = "5491169600001"
+    asyncio.run(create_paciente(db_session, tenant_id, phone, nombre="Federico", apellido="Menossi"))
+    classified_messages = []
+
+    async def fake_classify(self, message, **kwargs):
+        classified_messages.append(message)
+        normalized = message.lower()
+        if normalized == "hola buenas tardes":
+            return AIIntentResult(intent=AIIntent.GREETING, confidence=0.95, source="ai")
+        if "receta" in normalized:
+            return AIIntentResult(
+                intent=AIIntent.RECIPE_OR_ORDER,
+                confidence=0.96,
+                extracted={"recipe_or_order_type": "receta"},
+                source="ai",
+            )
+        return AIIntentResult(intent=AIIntent.UNKNOWN, confidence=0.45, source="ai")
+
+    monkeypatch.setattr(
+        "app.services.ai_intent_classifier.AIIntentClassifier.classify",
+        fake_classify,
+    )
+
+    async def run():
+        async with db_session() as session:
+            service = ConversationService(
+                session=session,
+                paciente_repo=PacienteRepository(session),
+                conversacion_repo=ConversacionRepository(session),
+            )
+
+            await service.process_message(tenant, f"whatsapp:+{phone}", "Hola Buenas tardes")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "quisiera sacar un turno")
+            changed_reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "no, mejor quiero una receta",
+            )
+
+            assert "Entendi que queres solicitar una receta u orden medica" in changed_reply
+            assert "para vos o para otra persona" in changed_reply
+            assert classified_messages == [
+                "Hola Buenas tardes",
+                "quisiera sacar un turno",
+                "no, mejor quiero una receta",
+            ]
+
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
+            assert state.contexto_json["initial_request_option"] == "3"
+            assert "initial_request_requires_modality" not in state.contexto_json
+
+            identification_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+
+            assert "detalle del medicamento u orden" in identification_reply
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_RECIPE_DETAIL.value
+
+    asyncio.run(run())
+
+
 def test_ai_intent_from_first_message_starts_requested_flow_after_identification(
     db_session,
     monkeypatch,

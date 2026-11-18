@@ -294,6 +294,24 @@ class ConversationService:
         if current_state == ConversationState.ASK_MANAGED_FOR.value:
             managed_for = self._detect_managed_for(text)
             if managed_for is None:
+                changed_context, changed_intent = await self._interpret_initial_request(
+                    tenant=tenant,
+                    phone=normalized_phone,
+                    text=text,
+                    ai_settings=ai_settings,
+                    context=context,
+                    current_state=current_state,
+                )
+                if self._has_initial_request(changed_context):
+                    await self._conversacion_repo.upsert_state(
+                        tenant.id,
+                        normalized_phone,
+                        ConversationState.ASK_MANAGED_FOR.value,
+                        changed_context,
+                    )
+                    request_summary = self._initial_request_summary(changed_intent)
+                    understood = f"{request_summary}\n" if request_summary else ""
+                    return f"Entendido, cambiamos la gestion.\n{understood}{self._managed_for_options()}"
                 return self._managed_for_options()
             approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
             if approved_patients:
