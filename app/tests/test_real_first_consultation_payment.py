@@ -12,7 +12,7 @@ from app.models.consultorio import TipoConsultorio
 from app.models.patient_contact_link import PatientContactLink, PatientContactLinkStatus
 from app.models.payment import Payment, PaymentStatus
 from app.models.tenant import Tenant
-from app.models.turno import AppointmentStatus, EstadoTurno, Turno
+from app.models.turno import AppointmentStatus, EstadoTurno, TipoTurno, Turno
 from app.models.whatsapp_contact import WhatsappContact
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
@@ -24,6 +24,40 @@ from app.tests.conftest import (
     create_tenant,
     create_turno,
 )
+
+
+class _ExternalRequest:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def execute(self) -> dict:
+        return self._payload
+
+
+class _ExternalGoogleEvents:
+    def __init__(self, event: dict):
+        self._event = event
+
+    def get(self, **kwargs):
+        return _ExternalRequest(self._event)
+
+    def patch(self, **kwargs):
+        return _ExternalRequest(
+            {
+                **self._event,
+                **kwargs["body"],
+                "htmlLink": "https://calendar.google.com/event?eid=paid-event-21",
+                "hangoutLink": "https://meet.google.com/paid-meet-21",
+            }
+        )
+
+
+class _ExternalGoogleService:
+    def __init__(self, event: dict):
+        self._events = _ExternalGoogleEvents(event)
+
+    def events(self):
+        return self._events
 
 
 def test_whatsapp_first_private_consultation_returns_secure_payment_link(
@@ -349,6 +383,141 @@ def test_approved_webhook_with_active_hold_confirms_once_and_ignores_older_statu
     assert payment.status == PaymentStatus.APPROVED
     assert turno.status == AppointmentStatus.CONFIRMED
     assert hold.status == AvailabilityHoldStatus.CONVERTED
+
+
+def test_approved_payment_webhook_sends_confirmed_turno_and_google_meet_by_whatsapp(
+    client,
+    db_session,
+    monkeypatch,
+):
+    phone = "5491100021099"
+    tenant_id = asyncio.run(
+        create_tenant(
+            db_session,
+            "Tenant Pago con Meet",
+            "whatsapp:+14155231099",
+            calendar_settings={
+                "google_credentials_json": "{}",
+                "default_timezone": "America/Argentina/Buenos_Aires",
+            },
+            whatsapp_settings={
+                "twilio_account_sid": "AC_PAID_MEET",
+                "twilio_auth_token": "paid-meet-token",
+                "twilio_whatsapp_number": "whatsapp:+14155231099",
+            },
+        )
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Consultorio Virtual Pago",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {"calendar_id": "calendar-paid-meet"}
+            },
+        )
+    )
+    patient_id = asyncio.run(
+        create_paciente(
+            db_session,
+            tenant_id,
+            phone,
+            nombre="Paula",
+            apellido="Pago",
+            obra_social="Particular",
+        )
+    )
+    start = (now_ba() + timedelta(days=2)).replace(
+        hour=11,
+        minute=0,
+        second=0,
+        microsecond=0,
+    )
+    end = start + timedelta(minutes=30)
+    turno_id = asyncio.run(
+        create_turno(
+            db_session,
+            patient_id,
+            consultorio_id,
+            start_at=start,
+            end_at=end,
+            tipo=TipoTurno.VIRTUAL,
+            estado=EstadoTurno.WAITING_PAYMENT,
+            status=AppointmentStatus.WAITING_PAYMENT,
+            provider="google",
+            external_id="paid-event-21",
+            external_calendar_provider="google",
+            external_event_id="paid-event-21",
+            external_status="held_waiting_payment",
+            timezone="America/Argentina/Buenos_Aires",
+        )
+    )
+    payment_id = asyncio.run(create_payment(db_session, tenant_id, patient_id, turno_id))
+
+    async def seed_hold():
+        async with db_session() as session:
+            async with session.begin():
+                session.add(
+                    AvailabilityHold(
+                        tenant_id=tenant_id,
+                        consultorio_id=consultorio_id,
+                        patient_id=patient_id,
+                        turno_id=turno_id,
+                        conversation_phone=phone,
+                        external_slot_id="paid-event-21",
+                        start_at=start,
+                        end_at=end,
+                        timezone="America/Argentina/Buenos_Aires",
+                        expires_at=now_ba() + timedelta(hours=1),
+                        status=AvailabilityHoldStatus.ACTIVE,
+                    )
+                )
+
+    asyncio.run(seed_hold())
+    google_service = _ExternalGoogleService(
+        {
+            "id": "paid-event-21",
+            "summary": "[DISPONIBLE] Consulta virtual",
+            "start": {
+                "dateTime": start.isoformat(),
+                "timeZone": "America/Argentina/Buenos_Aires",
+            },
+            "end": {"dateTime": end.isoformat()},
+            "extendedProperties": {"private": {"slot_status": "available"}},
+        }
+    )
+    monkeypatch.setattr(
+        "app.integrations.google_calendar_provider.GoogleCalendarProvider._build_service",
+        lambda self: google_service,
+    )
+    outbound_messages: list[dict] = []
+
+    class ExternalTwilioMessages:
+        def create(self, **message):
+            outbound_messages.append(message)
+
+    class ExternalTwilioClient:
+        def __init__(self, sid, token):
+            self.messages = ExternalTwilioMessages()
+
+    monkeypatch.setattr("app.services.messaging_service.Client", ExternalTwilioClient)
+
+    response = client.post(
+        f"/webhook/payments/mercadopago?payment_id={payment_id}",
+        json={
+            "type": "payment",
+            "data": {"id": "mp-paid-meet-21", "status": "approved"},
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(outbound_messages) == 1
+    assert outbound_messages[0]["to"] == f"whatsapp:{phone}"
+    assert "Pago aprobado" in outbound_messages[0]["body"]
+    assert "Turno confirmado" in outbound_messages[0]["body"]
+    assert "https://meet.google.com/paid-meet-21" in outbound_messages[0]["body"]
 
 
 def test_internal_expiration_job_releases_overdue_hold_once(
