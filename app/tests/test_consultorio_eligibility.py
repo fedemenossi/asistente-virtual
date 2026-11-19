@@ -284,8 +284,9 @@ def test_simulator_offers_only_consultorios_eligible_for_first_consultation_and_
         assert response.status_code == 200
         return response.json()["reply"]
 
-    send("quiero un turno virtual")
+    send("hola")
     send("1")
+    send("2")
     coverage_prompt = send("1")
     assert "1) Caja Notarial" in coverage_prompt
     assert "2) OSDE" in coverage_prompt
@@ -454,8 +455,9 @@ def test_simulator_keeps_reimbursement_patient_particular_and_filters_modality_t
         assert response.status_code == 200
         return response.json()["reply"]
 
-    send("quiero un turno virtual")
+    send("hola")
     send("1")
+    send("2")
     coverage_prompt = send("2")
     assert "1) Particular" in coverage_prompt
     assert "2) Caja Notarial" in coverage_prompt
@@ -573,8 +575,9 @@ def test_simulator_prefers_specific_coverage_consultorio_for_caja_notarial(
         assert response.status_code == 200
         return response.json()["reply"]
 
-    send("quiero un turno virtual")
+    send("hola")
     send("1")
+    send("2")
     coverage_prompt = send("2")
     assert "1) Caja Notarial (obra social)" in coverage_prompt
     offer = send("1")

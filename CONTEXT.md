@@ -178,6 +178,10 @@ _Evitar_: simulador, operador humano, portal del paciente
 Interacción guiada entre un Contacto de WhatsApp y el Asistente de WhatsApp de un Tenant. Conserva su estado, identifica al Paciente y conduce a una Solicitud operativa o a una operación automática.
 _Evitar_: chat sin estado, ticket, simulación
 
+**Flujo guiado por opciones**:
+Forma de conducción de la Conversación en la que el Asistente de WhatsApp presenta opciones explícitas para identificar al Paciente y elegir la gestión. No interpreta texto libre para decidir una categoría operativa ni para iniciar un turno; el texto libre se solicita únicamente cuando constituye un dato de la gestión, como nombre, DNI, email o detalle de una consulta.
+_Evitar_: agente de IA, clasificación de intención, conversación libre
+
 **Simulador de conversación**:
 Interfaz interna para probar el mismo flujo y estado del Asistente de WhatsApp sin enviar mensajes reales por WhatsApp. Sus operaciones de agenda modifican el Google Calendar configurado, pero no ejecuta cobros reales ni constituye un canal de atención.
 _Evitar_: segundo bot, entorno aislado de agenda, portal del paciente, flujo alternativo

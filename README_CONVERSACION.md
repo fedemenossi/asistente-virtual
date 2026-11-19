@@ -66,11 +66,17 @@ Flujo para paciente registrado
 4) Si el Contacto representa a varios Pacientes, usa una bienvenida neutra y permite elegir uno despues de indicar para quien es la gestion.
 
 Menu principal (main_menu)
-Detecta opcion con mapping:
-- "a", "presencial", "turno presencial" -> turno_presencial
-- "b", "virtual", "turno virtual" -> turno_virtual
-- "c", "otra", "consulta" -> otra
-- "d", "humano", "asistente" -> humano
+El flujo es guiado y no usa IA para interpretar la intencion. Despues de identificar al Paciente, presenta opciones numeradas:
+- "1" -> turno presencial
+- "2" -> turno virtual
+- "3" -> receta u orden medica
+- "4" -> otra consulta
+- "5" -> hablar con una persona
+- "6" -> cancelar un turno, cuando hay turnos futuros
+- "7" -> reprogramar un turno, cuando hay turnos futuros
+- "8" -> factura para reintegro, cuando corresponde
+
+Una frase libre no inicia una gestion desde el menu: el Asistente vuelve a mostrar las opciones. El texto libre se conserva para datos solicitados expresamente, como nombre, DNI, email, cobertura o detalle de una consulta.
 
 Si turno_presencial o turno_virtual:
 - Pasa a first_time_check (pregunta si es primera consulta).

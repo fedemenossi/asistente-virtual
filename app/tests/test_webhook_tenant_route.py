@@ -311,8 +311,9 @@ def test_real_whatsapp_webhook_confirms_google_slot_and_exposes_local_appointmen
         assert response.status_code == 200
         return response.text
 
-    assert "para vos" in send("quiero un turno virtual").lower()
-    assert "Es primera vez" in send("1")
+    assert "para vos" in send("hola").lower()
+    assert "Turno virtual" in send("1")
+    assert "Es primera vez" in send("2")
     assert "turnos virtuales disponibles" in send("2")
     assert "Confirmas que queres reservarlo" in send("1")
     confirmation_sid = "SM-REAL-CONFIRMATION"

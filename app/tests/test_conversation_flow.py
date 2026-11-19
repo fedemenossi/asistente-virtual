@@ -16,7 +16,6 @@ from app.models.user import UserRole
 from app.repositories.conversacion_repository import ConversacionRepository
 from app.repositories.paciente_repository import PacienteRepository
 from app.services.conversation_service import ConversationService, ConversationState
-from app.services.ai_intent_classifier import AIIntent, AIIntentResult
 from app.tests.conftest import create_consultorio, create_paciente, create_tenant, create_turno, create_user, get_tenant, login
 from app.integrations.interfaces import (
     CalendarConfigurationError,
@@ -112,7 +111,7 @@ def _extract_csrf(html: str) -> str:
     return match.group(1)
 
 
-def test_first_message_is_interpreted_and_resumed_after_patient_identification(
+def test_main_menu_requires_an_option_and_does_not_use_ai(
     db_session,
     monkeypatch,
 ):
@@ -127,19 +126,12 @@ def test_first_message_is_interpreted_and_resumed_after_patient_identification(
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
     phone = "5491169900001"
     asyncio.run(create_paciente(db_session, tenant_id, phone, nombre="Federico", apellido="Menossi"))
-    classified_messages = []
-
-    async def fake_classify(self, message, **kwargs):
-        classified_messages.append(message)
-        return AIIntentResult(
-            intent=AIIntent.UNKNOWN,
-            confidence=0.45,
-            source="ai",
-        )
+    async def fail_if_classified(self, message, **kwargs):
+        raise AssertionError("El flujo por opciones no debe invocar al clasificador de IA")
 
     monkeypatch.setattr(
         "app.services.ai_intent_classifier.AIIntentClassifier.classify",
-        fake_classify,
+        fail_if_classified,
     )
 
     async def run():
@@ -149,37 +141,41 @@ def test_first_message_is_interpreted_and_resumed_after_patient_identification(
                 paciente_repo=PacienteRepository(session),
                 conversacion_repo=ConversacionRepository(session),
             )
-            first_reply = await service.process_message(
+            await service.process_message(tenant, f"whatsapp:+{phone}", "Hola")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+
+            retry_reply = await service.process_message(
                 tenant,
                 f"whatsapp:+{phone}",
-                "Hola hoy quiero pedir un turno",
+                "Quiero un turno virtual",
             )
 
-            assert "Entendi que queres solicitar un turno" in first_reply
-            assert "para vos o para otra persona" in first_reply
-            assert classified_messages == ["Hola hoy quiero pedir un turno"]
-
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state is not None
-            assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
-            assert state.contexto_json["initial_request_requires_modality"] is True
-            assert state.contexto_json["ai"]["last_source"] == "ai"
-
-            second_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
-
-            assert "Turno presencial" in second_reply
-            assert "Turno virtual" in second_reply
-            assert classified_messages == ["Hola hoy quiero pedir un turno"]
+            assert "Debe seleccionar una opción válida" in retry_reply
+            assert "1) Turno presencial" in retry_reply
+            assert "2) Turno virtual" in retry_reply
 
             state = await ConversacionRepository(session).get_state(tenant.id, phone)
             assert state is not None
             assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
-            assert "initial_request_message" not in state.contexto_json
+
+            appointment_reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "2",
+            )
+
+            assert "Es primera vez?" in appointment_reply
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_VIRTUAL_FIRST_TIME.value
 
     asyncio.run(run())
 
 
-def test_greeting_asks_for_request_before_patient_identification(db_session, monkeypatch):
+def test_registered_contact_is_greeted_and_asked_who_the_request_is_for_without_ai(
+    db_session,
+    monkeypatch,
+):
     tenant_id = asyncio.run(
         create_tenant(
             db_session,
@@ -192,14 +188,12 @@ def test_greeting_asks_for_request_before_patient_identification(db_session, mon
     phone = "5491169700001"
     asyncio.run(create_paciente(db_session, tenant_id, phone, nombre="Federico", apellido="Menossi"))
 
-    async def fake_classify(self, message, **kwargs):
-        if message.lower() == "hola":
-            return AIIntentResult(intent=AIIntent.GREETING, confidence=0.95, source="ai")
-        return AIIntentResult(intent=AIIntent.UNKNOWN, confidence=0.45, source="ai")
+    async def fail_if_classified(self, message, **kwargs):
+        raise AssertionError("El flujo por opciones no debe invocar al clasificador de IA")
 
     monkeypatch.setattr(
         "app.services.ai_intent_classifier.AIIntentClassifier.classify",
-        fake_classify,
+        fail_if_classified,
     )
 
     async def run():
@@ -213,30 +207,40 @@ def test_greeting_asks_for_request_before_patient_identification(db_session, mon
             greeting_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "Hola")
 
             assert "Hola Federico Menossi" in greeting_reply
-            assert "En que puedo ayudarte hoy" in greeting_reply
-            assert "para vos o para otra persona" not in greeting_reply
-
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state is not None
-            assert state.estado_actual == ConversationState.ASK_INITIAL_REQUEST.value
-
-            request_reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "Quiero pedir un turno",
-            )
-
-            assert "Entendi que queres solicitar un turno" in request_reply
-            assert "para vos o para otra persona" in request_reply
+            assert "para vos o para otra persona" in greeting_reply
+            assert "1) Para mi" in greeting_reply
+            assert "2) Otra persona" in greeting_reply
 
             state = await ConversacionRepository(session).get_state(tenant.id, phone)
             assert state is not None
             assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
 
+            retry_reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "Quiero pedir un turno",
+            )
+
+            assert "1) Para mi" in retry_reply
+            assert "2) Otra persona" in retry_reply
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
+
+            menu_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+
+            assert "1) Turno presencial" in menu_reply
+            assert "2) Turno virtual" in menu_reply
+            assert "3) Solicitar receta u orden medica" in menu_reply
+
+            state = await ConversacionRepository(session).get_state(tenant.id, phone)
+            assert state is not None
+            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+
     asyncio.run(run())
 
 
-def test_user_can_change_initial_request_while_patient_is_being_identified(
+def test_legacy_initial_request_state_moves_to_managed_for_options_without_ai(
     db_session,
     monkeypatch,
 ):
@@ -251,25 +255,12 @@ def test_user_can_change_initial_request_while_patient_is_being_identified(
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
     phone = "5491169600001"
     asyncio.run(create_paciente(db_session, tenant_id, phone, nombre="Federico", apellido="Menossi"))
-    classified_messages = []
-
-    async def fake_classify(self, message, **kwargs):
-        classified_messages.append(message)
-        normalized = message.lower()
-        if normalized == "hola buenas tardes":
-            return AIIntentResult(intent=AIIntent.GREETING, confidence=0.95, source="ai")
-        if "receta" in normalized:
-            return AIIntentResult(
-                intent=AIIntent.RECIPE_OR_ORDER,
-                confidence=0.96,
-                extracted={"recipe_or_order_type": "receta"},
-                source="ai",
-            )
-        return AIIntentResult(intent=AIIntent.UNKNOWN, confidence=0.45, source="ai")
+    async def fail_if_classified(self, message, **kwargs):
+        raise AssertionError("El flujo por opciones no debe invocar al clasificador de IA")
 
     monkeypatch.setattr(
         "app.services.ai_intent_classifier.AIIntentClassifier.classify",
-        fake_classify,
+        fail_if_classified,
     )
 
     async def run():
@@ -279,93 +270,39 @@ def test_user_can_change_initial_request_while_patient_is_being_identified(
                 paciente_repo=PacienteRepository(session),
                 conversacion_repo=ConversacionRepository(session),
             )
-
-            await service.process_message(tenant, f"whatsapp:+{phone}", "Hola Buenas tardes")
-            await service.process_message(tenant, f"whatsapp:+{phone}", "quisiera sacar un turno")
-            changed_reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "no, mejor quiero una receta",
+            await ConversacionRepository(session).upsert_state(
+                tenant.id,
+                phone,
+                ConversationState.ASK_INITIAL_REQUEST.value,
+                {
+                    "initial_request_option": "2",
+                    "initial_request_message": "Quiero un turno virtual",
+                },
             )
 
-            assert "Entendi que queres solicitar una receta u orden medica" in changed_reply
-            assert "para vos o para otra persona" in changed_reply
-            assert classified_messages == [
-                "Hola Buenas tardes",
-                "quisiera sacar un turno",
-                "no, mejor quiero una receta",
-            ]
+            migrated_reply = await service.process_message(
+                tenant,
+                f"whatsapp:+{phone}",
+                "Quiero pedir un turno",
+            )
+
+            assert "Hola Federico Menossi" in migrated_reply
+            assert "para vos o para otra persona" in migrated_reply
+            assert "1) Para mi" in migrated_reply
+            assert "2) Otra persona" in migrated_reply
 
             state = await ConversacionRepository(session).get_state(tenant.id, phone)
             assert state is not None
             assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
-            assert state.contexto_json["initial_request_option"] == "3"
-            assert "initial_request_requires_modality" not in state.contexto_json
 
-            identification_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            menu_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
 
-            assert "detalle del medicamento u orden" in identification_reply
+            assert "1) Turno presencial" in menu_reply
             state = await ConversacionRepository(session).get_state(tenant.id, phone)
             assert state is not None
-            assert state.estado_actual == ConversationState.ASK_RECIPE_DETAIL.value
-
-    asyncio.run(run())
-
-
-def test_ai_intent_from_first_message_starts_requested_flow_after_identification(
-    db_session,
-    monkeypatch,
-):
-    tenant_id = asyncio.run(
-        create_tenant(
-            db_session,
-            "Tenant Initial AI Intent",
-            "whatsapp:+698",
-            ai_settings={"enabled": True, "api_key": "sk-test"},
-        )
-    )
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491169800001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone, nombre="Laura", apellido="Diaz"))
-
-    async def fake_classify(self, message, **kwargs):
-        return AIIntentResult(
-            intent=AIIntent.BOOK_VIRTUAL_APPOINTMENT,
-            confidence=0.94,
-            extracted={"appointment_type": "virtual"},
-            source="ai",
-        )
-
-    monkeypatch.setattr(
-        "app.services.ai_intent_classifier.AIIntentClassifier.classify",
-        fake_classify,
-    )
-
-    async def run():
-        async with db_session() as session:
-            service = ConversationService(
-                session=session,
-                paciente_repo=PacienteRepository(session),
-                conversacion_repo=ConversacionRepository(session),
-            )
-            first_reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "Quisiera una consulta a distancia",
-            )
-
-            assert "Entendi que queres solicitar un turno virtual" in first_reply
-
-            second_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
-
-            assert "entiendo que queres un turno virtual" in second_reply
-            assert "Es primera vez" in second_reply
-
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state is not None
-            assert state.estado_actual == ConversationState.ASK_VIRTUAL_FIRST_TIME.value
-            assert state.contexto_json["appointment"]["type"] == "virtual"
-            assert state.contexto_json["ai"]["last_source"] == "ai"
+            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+            assert "initial_request_option" not in state.contexto_json
+            assert "initial_request_message" not in state.contexto_json
 
     asyncio.run(run())
 
@@ -656,224 +593,6 @@ def test_menu_flow_offers_virtual_slots_when_ai_is_disabled(monkeypatch, db_sess
     asyncio.run(run())
 
 
-def test_free_text_main_menu_routes_with_ai_rules(db_session):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Free Text", "whatsapp:+714"))
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491171400001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone))
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "necesito turno en consultorio",
-            )
-
-            assert "Es primera vez?" in reply
-            repo = ConversacionRepository(session)
-            state = await repo.get_state(tenant.id, phone)
-            assert state is not None
-            assert state.estado_actual == ConversationState.ASK_PRESENTIAL_FIRST_TIME.value
-            assert state.status == "active"
-            assert state.pending_reason is None
-
-    asyncio.run(run())
-
-
-def test_free_text_main_menu_saves_extracted_context_and_skips_known_child_data(db_session):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant IA Extract", "whatsapp:+718"))
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491171800001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone))
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "quiero un turno virtual para mi hijo Juan Perez DNI 40111222, el martes a la tarde",
-            )
-
-            assert "turno es para Juan Perez" in reply
-            assert "Es primera vez?" in reply
-            repo = ConversacionRepository(session)
-            state = await repo.get_state(tenant.id, phone)
-            assert state is not None
-            assert state.estado_actual == ConversationState.ASK_VIRTUAL_FIRST_TIME.value
-            assert state.contexto_json["for_whom"] == "other"
-            assert state.contexto_json["other_first_name"] == "Juan"
-            assert state.contexto_json["other_last_name"] == "Perez"
-            assert state.contexto_json["other_dni"] == "40111222"
-            assert state.contexto_json["appointment"]["preferred_day"] == "martes"
-            assert state.contexto_json["appointment"]["preferred_time_range"] == "tarde"
-            assert state.contexto_json["ai"]["last_intent"] == "book_virtual_appointment"
-
-    asyncio.run(run())
-
-
-def test_free_text_recipe_uses_extracted_detail(db_session):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Recipe Extract", "whatsapp:+719"))
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491171900001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone))
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "Necesito receta para mi medicacion habitual",
-            )
-
-            assert "Ya tengo el detalle" in reply
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state is not None
-            assert state.status == "pending"
-            assert state.pending_reason == "receta_orden"
-            assert "mi medicacion habitual" in state.pending_message
-            assert state.contexto_json["recipe_order"]["type"] == "receta"
-
-    asyncio.run(run())
-
-
-def test_free_text_high_urgency_derives_to_human(db_session):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Urgency Extract", "whatsapp:+729"))
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491172900001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone))
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "tengo dolor fuerte en el pecho, es urgente",
-            )
-
-            assert "guardia" in reply.lower()
-            assert "emergencias" in reply.lower()
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state is not None
-            assert state.status == "pending"
-            assert state.pending_reason == "humano"
-            assert state.requires_human_review is True
-
-    asyncio.run(run())
-
-
-def test_tools_disabled_keeps_previous_free_text_flow(db_session):
-    tenant_id = asyncio.run(
-        create_tenant(
-            db_session,
-            "Tenant Tools Disabled",
-            "whatsapp:+730",
-            ai_settings=_tools_ai_settings(tools_enabled=False),
-        )
-    )
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491173000001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone))
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "Necesito turno virtual para mi, es primera vez",
-            )
-
-            assert "turnos virtuales disponibles" in reply.lower()
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state is not None
-            assert state.status == "pending"
-            assert state.estado_actual != ConversationState.ASK_AI_SLOT_SELECTION.value
-
-    asyncio.run(run())
-
-
-def test_tools_enabled_free_text_offers_virtual_slots(monkeypatch, db_session):
-    tenant_id = asyncio.run(
-        create_tenant(
-            db_session,
-            "Tenant Tools Virtual",
-            "whatsapp:+731",
-            ai_settings=_tools_ai_settings(),
-        )
-    )
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491173100001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone))
-    monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", _fake_availability_slots)
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "Quiero turno virtual para mi, es primera vez el martes a la tarde",
-            )
-
-            assert "Encontre estos turnos virtuales disponibles" in reply
-            assert "1) Martes 28/05 a las 18:30" in reply
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state is not None
-            assert state.estado_actual == ConversationState.ASK_AI_SLOT_SELECTION.value
-            offered = state.contexto_json["appointment"]["offered_slots"]
-            assert len(offered) == 3
-            assert offered[0]["slot_id"] == f"slot-{tenant_id}-1"
-            assert state.contexto_json["appointment"]["awaiting_slot_selection"] is True
-
-    asyncio.run(run())
-
-
-def test_tools_enabled_missing_data_asks_before_lookup(monkeypatch, db_session):
-    tenant_id = asyncio.run(
-        create_tenant(
-            db_session,
-            "Tenant Tools Missing",
-            "whatsapp:+732",
-            ai_settings=_tools_ai_settings(),
-        )
-    )
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491173200001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone))
-
-    async def fail_lookup(*args, **kwargs):
-        raise AssertionError("No debe consultar disponibilidad con datos incompletos")
-
-    monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", fail_lookup)
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "Quiero turno virtual",
-            )
-
-            assert "Es primera vez?" in reply
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state.estado_actual == ConversationState.ASK_VIRTUAL_FIRST_TIME.value
-
-    asyncio.run(run())
-
-
 def test_slot_selection_and_confirmation_do_not_book(monkeypatch, db_session):
     tenant_id = asyncio.run(
         create_tenant(
@@ -886,6 +605,16 @@ def test_slot_selection_and_confirmation_do_not_book(monkeypatch, db_session):
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
     phone = "5491173300001"
     asyncio.run(create_paciente(db_session, tenant_id, phone))
+    asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Google",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": {"calendar_id": "virtual-tools"}},
+        )
+    )
     monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", _fake_availability_slots)
 
     async def run():
@@ -893,7 +622,8 @@ def test_slot_selection_and_confirmation_do_not_book(monkeypatch, db_session):
             service = _service(session)
             repo = ConversacionRepository(session)
             await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            await service.process_message(tenant, f"whatsapp:+{phone}", "Quiero turno virtual para mi, es primera vez")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "2")
+            await service.process_message(tenant, f"whatsapp:+{phone}", "1")
 
             invalid = await service.process_message(tenant, f"whatsapp:+{phone}", "9")
             assert "Debe seleccionar una opcion valida" in invalid
@@ -955,12 +685,8 @@ def test_simulator_api_identifies_existing_associated_patient_before_menu(client
         return response.json()["reply"]
 
     first_reply = send("hola")
-    assert "En que puedo ayudarte" in first_reply
     assert "Hola Ana Identificada" in first_reply
-    assert "Turno presencial" not in first_reply
-
-    request_reply = send("quiero pedir un turno")
-    assert "para vos" in request_reply.lower()
+    assert "para vos o para otra persona" in first_reply.lower()
 
     identified_reply = send("1")
     assert "Turno presencial" in identified_reply
@@ -1049,11 +775,8 @@ def test_simulator_api_lets_contact_choose_an_associated_patient_without_cross_t
         return response.json()["reply"]
 
     first_reply = send("hola")
-    assert "En que puedo ayudarte" in first_reply
-
-    request_reply = send("quiero pedir un turno")
-    assert "para vos" in request_reply.lower()
-    assert "otra persona" in request_reply.lower()
+    assert "para vos" in first_reply.lower()
+    assert "otra persona" in first_reply.lower()
 
     patient_options = send("2")
     assert "Ana Asociada" in patient_options
@@ -1101,8 +824,7 @@ def test_simulator_api_links_a_new_patient_to_the_contact_for_later_conversation
         assert response.status_code == 200
         return response.json()["reply"]
 
-    assert "En que puedo ayudarte" in send("hola")
-    assert "otra persona" in send("quiero pedir un turno").lower()
+    assert "otra persona" in send("hola").lower()
     assert "DNI" in send("2")
     assert "nombre" in send("37.444.555").lower()
     assert "apellido" in send("Cecilia").lower()
@@ -1113,8 +835,7 @@ def test_simulator_api_links_a_new_patient_to_the_contact_for_later_conversation
     assert "Turno virtual" in completed_reply
 
     send("salir")
-    assert "En que puedo ayudarte" in send("hola")
-    assert "otra persona" in send("quiero pedir un turno").lower()
+    assert "otra persona" in send("hola").lower()
     associated_options = send("2")
     assert "Cecilia Representada" in associated_options
 
@@ -1161,12 +882,10 @@ def test_simulator_api_keeps_an_existing_unassociated_patient_private_and_does_n
         return response.json()["reply"]
 
     send("hola", from_phone="5491174700099")
-    send("quiero pedir un turno", from_phone="5491174700099")
     approved_reply = send("1", from_phone="5491174700099")
     assert "Turno presencial" in approved_reply
 
     send("hola")
-    send("quiero pedir un turno")
     send("2")
     pending_reply = send("38.555.666")
     assert "pendiente" in pending_reply.lower()
@@ -1232,8 +951,7 @@ def test_simulator_api_registers_new_private_patient_without_insurance_number(cl
         assert response.status_code == 200
         return response.json()["reply"]
 
-    assert "En que puedo ayudarte" in send("hola")
-    assert "otra persona" in send("quiero pedir un turno").lower()
+    assert "otra persona" in send("hola").lower()
     assert "DNI" in send("1")
     assert "nombre" in send("32.222.333").lower()
     assert "apellido" in send("Berta").lower()
@@ -1310,7 +1028,6 @@ def test_simulator_api_requires_entity_and_member_number_for_health_coverage(
         return response.json()["reply"]
 
     send("hola")
-    send("quiero pedir un turno")
     send("1")
     send("33.333.444")
     send("Carla")
@@ -1391,10 +1108,8 @@ def test_simulator_api_normalizes_dni_and_keeps_patient_identity_isolated_by_ten
         return response.json()["reply"]
 
     send("whatsapp:+742", "whatsapp:+5491174200001", "hola")
-    send("whatsapp:+742", "whatsapp:+5491174200001", "quiero pedir un turno")
     reply_a = send("whatsapp:+742", "whatsapp:+5491174200001", "1")
     send("whatsapp:+743", "whatsapp:+5491174300001", "hola")
-    send("whatsapp:+743", "whatsapp:+5491174300001", "quiero pedir un turno")
     reply_b = send("whatsapp:+743", "whatsapp:+5491174300001", "1")
 
     assert "Turno presencial" in reply_a
@@ -1505,8 +1220,9 @@ def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(clie
         assert response.status_code == 200
         return response.json()["reply"]
 
-    send("quiero un turno virtual")
+    send("hola")
     send("1")
+    send("2")
     offered_reply = send("2")
     assert "turnos virtuales disponibles" in offered_reply
 
@@ -1682,159 +1398,6 @@ def test_simulator_api_does_not_confirm_when_google_rejects_the_slot(client, db_
     assert configuration_state.status == "pending"
 
 
-def test_tools_high_urgency_does_not_lookup(monkeypatch, db_session):
-    tenant_id = asyncio.run(
-        create_tenant(
-            db_session,
-            "Tenant Tools Urgency",
-            "whatsapp:+734",
-            ai_settings=_tools_ai_settings(),
-        )
-    )
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491173400001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone))
-
-    async def fail_lookup(*args, **kwargs):
-        raise AssertionError("No debe consultar disponibilidad ante urgencia")
-
-    monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", fail_lookup)
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(tenant, f"whatsapp:+{phone}", "dolor fuerte en el pecho urgente")
-
-            assert "guardia" in reply.lower()
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state.status == "pending"
-            assert state.pending_reason == "humano"
-
-    asyncio.run(run())
-
-
-def test_tools_slots_are_tenant_isolated(monkeypatch, db_session):
-    tenant_a_id = asyncio.run(
-        create_tenant(db_session, "Tenant Tools A", "whatsapp:+735", ai_settings=_tools_ai_settings())
-    )
-    tenant_b_id = asyncio.run(
-        create_tenant(db_session, "Tenant Tools B", "whatsapp:+736", ai_settings=_tools_ai_settings(max_offered_slots=1))
-    )
-    tenant_a = asyncio.run(get_tenant(db_session, tenant_a_id))
-    tenant_b = asyncio.run(get_tenant(db_session, tenant_b_id))
-    phone = "5491173500001"
-    asyncio.run(create_paciente(db_session, tenant_a_id, phone))
-    asyncio.run(create_paciente(db_session, tenant_b_id, phone))
-    calls = []
-
-    async def fake_slots(session, *, tenant_id, consultorio_type, patient_context, preferences, limit=5):
-        calls.append((tenant_id, limit))
-        return await _fake_availability_slots(
-            session,
-            tenant_id=tenant_id,
-            consultorio_type=consultorio_type,
-            patient_context=patient_context,
-            preferences=preferences,
-            limit=limit,
-        )
-
-    monkeypatch.setattr("app.services.conversation_service.get_available_appointment_slots", fake_slots)
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant_a, f"whatsapp:+{phone}", "hola")
-            await service.process_message(tenant_b, f"whatsapp:+{phone}", "hola")
-            await service.process_message(tenant_a, f"whatsapp:+{phone}", "turno virtual para mi, es primera vez")
-            await service.process_message(tenant_b, f"whatsapp:+{phone}", "turno virtual para mi, es primera vez")
-            repo = ConversacionRepository(session)
-            state_a = await repo.get_state(tenant_a.id, phone)
-            state_b = await repo.get_state(tenant_b.id, phone)
-            assert len(state_a.contexto_json["appointment"]["offered_slots"]) == 3
-            assert len(state_b.contexto_json["appointment"]["offered_slots"]) == 1
-
-    asyncio.run(run())
-    assert (tenant_a_id, 3) in calls
-    assert (tenant_b_id, 1) in calls
-
-
-def test_free_text_low_confidence_returns_menu(db_session):
-    tenant_id = asyncio.run(
-        create_tenant(
-            db_session,
-            "Tenant High Confidence",
-            "whatsapp:+715",
-            ai_settings={"enabled": False, "min_confidence": 0.95},
-        )
-    )
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491171500001"
-    asyncio.run(create_paciente(db_session, tenant_id, phone))
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "necesito turno en consultorio",
-            )
-
-            assert "Debe seleccionar" in reply
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
-
-    asyncio.run(run())
-
-
-def test_ai_settings_are_isolated_between_tenants(db_session):
-    tenant_a_id = asyncio.run(
-        create_tenant(
-            db_session,
-            "Tenant IA Alto",
-            "whatsapp:+716",
-            ai_settings={"enabled": False, "min_confidence": 0.95},
-        )
-    )
-    tenant_b_id = asyncio.run(
-        create_tenant(
-            db_session,
-            "Tenant IA Normal",
-            "whatsapp:+717",
-            ai_settings={"enabled": False, "min_confidence": 0.75},
-        )
-    )
-    tenant_a = asyncio.run(get_tenant(db_session, tenant_a_id))
-    tenant_b = asyncio.run(get_tenant(db_session, tenant_b_id))
-    phone = "5491171600001"
-    asyncio.run(create_paciente(db_session, tenant_a_id, phone))
-    asyncio.run(create_paciente(db_session, tenant_b_id, phone))
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant_a, f"whatsapp:+{phone}", "hola")
-            await service.process_message(tenant_b, f"whatsapp:+{phone}", "hola")
-            reply_a = await service.process_message(
-                tenant_a, f"whatsapp:+{phone}", "necesito turno en consultorio"
-            )
-            reply_b = await service.process_message(
-                tenant_b, f"whatsapp:+{phone}", "necesito turno en consultorio"
-            )
-
-            assert "Debe seleccionar" in reply_a
-            assert "Es primera vez?" in reply_b
-            repo = ConversacionRepository(session)
-            state_a = await repo.get_state(tenant_a.id, phone)
-            state_b = await repo.get_state(tenant_b.id, phone)
-            assert state_a.estado_actual == ConversationState.MAIN_REASON_MENU.value
-            assert state_b.estado_actual == ConversationState.ASK_PRESENTIAL_FIRST_TIME.value
-
-    asyncio.run(run())
-
-
 def test_invalid_option_first_time_keeps_state(db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Invalid First Time", "whatsapp:+711"))
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
@@ -2005,7 +1568,7 @@ def test_chat_can_cancel_future_appointment(db_session, monkeypatch):
         async with db_session() as session:
             service = _service(session)
             await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(tenant, f"whatsapp:+{phone}", "quiero cancelar turno")
+            reply = await service.process_message(tenant, f"whatsapp:+{phone}", "6")
             assert "Estos son tus turnos activos" in reply
             assert "1)" in reply
 
@@ -2040,6 +1603,12 @@ def test_identified_patient_menu_offers_cancellation_for_future_confirmed_turno(
             service = _service(session)
             greeting = await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
             assert "6) Cancelar un turno" in greeting
+            assert "7) Reprogramar un turno" in greeting
+
+            retry = await service.process_message(tenant, f"whatsapp:+{phone}", "cancelar turno")
+            assert "Debe seleccionar una opción válida" in retry
+            assert "6) Cancelar un turno" in retry
+            assert "7) Reprogramar un turno" in retry
 
             selection = await service.process_message(tenant, f"whatsapp:+{phone}", "6")
             assert "Estos son tus turnos activos" in selection
@@ -2676,14 +2245,13 @@ def test_first_message_unregistered_starts_signup_with_tenant_name(db_session):
             service = _service(session)
             reply = await service.process_message(tenant, "whatsapp:+5491172100001", "hola")
             assert "asistente de Consultorio Medico B" in reply
-            assert "En que puedo ayudarte hoy" in reply
-            assert "para vos o para otra persona" not in reply
+            assert "para vos o para otra persona" in reply
             assert "1) Turno presencial" not in reply
 
             repo = ConversacionRepository(session)
             state = await repo.get_state(tenant.id, "5491172100001")
             assert state is not None
-            assert state.estado_actual == ConversationState.ASK_INITIAL_REQUEST.value
+            assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
 
     asyncio.run(run())
 
@@ -2696,7 +2264,6 @@ def test_new_patient_signup_completes_and_shows_main_menu(db_session):
         async with db_session() as session:
             service = _service(session)
             await service.process_message(tenant, "whatsapp:+5491172200001", "hola")
-            await service.process_message(tenant, "whatsapp:+5491172200001", "quiero pedir un turno")
             await service.process_message(tenant, "whatsapp:+5491172200001", "1")
             await service.process_message(tenant, "whatsapp:+5491172200001", "30123123")
             await service.process_message(tenant, "whatsapp:+5491172200001", "Lucia")
@@ -2774,7 +2341,7 @@ def test_phone_isolation_between_tenants(db_session):
 
             state = await ConversacionRepository(session).get_state(tenant_b_obj.id, "5491172400001")
             assert state is not None
-            assert state.estado_actual == ConversationState.ASK_INITIAL_REQUEST.value
+            assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
 
     asyncio.run(run())
 
@@ -3030,37 +2597,6 @@ def test_particular_can_request_manual_reimbursement_invoice(db_session):
     asyncio.run(run())
 
 
-def test_particular_can_start_reimbursement_invoice_with_natural_language(db_session):
-    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Reintegro Texto", "whatsapp:+712"))
-    tenant = asyncio.run(get_tenant(db_session, tenant_id))
-    phone = "5491171200099"
-    asyncio.run(
-        create_paciente(
-            db_session,
-            tenant_id,
-            phone,
-            obra_social="Particular",
-            health_coverage_type="particular",
-        )
-    )
-
-    async def run():
-        async with db_session() as session:
-            service = _service(session)
-            await service.process_message(tenant, f"whatsapp:+{phone}", "hola")
-            reply = await service.process_message(
-                tenant,
-                f"whatsapp:+{phone}",
-                "Necesito una factura para pedir el reintegro",
-            )
-            state = await ConversacionRepository(session).get_state(tenant.id, phone)
-            return reply, state
-
-    reply, state = asyncio.run(run())
-    assert "prepaga" in reply.lower()
-    assert state.estado_actual == ConversationState.ASK_REIMBURSEMENT_COVERAGE.value
-
-
 def test_simulator_delivers_media_to_shared_recipe_flow(client, db_session):
     tenant_id = asyncio.run(create_tenant(db_session, "Tenant Simula Medios", "whatsapp:+709"))
     phone = "5491170900001"
@@ -3094,9 +2630,10 @@ def test_simulator_delivers_media_to_shared_recipe_flow(client, db_session):
         assert response.status_code == 200
         return response.json()["reply"]
 
-    send("3")
+    send("hola")
     send("1")
-    send("orden medica")
+    send("3")
+    send("4")
     reply = send(
         "",
         media_items=[
@@ -3135,11 +2672,11 @@ def test_simulator_delivers_media_to_shared_recipe_flow(client, db_session):
             "Necesito conocer el valor de la consulta",
         ),
         (
-            "Necesito hablar con la secretaria",
+            "5",
             "",
             "humano",
             "derivacion_humana",
-            "Necesito hablar con la secretaria",
+            "Paciente solicita atencion humana.",
         ),
     ],
 )

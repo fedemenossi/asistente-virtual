@@ -24,23 +24,12 @@ from app.repositories.paciente_repository import PacienteRepository
 from app.repositories.patient_contact_repository import PatientContactRepository
 from app.services.conversation_intents import (
     ConversationCategory,
-    IntentResult,
     PrescriptionSubtype,
     classify_main_intent,
     detect_for_whom,
     detect_prescription_subtype,
     detect_yes_no,
-)
-from app.services.ai_extraction_service import (
-    get_missing_fields_for_intent,
-    merge_extracted_into_context,
-    should_handoff_by_extraction,
-)
-from app.services.ai_intent_classifier import (
-    AIIntent,
-    AIIntentClassifier,
-    AIIntentResult,
-    normalize_message,
+    normalize_text,
 )
 from app.services.ai_tools import get_available_appointment_slots
 from app.services.appointment_service import AppointmentService
@@ -51,7 +40,6 @@ from app.services.availability_hold_service import (
 )
 from app.services.payment_service import PaymentService
 from app.services.consultorio_eligibility_service import get_eligibility_config
-from app.services.tenant_ai_settings_service import get_effective_ai_settings
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -137,7 +125,6 @@ class ConversationService:
         self._patient_contact_repo = PatientContactRepository(session)
         self._conversacion_repo = conversacion_repo
         self._notification_repo = notification_repo
-        self._ai_intent_classifier = AIIntentClassifier()
 
     async def process_message(
         self,
@@ -154,7 +141,6 @@ class ConversationService:
         media_items = list(media_items or [])
         has_media = bool(media_items)
         contact = await self._patient_contact_repo.get_or_create_contact(tenant.id, normalized_phone)
-        ai_settings = get_effective_ai_settings(tenant)
 
         state = await self._conversacion_repo.get_state(tenant.id, normalized_phone)
         if state is None and normalized_phone != from_phone:
@@ -204,32 +190,13 @@ class ConversationService:
         if state is None:
             approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
             welcome_patient = approved_patients[0] if len(approved_patients) == 1 else None
-            initial_context, initial_intent = await self._interpret_initial_request(
-                tenant=tenant,
-                phone=normalized_phone,
-                text=text,
-                ai_settings=ai_settings,
-                context={"contact_id": contact.id},
-                current_state="initial_message",
-            )
-            has_request = self._has_initial_request(initial_context)
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
-                (
-                    ConversationState.ASK_MANAGED_FOR.value
-                    if has_request
-                    else ConversationState.ASK_INITIAL_REQUEST.value
-                ),
-                initial_context,
+                ConversationState.ASK_MANAGED_FOR.value,
+                {"contact_id": contact.id},
             )
-            if not has_request:
-                return self._initial_request_greeting(tenant, welcome_patient)
-            return self._managed_for_greeting(
-                tenant,
-                welcome_patient,
-                request_summary=self._initial_request_summary(initial_intent),
-            )
+            return self._managed_for_greeting(tenant, welcome_patient)
 
         context = state.contexto_json or {}
         current_state = state.estado_actual
@@ -261,22 +228,6 @@ class ConversationService:
             return self._patient_identification_greeting(tenant)
 
         if current_state == ConversationState.ASK_INITIAL_REQUEST.value:
-            context, initial_intent = await self._interpret_initial_request(
-                tenant=tenant,
-                phone=normalized_phone,
-                text=text,
-                ai_settings=ai_settings,
-                context=context,
-                current_state=current_state,
-            )
-            if not self._has_initial_request(context):
-                await self._conversacion_repo.upsert_state(
-                    tenant.id,
-                    normalized_phone,
-                    ConversationState.ASK_INITIAL_REQUEST.value,
-                    context,
-                )
-                return "Contame brevemente que gestion necesitas realizar."
             await self._conversacion_repo.upsert_state(
                 tenant.id,
                 normalized_phone,
@@ -285,34 +236,12 @@ class ConversationService:
             )
             approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
             welcome_patient = approved_patients[0] if len(approved_patients) == 1 else None
-            return self._managed_for_greeting(
-                tenant,
-                welcome_patient,
-                request_summary=self._initial_request_summary(initial_intent),
-            )
+            return self._managed_for_greeting(tenant, welcome_patient)
 
         if current_state == ConversationState.ASK_MANAGED_FOR.value:
             managed_for = self._detect_managed_for(text)
             if managed_for is None:
-                changed_context, changed_intent = await self._interpret_initial_request(
-                    tenant=tenant,
-                    phone=normalized_phone,
-                    text=text,
-                    ai_settings=ai_settings,
-                    context=context,
-                    current_state=current_state,
-                )
-                if self._has_initial_request(changed_context):
-                    await self._conversacion_repo.upsert_state(
-                        tenant.id,
-                        normalized_phone,
-                        ConversationState.ASK_MANAGED_FOR.value,
-                        changed_context,
-                    )
-                    request_summary = self._initial_request_summary(changed_intent)
-                    understood = f"{request_summary}\n" if request_summary else ""
-                    return f"Entendido, cambiamos la gestion.\n{understood}{self._managed_for_options()}"
-                return self._managed_for_options()
+                return self._invalid_option_message(self._managed_for_options())
             approved_patients = await self._patient_contact_repo.list_approved_patients(contact)
             if approved_patients:
                 if managed_for == "self" and len(approved_patients) == 1:
@@ -549,7 +478,7 @@ class ConversationService:
             appointment = context.setdefault("appointment", {})
             options = list(appointment.get("coverage_options") or [])
             try:
-                selected_option = int(normalize_message(text))
+                selected_option = int(normalize_text(text))
             except ValueError:
                 selected_option = 0
             selected = next(
@@ -708,70 +637,15 @@ class ConversationService:
             )
 
         if current_state in {ConversationState.MAIN_REASON_MENU.value, ConversationState.MAIN_MENU.value}:
-            if self._is_direct_main_menu_option(text):
-                intent = classify_main_intent(text)
-            else:
-                ai_result = await self._ai_intent_classifier.classify(
-                    text,
-                    tenant=tenant,
-                    ai_settings=ai_settings,
-                    conversation_state=current_state,
-                    context=context,
-                )
-                self._log_ai_intent(
-                    tenant_id=tenant.id,
-                    phone=normalized_phone,
-                    current_state=current_state,
-                    message=text,
-                    result=ai_result,
-                )
-                context = self._context_with_ai_result(context, ai_result)
-                if should_handoff_by_extraction(ai_result.extracted):
-                    await self._conversacion_repo.upsert_state(
-                        tenant.id,
-                        normalized_phone,
-                        current_state,
-                        context,
-                        conversation_category=ConversationCategory.HUMAN_HANDOFF,
-                    )
-                    await self._set_pending(
-                        tenant=tenant,
-                        phone=normalized_phone,
-                        reason="humano",
-                        message=text or "Posible urgencia detectada por agente IA.",
-                        title="Derivacion prioritaria a humano",
-                        category=ConversationCategory.HUMAN_HANDOFF,
-                        subtype=None,
-                        requires_human_review=True,
-                        has_media=has_media,
-                        last_patient_message=text,
-                        media_items=media_items,
-                    )
-                    return (
-                        "Por lo que me comentas, es mejor que lo revise una persona del consultorio. "
-                        "Ya dejo tu mensaje como prioridad para que te contacten. "
-                        "Si es una urgencia medica, acudi a una guardia o llama a emergencias."
-                    )
-                if (
-                    ai_result.intent == AIIntent.EXIT
-                    and ai_result.confidence >= ai_settings["min_confidence"]
-                ):
-                    await self._conversacion_repo.mark_resolved(
-                        tenant.id, normalized_phone, close_reason="exit_command"
-                    )
-                    return "Conversacion finalizada. Escribi cualquier mensaje para comenzar una conversacion nueva."
-                intent = self._intent_from_ai_result(ai_result, min_confidence=ai_settings["min_confidence"])
+            menu = await self._main_reason_menu_for_patient(tenant, paciente)
+            option = normalize_text(text)
+            if not self._is_direct_main_menu_option(text) or not any(
+                line.startswith(f"{option})") for line in menu.splitlines()
+            ):
+                return self._invalid_option_message(menu)
+            intent = classify_main_intent(text)
             reason = intent.pending_reason
             category = intent.category
-            if self._requests_flexible_modality(text):
-                reason = "turno_ambos"
-                category = ConversationCategory.FLEXIBLE_APPOINTMENT
-            if intent.requires_clarification:
-                return (
-                    "Perfecto, te ayudo con tu turno. Indica por favor:\n"
-                    "1) Turno presencial\n"
-                    "2) Turno virtual"
-                )
             if not reason or not category:
                 return self._invalid_option_message(self._main_reason_menu_message())
             if reason == "turno_presencial":
@@ -828,7 +702,7 @@ class ConversationService:
                     tenant=tenant,
                     phone=normalized_phone,
                     reason=reason,
-                    message=text or "Paciente solicita atencion humana.",
+                    message="Paciente solicita atencion humana.",
                     title="Derivacion a humano",
                     category=ConversationCategory.HUMAN_HANDOFF,
                     subtype=None,
@@ -973,7 +847,7 @@ class ConversationService:
                 tenant=tenant,
                 phone=normalized_phone,
                 reason=context.get("reason") or "turno_virtual",
-                message=self._build_ai_selected_slot_summary(context),
+                message=self._build_selected_slot_summary(context),
                 title="Seleccion de turno pendiente de confirmacion manual",
                 category=self._appointment_category_from_context(context),
                 subtype=None,
@@ -1260,9 +1134,7 @@ class ConversationService:
                 return self._invalid_option_message(self._first_time_options())
             context["first_time"] = first_time
             context.setdefault("appointment", {})["is_first_time"] = first_time
-            if self._ai_tools_enabled(ai_settings) or await self._has_automated_availability_source(
-                tenant.id, "presential"
-            ):
+            if await self._has_automated_availability_source(tenant.id, "presential"):
                 return await self._ask_appointment_coverage(
                     tenant=tenant,
                     phone=normalized_phone,
@@ -1377,9 +1249,7 @@ class ConversationService:
                 return self._invalid_option_message(self._first_time_options())
             context["first_time"] = first_time
             context.setdefault("appointment", {})["is_first_time"] = first_time
-            if self._ai_tools_enabled(ai_settings) or await self._has_automated_availability_source(
-                tenant.id, "virtual"
-            ):
+            if await self._has_automated_availability_source(tenant.id, "virtual"):
                 return await self._ask_appointment_coverage(
                     tenant=tenant,
                     phone=normalized_phone,
@@ -1599,9 +1469,7 @@ class ConversationService:
                     return f"Perfecto, entiendo que el turno es para {name}. {self._first_time_options()}"
             return f"{prefix} {self._first_time_options()}"
 
-        if self._ai_tools_enabled(
-            get_effective_ai_settings(tenant)
-        ) or await self._has_automated_availability_source(tenant.id, appointment_type):
+        if await self._has_automated_availability_source(tenant.id, appointment_type):
             if not (context.get("eligibility_context") or {}).get("coverage"):
                 return await self._ask_appointment_coverage(
                     tenant=tenant,
@@ -1750,8 +1618,7 @@ class ConversationService:
                 missing=missing[0],
             )
 
-        settings = get_effective_ai_settings(tenant)
-        limit = max(1, min(int(settings.get("max_offered_slots") or 5), 5))
+        limit = 5
         preferences = {
             "preferred_day": appointment.get("preferred_day"),
             "preferred_date": appointment.get("preferred_date"),
@@ -1776,7 +1643,7 @@ class ConversationService:
             if slot.get("slot_id") not in previously_offered
         ]
         slots = candidates[:limit]
-        self._log_ai_tool(
+        self._log_availability_lookup(
             tenant_id=tenant.id,
             phone=phone,
             intent="book_virtual_appointment" if appointment_type == "virtual" else "book_presential_appointment",
@@ -1914,14 +1781,14 @@ class ConversationService:
                 allows_particular = True
             if "obra_social" in config["coverage_types"]:
                 for entity in config["coverage_entities"]:
-                    normalized = normalize_message(entity)
+                    normalized = normalize_text(entity)
                     if normalized:
                         configured_entities.setdefault(
                             f"obra_social:{normalized}", str(entity).strip()
                         )
             if "prepaga" in config["coverage_types"]:
                 for entity in config["prepaga_entities"]:
-                    normalized = normalize_message(entity)
+                    normalized = normalize_text(entity)
                     if normalized:
                         configured_entities.setdefault(
                             f"prepaga:{normalized}", str(entity).strip()
@@ -1938,7 +1805,7 @@ class ConversationService:
                 }
             )
         for key, entity in sorted(
-            configured_entities.items(), key=lambda item: normalize_message(item[1])
+            configured_entities.items(), key=lambda item: normalize_text(item[1])
         ):
             coverage_type = key.split(":", 1)[0]
             options.append(
@@ -2642,7 +2509,7 @@ class ConversationService:
     @staticmethod
     def _select_cancellable_turno(context: dict, text: str) -> dict | None:
         try:
-            selected = int(normalize_message(text))
+            selected = int(normalize_text(text))
         except ValueError:
             return None
         options = (context.get("cancel_appointment") or {}).get("options") or []
@@ -2764,12 +2631,7 @@ class ConversationService:
         patient_label = " ".join(
             part.strip() for part in (patient.nombre or "", patient.apellido or "") if part and part.strip()
         ).strip()
-        has_future_turnos = await self._has_cancellable_turnos(tenant.id, patient.id)
-        menu = self._main_reason_menu_message(
-            can_cancel=has_future_turnos,
-            can_reschedule=has_future_turnos,
-            can_request_reimbursement_invoice=self._is_particular_patient(patient),
-        )
+        menu = await self._main_reason_menu_for_patient(tenant, patient)
         if patient_label:
             return (
                 f"Hola {patient_label}, te contactaste con el consultorio del Dr. {doctor_name}. "
@@ -2780,6 +2642,20 @@ class ConversationService:
             f"Hola, te contactaste con el consultorio del Dr. {doctor_name}. "
             "Cual es el motivo de tu consulta?\n"
             f"{menu}"
+        )
+
+    async def _main_reason_menu_for_patient(
+        self,
+        tenant: Tenant,
+        patient: Paciente | None,
+    ) -> str:
+        if patient is None:
+            return self._main_reason_menu_message()
+        has_future_turnos = await self._has_cancellable_turnos(tenant.id, patient.id)
+        return self._main_reason_menu_message(
+            can_cancel=has_future_turnos,
+            can_reschedule=has_future_turnos,
+            can_request_reimbursement_invoice=self._is_particular_patient(patient),
         )
 
     def _patient_identification_greeting(self, tenant: Tenant) -> str:
@@ -2793,8 +2669,6 @@ class ConversationService:
         self,
         tenant: Tenant,
         patient: Paciente | None = None,
-        *,
-        request_summary: str | None = None,
     ) -> str:
         tenant_name = self._tenant_display_name(tenant)
         patient_name = (
@@ -2803,130 +2677,10 @@ class ConversationService:
             else ""
         )
         greeting = f"Hola {patient_name}" if patient_name else "Hola"
-        understood = f"{request_summary} " if request_summary else ""
         return (
             f"{greeting}, te contactaste con la asistente de {tenant_name}. "
-            f"{understood}"
             f"{self._managed_for_options()}"
         )
-
-    async def _interpret_initial_request(
-        self,
-        *,
-        tenant: Tenant,
-        phone: str,
-        text: str,
-        ai_settings: dict,
-        context: dict,
-        current_state: str,
-    ) -> tuple[dict, IntentResult]:
-        ai_result = await self._ai_intent_classifier.classify(
-            text,
-            tenant=tenant,
-            ai_settings=ai_settings,
-            conversation_state=current_state,
-            context=context,
-        )
-        self._log_ai_intent(
-            tenant_id=tenant.id,
-            phone=phone,
-            current_state=current_state,
-            message=text,
-            result=ai_result,
-        )
-        next_context = self._context_with_ai_result(context, ai_result)
-        next_context.pop("initial_request_option", None)
-        next_context.pop("initial_request_requires_modality", None)
-        next_context.pop("initial_request_flexible", None)
-        next_context.pop("initial_request_message", None)
-        initial_intent = self._initial_intent(text, ai_result, ai_settings)
-        initial_option = self._main_menu_option_for_intent(initial_intent)
-        if initial_intent.pending_reason == "turno_ambos":
-            next_context["initial_request_flexible"] = True
-            next_context["initial_request_message"] = text
-        elif initial_option:
-            next_context["initial_request_option"] = initial_option
-            next_context["initial_request_message"] = text
-        elif initial_intent.requires_clarification:
-            next_context["initial_request_requires_modality"] = True
-            next_context["initial_request_message"] = text
-        return next_context, initial_intent
-
-    @staticmethod
-    def _has_initial_request(context: dict) -> bool:
-        return bool(
-            context.get("initial_request_option")
-            or context.get("initial_request_requires_modality")
-            or context.get("initial_request_flexible")
-        )
-
-    def _initial_request_greeting(
-        self,
-        tenant: Tenant,
-        patient: Paciente | None = None,
-    ) -> str:
-        tenant_name = self._tenant_display_name(tenant)
-        patient_name = (
-            f"{patient.nombre or ''} {patient.apellido or ''}".strip()
-            if patient is not None
-            else ""
-        )
-        greeting = f"Hola {patient_name}" if patient_name else "Hola"
-        return (
-            f"{greeting}, te contactaste con la asistente de {tenant_name}. "
-            "En que puedo ayudarte hoy?"
-        )
-
-    def _initial_intent(
-        self,
-        text: str,
-        ai_result: AIIntentResult,
-        ai_settings: dict,
-    ) -> IntentResult:
-        if self._requests_flexible_modality(text):
-            return IntentResult(
-                pending_reason="turno_ambos",
-                category=ConversationCategory.FLEXIBLE_APPOINTMENT,
-            )
-        rule_intent = classify_main_intent(text)
-        if rule_intent.requires_clarification:
-            return rule_intent
-        ai_intent = self._intent_from_ai_result(
-            ai_result,
-            min_confidence=ai_settings["min_confidence"],
-        )
-        if ai_intent.pending_reason or ai_intent.category:
-            return ai_intent
-        return rule_intent
-
-    @staticmethod
-    def _main_menu_option_for_intent(intent: IntentResult) -> str | None:
-        return {
-            "turno_presencial": "1",
-            "turno_virtual": "2",
-            "receta_orden": "3",
-            "otra_consulta": "4",
-            "humano": "5",
-            "cancelar_turno": "6",
-            "reprogramar_turno": "7",
-            "factura_reintegro": "8",
-        }.get(intent.pending_reason)
-
-    @staticmethod
-    def _initial_request_summary(intent: IntentResult) -> str | None:
-        if intent.requires_clarification:
-            return "Entendi que queres solicitar un turno."
-        return {
-            "turno_ambos": "Entendi que queres solicitar un turno presencial o virtual.",
-            "turno_presencial": "Entendi que queres solicitar un turno presencial.",
-            "turno_virtual": "Entendi que queres solicitar un turno virtual.",
-            "receta_orden": "Entendi que queres solicitar una receta u orden medica.",
-            "otra_consulta": "Entendi que queres realizar otra consulta.",
-            "humano": "Entendi que queres hablar con una persona.",
-            "cancelar_turno": "Entendi que queres cancelar un turno.",
-            "reprogramar_turno": "Entendi que queres reprogramar un turno.",
-            "factura_reintegro": "Entendi que queres solicitar una factura para reintegro.",
-        }.get(intent.pending_reason)
 
     @staticmethod
     def _managed_for_options() -> str:
@@ -2934,7 +2688,7 @@ class ConversationService:
 
     @staticmethod
     def _detect_managed_for(value: str) -> str | None:
-        normalized = normalize_message(value)
+        normalized = normalize_text(value)
         if normalized in {"1", "para mi", "para mí", "yo", "para vos"}:
             return "self"
         if normalized in {"2", "otra persona", "otro", "otra"}:
@@ -2944,7 +2698,7 @@ class ConversationService:
     @staticmethod
     def _select_reschedulable_turno(context: dict, text: str) -> dict | None:
         try:
-            selected = int(normalize_message(text))
+            selected = int(normalize_text(text))
         except ValueError:
             return None
         options = (context.get("reschedule_appointment") or {}).get("options") or []
@@ -3027,26 +2781,19 @@ class ConversationService:
         context: dict,
     ) -> str:
         next_context = dict(context)
-        initial_option = next_context.pop("initial_request_option", None)
-        requires_modality = bool(next_context.pop("initial_request_requires_modality", False))
-        flexible = bool(next_context.pop("initial_request_flexible", False))
-        initial_message = next_context.pop("initial_request_message", None)
+        for legacy_key in (
+            "initial_request_option",
+            "initial_request_requires_modality",
+            "initial_request_flexible",
+            "initial_request_message",
+        ):
+            next_context.pop(legacy_key, None)
         await self._conversacion_repo.upsert_state(
             tenant.id,
             phone,
             ConversationState.MAIN_REASON_MENU.value,
             next_context,
         )
-        if initial_option:
-            return await self.process_message(tenant, phone, str(initial_option))
-        if flexible and initial_message:
-            return await self.process_message(tenant, phone, str(initial_message))
-        if requires_modality:
-            return (
-                "Perfecto, te ayudo con tu turno. Indica por favor:\n"
-                "1) Turno presencial\n"
-                "2) Turno virtual"
-            )
         return await self._known_patient_greeting(tenant, patient)
 
     async def _complete_patient_registration(
@@ -3128,7 +2875,7 @@ class ConversationService:
 
     @staticmethod
     def _detect_coverage_type(value: str) -> str | None:
-        normalized = normalize_message(value)
+        normalized = normalize_text(value)
         if normalized in {"1", "obra social", "obra_social"}:
             return "obra_social"
         if normalized in {"2", "prepaga"}:
@@ -3200,19 +2947,8 @@ class ConversationService:
         )
 
     @staticmethod
-    def _context_with_ai_result(context: dict, result: AIIntentResult) -> dict:
-        merged = merge_extracted_into_context(context, result.extracted)
-        ai_context = merged.setdefault("ai", {})
-        ai_context["last_intent"] = result.intent
-        ai_context["last_confidence"] = result.confidence
-        ai_context["last_source"] = result.source
-        missing_fields = result.missing_fields or get_missing_fields_for_intent(result.intent, merged)
-        ai_context["missing_fields"] = missing_fields
-        return merged
-
-    @staticmethod
     def _recipe_type_to_subtype(recipe_type: str | None) -> str | None:
-        normalized = normalize_message(recipe_type)
+        normalized = normalize_text(recipe_type)
         if not normalized:
             return None
         if "orden" in normalized or "pedido" in normalized:
@@ -3226,14 +2962,6 @@ class ConversationService:
         if "receta" in normalized or "medic" in normalized:
             return PrescriptionSubtype.OTHER_PRESCRIPTION_RELATED
         return PrescriptionSubtype.OTHER_PRESCRIPTION_RELATED
-
-    @staticmethod
-    def _ai_tools_enabled(ai_settings: dict) -> bool:
-        return bool(
-            ai_settings.get("enabled")
-            and ai_settings.get("tools_enabled")
-            and ai_settings.get("availability_lookup_enabled")
-        )
 
     @staticmethod
     def _missing_before_availability(context: dict) -> list[str]:
@@ -3272,7 +3000,7 @@ class ConversationService:
 
     @staticmethod
     def _wants_more_slots(value: str | None) -> bool:
-        normalized = normalize_message(value)
+        normalized = normalize_text(value)
         return normalized in {
             "mas opciones",
             "ver mas opciones",
@@ -3282,19 +3010,9 @@ class ConversationService:
         }
 
     @staticmethod
-    def _requests_flexible_modality(value: str | None) -> bool:
-        normalized = normalize_message(value)
-        mentions_both = "presencial" in normalized and "virtual" in normalized
-        is_flexible = any(
-            token in normalized
-            for token in ("cualquiera", "ambas", "ambos", "indistinto", "me da igual")
-        )
-        return mentions_both or ("turno" in normalized and is_flexible)
-
-    @staticmethod
     def _select_offered_slot(context: dict, text: str) -> dict | None:
         try:
-            selected = int(normalize_message(text))
+            selected = int(normalize_text(text))
         except ValueError:
             return None
         offered = (context.get("appointment") or {}).get("offered_slots") or []
@@ -3313,7 +3031,7 @@ class ConversationService:
         return "\n".join(lines)
 
     @staticmethod
-    def _build_ai_selected_slot_summary(context: dict) -> str:
+    def _build_selected_slot_summary(context: dict) -> str:
         appointment = context.get("appointment") or {}
         selected = appointment.get("selected_slot") or {}
         return (
@@ -3327,7 +3045,7 @@ class ConversationService:
         )
 
     @staticmethod
-    def _log_ai_tool(
+    def _log_availability_lookup(
         *,
         tenant_id: int,
         phone: str,
@@ -3338,7 +3056,7 @@ class ConversationService:
         error: str | None,
     ) -> None:
         logger.info(
-            "ai_tool_executed tenant_id=%s telefono=%s intent=%s tool=%s slots_count=%s provider=%s error=%s",
+            "availability_lookup_executed tenant_id=%s telefono=%s intent=%s tool=%s slots_count=%s provider=%s error=%s",
             tenant_id,
             phone,
             intent,
@@ -3388,17 +3106,14 @@ class ConversationService:
 
     @staticmethod
     def _is_direct_main_menu_option(value: str | None) -> bool:
-        return normalize_message(value) in {
-            "1", "2", "3", "4", "5", "6", "7", "8",
-            "a", "b", "c", "d", "e", "f", "g", "h",
-        }
+        return normalize_text(value) in {"1", "2", "3", "4", "5", "6", "7", "8"}
 
     @staticmethod
     def _is_particular_patient(patient: Paciente | None) -> bool:
         if patient is None:
             return False
-        coverage_type = normalize_message(patient.health_coverage_type)
-        coverage_name = normalize_message(patient.obra_social)
+        coverage_type = normalize_text(patient.health_coverage_type)
+        coverage_name = normalize_text(patient.obra_social)
         return coverage_type == "particular" or coverage_name == "particular"
 
     @staticmethod
@@ -3407,51 +3122,4 @@ class ConversationService:
             "humano": "derivacion_humana",
             "factura_reintegro": "factura_reintegro",
         }.get(reason, reason)
-
-    def _intent_from_ai_result(self, result: AIIntentResult, *, min_confidence: float):
-        from app.services.conversation_intents import IntentResult
-
-        if result.confidence < min_confidence:
-            return IntentResult(None, None)
-        if result.intent == AIIntent.BOOK_PRESENTIAL_APPOINTMENT:
-            return IntentResult("turno_presencial", ConversationCategory.PRESENTIAL_APPOINTMENT)
-        if result.intent == AIIntent.BOOK_VIRTUAL_APPOINTMENT:
-            return IntentResult("turno_virtual", ConversationCategory.VIRTUAL_APPOINTMENT)
-        if result.intent == AIIntent.RECIPE_OR_ORDER:
-            return IntentResult("receta_orden", ConversationCategory.PRESCRIPTION_OR_ORDER)
-        if result.intent == AIIntent.OTHER_MEDICAL_QUERY:
-            return IntentResult("otra_consulta", ConversationCategory.OTHER_QUERY)
-        if result.intent == AIIntent.HUMAN_HANDOFF:
-            return IntentResult("humano", ConversationCategory.HUMAN_HANDOFF)
-        if result.intent == AIIntent.REIMBURSEMENT_INVOICE:
-            return IntentResult(
-                "factura_reintegro",
-                ConversationCategory.REIMBURSEMENT_INVOICE,
-            )
-        if result.intent == AIIntent.CANCEL_APPOINTMENT:
-            return IntentResult("cancelar_turno", ConversationCategory.OTHER_QUERY)
-        if result.intent == AIIntent.RESCHEDULE_APPOINTMENT:
-            return IntentResult("reprogramar_turno", ConversationCategory.OTHER_QUERY)
-        return IntentResult(None, None)
-
-    @staticmethod
-    def _log_ai_intent(
-        *,
-        tenant_id: int,
-        phone: str,
-        current_state: str,
-        message: str,
-        result: AIIntentResult,
-    ) -> None:
-        logger.info(
-            "ai_intent_classified tenant_id=%s telefono=%s estado_actual=%s mensaje_normalizado=%s intent=%s confidence=%.3f source=%s error=%s",
-            tenant_id,
-            phone,
-            current_state,
-            normalize_message(message),
-            result.intent,
-            result.confidence,
-            result.source,
-            result.error or "",
-        )
 

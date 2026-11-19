@@ -221,8 +221,9 @@ def test_simulator_holds_first_private_consultation_until_explicit_approval(
         assert response.status_code == 200
         return response.json()
 
-    send("quiero un turno virtual")
+    send("hola")
     send("1")
+    send("2")
     offered = send("1")
     assert "turnos virtuales disponibles" in offered["reply"]
     send("1")
@@ -234,8 +235,9 @@ def test_simulator_holds_first_private_consultation_until_explicit_approval(
             selected_patient_id=competing_patient_id,
         )
 
-    send_competing("quiero un turno virtual")
+    send_competing("hola")
     send_competing("1")
+    send_competing("2")
     competing_availability = send_competing("1")
     assert "turnos virtuales disponibles" in competing_availability["reply"]
     send_competing("1")
