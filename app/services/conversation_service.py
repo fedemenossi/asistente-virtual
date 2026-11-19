@@ -93,6 +93,7 @@ class ConversationState(str, Enum):
     ASK_CANCEL_APPOINTMENT_CONFIRMATION = "ask_cancel_appointment_confirmation"
     ASK_RESCHEDULE_APPOINTMENT_SELECTION = "ask_reschedule_appointment_selection"
     ASK_RESCHEDULE_APPOINTMENT_CONFIRMATION = "ask_reschedule_appointment_confirmation"
+    ASK_RESCHEDULE_APPOINTMENT_TYPE = "ask_reschedule_appointment_type"
 
     # Legacy states kept for backwards compatibility
     MAIN_MENU = "main_menu"
@@ -916,25 +917,63 @@ class ConversationService:
                 return "Ese turno ya no esta disponible para reprogramar."
             eligibility = dict(origin.eligibility_context or {})
             coverage = dict(eligibility.get("coverage") or {})
-            modality = eligibility.get("modality") or (
-                "virtual" if str(origin.tipo.value) == "virtual" else "presential"
-            )
             first_consultation = bool(eligibility.get("first_consultation", False))
             if not coverage:
                 coverage = {
                     "type": getattr(paciente, "health_coverage_type", None),
                     "entity": getattr(paciente, "obra_social", None),
                 }
-            eligibility = {
+            context.setdefault("reschedule_appointment", {})["eligibility"] = {
                 "coverage": coverage,
                 "first_consultation": first_consultation,
-                "modality": modality,
             }
-            context["eligibility_context"] = eligibility
             context["for_whom"] = "self"
             context["first_time"] = first_consultation
             context["coverage_type"] = coverage.get("type")
             context["insurance"] = coverage.get("entity")
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                normalized_phone,
+                ConversationState.ASK_RESCHEDULE_APPOINTMENT_TYPE.value,
+                context,
+            )
+            return (
+                "Que tipo de turno queres tomar?\n"
+                "1) Turno presencial\n"
+                "2) Turno virtual"
+            )
+
+        if current_state == ConversationState.ASK_RESCHEDULE_APPOINTMENT_TYPE.value:
+            modality = {"1": "presential", "2": "virtual"}.get(normalize_text(text))
+            if modality is None:
+                return (
+                    "Debe seleccionar una opcion valida.\n"
+                    "1) Turno presencial\n"
+                    "2) Turno virtual"
+                )
+            reschedule = context.get("reschedule_appointment") or {}
+            selected = reschedule.get("selected") or {}
+            origin = (
+                await self._session.execute(
+                    select(Turno).where(
+                        Turno.id == int(selected.get("turno_id") or 0),
+                        Turno.tenant_id == tenant.id,
+                        Turno.paciente_id == getattr(paciente, "id", None),
+                        Turno.status == AppointmentStatus.CONFIRMED,
+                        Turno.fecha_hora >= now_ba().replace(tzinfo=None),
+                    )
+                )
+            ).scalar_one_or_none()
+            if origin is None:
+                return "Ese turno ya no esta disponible para reprogramar."
+            eligibility_base = dict(reschedule.get("eligibility") or {})
+            coverage = dict(eligibility_base.get("coverage") or {})
+            first_consultation = bool(eligibility_base.get("first_consultation", False))
+            context["eligibility_context"] = {
+                "coverage": coverage,
+                "first_consultation": first_consultation,
+                "modality": modality,
+            }
             context["reason"] = "turno_virtual" if modality == "virtual" else "turno_presencial"
             context["appointment"] = {
                 "type": modality,
@@ -2058,6 +2097,7 @@ class ConversationService:
                 start_at=start_at,
                 end_at=end_at,
                 timezone_name=str(selected.get("timezone") or "America/Argentina/Buenos_Aires"),
+                eligibility_context=self._eligibility_snapshot(context),
             )
         except Exception:
             logger.exception(

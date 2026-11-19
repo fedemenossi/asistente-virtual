@@ -215,6 +215,7 @@ class AppointmentService:
         start_at: datetime,
         end_at: datetime,
         timezone_name: str,
+        eligibility_context: dict | None = None,
     ) -> tuple[Turno, dict]:
         if (
             tenant.id != paciente.tenant_id
@@ -260,6 +261,11 @@ class AppointmentService:
         origin_consultorio = await self._session.get(Consultorio, locked_origin.consultorio_id)
         if origin_consultorio is None or origin_consultorio.tenant_id != tenant.id:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Agenda de origen no disponible")
+        replacement_eligibility = dict(
+            eligibility_context
+            if eligibility_context is not None
+            else (locked_origin.eligibility_context or {})
+        )
 
         replacement, reservation = await self.reserve_without_payment(
             tenant=tenant,
@@ -269,7 +275,7 @@ class AppointmentService:
             start_at=start_at,
             end_at=end_at,
             timezone_name=timezone_name,
-            eligibility_context=dict(locked_origin.eligibility_context or {}),
+            eligibility_context=replacement_eligibility,
             rescheduled_from_id=locked_origin.id,
         )
         if replacement.id == locked_origin.id:
@@ -278,7 +284,7 @@ class AppointmentService:
                 detail="La nueva disponibilidad coincide con el turno de origen",
             )
         replacement.rescheduled_from_id = locked_origin.id
-        replacement.eligibility_context = dict(locked_origin.eligibility_context or {})
+        replacement.eligibility_context = replacement_eligibility
 
         try:
             if locked_origin.external_calendar_provider and locked_origin.external_event_id:

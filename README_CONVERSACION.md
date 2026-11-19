@@ -78,6 +78,13 @@ El flujo es guiado y no usa IA para interpretar la intencion. Despues de identif
 
 Una frase libre no inicia una gestion desde el menu: el Asistente vuelve a mostrar las opciones. El texto libre se conserva para datos solicitados expresamente, como nombre, DNI, email, cobertura o detalle de una consulta.
 
+Reprogramacion de turno:
+1) Lista los turnos futuros del Paciente.
+2) Solicita seleccionar y confirmar el turno de origen.
+3) Pregunta si el nuevo turno sera presencial o virtual.
+4) Ofrece disponibilidades elegibles para esa modalidad, conservando la cobertura y la condicion de primera consulta del turno original.
+5) Reserva primero el nuevo horario y solo despues libera el turno anterior.
+
 Si turno_presencial o turno_virtual:
 - Pasa a first_time_check (pregunta si es primera consulta).
 - Respuesta SI/NO define etiquetas o flujo de agenda.

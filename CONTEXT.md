@@ -161,11 +161,11 @@ Crédito originado por la cancelación de un Turno pagado con al menos 24 horas 
 _Evitar_: reembolso, pago pendiente, cupón promocional
 
 **Reprogramación de turno**:
-Cambio de un Turno confirmado a una nueva Disponibilidad que cumple el mismo Contexto de elegibilidad. El Asistente lista los Turnos futuros, exige seleccionar y confirmar el Turno de origen, asegura primero la nueva reserva y luego libera la anterior; si existía un Pago aprobado, lo conserva sin volver a cobrar.
+Cambio de un Turno confirmado a una nueva Disponibilidad. El Asistente lista los Turnos futuros, exige seleccionar y confirmar el Turno de origen, permite elegir nuevamente la Modalidad de atención y busca opciones que conserven la Cobertura del Turno y la condición de Primera consulta. Asegura primero la nueva reserva y luego libera la anterior; si existía un Pago aprobado, lo conserva sin volver a cobrar.
 _Evitar_: cancelación seguida de alta sin relación, edición de fecha sin reserva, nuevo cobro
 
 **Contexto de elegibilidad**:
-Instantánea de las condiciones con las que un Turno obtuvo acceso a una agenda, incluidas la Cobertura del Turno, la condición de Primera consulta y la Modalidad de atención aplicable. Se conserva para que una Reprogramación busque horarios bajo las mismas reglas.
+Instantánea de las condiciones con las que un Turno obtuvo acceso a una agenda, incluidas la Cobertura del Turno, la condición de Primera consulta y la Modalidad de atención aplicable. En una Reprogramación se conservan la cobertura y la condición de Primera consulta, mientras que la modalidad se reemplaza por la nueva elección del Paciente.
 _Evitar_: perfil actual del paciente, configuración actual del consultorio, contexto técnico de conversación
 
 ## Conversaciones y gestión

@@ -1616,7 +1616,7 @@ def test_identified_patient_menu_offers_cancellation_for_future_confirmed_turno(
     asyncio.run(run())
 
 
-def test_chat_reschedule_confirms_origin_and_reuses_original_eligibility_context(
+def test_chat_reschedule_asks_new_modality_reserves_replacement_and_then_releases_origin(
     db_session, monkeypatch
 ):
     tenant_id = asyncio.run(
@@ -1656,6 +1656,24 @@ def test_chat_reschedule_confirms_origin_and_reuses_original_eligibility_context
             },
         )
     )
+    virtual_consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual OSDE",
+            tipo=TipoConsultorio.VIRTUAL,
+            proveedor_turnos="google",
+            configuracion_externa={
+                "google_calendar": {"calendar_id": "calendar-reschedule-virtual"},
+                "eligibility": {
+                    "accepts_first_consultation": True,
+                    "coverage_types": ["prepaga"],
+                    "coverage_entities": ["OSDE"],
+                    "weekly_ranges": [],
+                },
+            },
+        )
+    )
     origin_id = asyncio.run(
         create_turno(
             db_session,
@@ -1679,6 +1697,7 @@ def test_chat_reschedule_confirms_origin_and_reuses_original_eligibility_context
     effects: list[tuple[str, str]] = []
 
     async def available_slots(self, tenant, consultorio, window_start, window_end):
+        assert consultorio.id == virtual_consultorio_id
         return [
             CalendarSlot(
                 slot_id="replacement-chat-24",
@@ -1691,6 +1710,7 @@ def test_chat_reschedule_confirms_origin_and_reuses_original_eligibility_context
         ]
 
     async def reserve_slot(self, tenant, consultorio, slot_id, patient, metadata):
+        assert consultorio.id == virtual_consultorio_id
         effects.append(("reserve", slot_id))
         return {
             "event_id": slot_id,
@@ -1721,14 +1741,29 @@ def test_chat_reschedule_confirms_origin_and_reuses_original_eligibility_context
             confirmation = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
             assert "Confirmas la reprogramacion" in confirmation
 
-            offered = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
-            assert "Encontre estos turnos presenciales disponibles" in offered
+            modality = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
+            assert "Que tipo de turno queres tomar" in modality
+            assert "1) Turno presencial" in modality
+            assert "2) Turno virtual" in modality
+
+            invalid_modality = await service.process_message(
+                tenant, f"whatsapp:+{phone}", "virtual"
+            )
+            assert "Debe seleccionar una opcion valida" in invalid_modality
+            assert "1) Turno presencial" in invalid_modality
+            assert "2) Turno virtual" in invalid_modality
+            origin_before_selection = await session.get(Turno, origin_id)
+            assert origin_before_selection.status == AppointmentStatus.CONFIRMED
+
+            offered = await service.process_message(tenant, f"whatsapp:+{phone}", "2")
+            assert "Encontre estos turnos virtuales disponibles" in offered
             assert "replacement-chat-24" not in offered
 
             state = await ConversacionRepository(session).get_state(tenant.id, phone)
             eligibility = state.contexto_json["appointment"]["availability_context"]
             assert eligibility["coverage"] == {"type": "prepaga", "entity": "OSDE"}
             assert eligibility["first_consultation"] is False
+            assert eligibility["modality"] == "virtual"
 
             selected = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
             assert "Confirmas que queres reservarlo" in selected
@@ -1746,7 +1781,12 @@ def test_chat_reschedule_confirms_origin_and_reuses_original_eligibility_context
             )
             assert origin.status == AppointmentStatus.CANCELLED
             assert len(replacements) == 1
-            assert replacements[0].eligibility_context == origin.eligibility_context
+            assert replacements[0].tipo == TipoTurno.VIRTUAL
+            assert replacements[0].eligibility_context == {
+                "coverage": {"type": "prepaga", "entity": "OSDE"},
+                "first_consultation": False,
+                "modality": "virtual",
+            }
             from app.models.payment import Payment
 
             payments = list(
