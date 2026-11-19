@@ -70,6 +70,7 @@ def test_whatsapp_first_private_consultation_returns_secure_payment_link(
             "whatsapp:+5491100021001",
             payment_settings={
                 "enabled": True,
+                "require_before_appointment": True,
                 "mp_access_token": "tenant-access-token",
                 "first_consultation_amount": "42000",
                 "first_consultation_currency": "ARS",

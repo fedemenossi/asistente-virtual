@@ -77,7 +77,7 @@ Condición de una Solicitud de turno que indica que el Paciente todavía no fue 
 _Evitar_: paciente nuevo, dato de identidad permanente
 
 **Requisito de pago**:
-Condición de una Primera consulta con Cobertura del Turno particular que exige recibir un Pago aprobado antes de confirmar el Turno. No se aplica a obra social, prepaga ni a Pacientes ya atendidos por el profesional, con independencia de la Cobertura declarada del Paciente.
+Condición habilitable por el Operador desde Pagos que, cuando están activos tanto los pagos como la opción `Requerir pago antes del turno`, exige recibir un Pago aprobado antes de confirmar una Primera consulta con Cobertura del Turno particular. Mientras esa opción está desactivada, la Reserva automática continúa sin pago previo. Tampoco se aplica a obra social, prepaga ni a Pacientes ya atendidos por el profesional, con independencia de la Cobertura declarada del Paciente.
 _Evitar_: precio de consulta, pago opcional, requisito universal
 
 **Tarifa de primera consulta**:

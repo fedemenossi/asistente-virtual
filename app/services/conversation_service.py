@@ -815,8 +815,10 @@ class ConversationService:
                     original_text=text,
                     has_media=has_media,
                 )
-            requires_payment = context.get("for_whom") == "self" and self._appointment_requires_payment(
-                context, paciente
+            requires_payment = (
+                context.get("for_whom") == "self"
+                and self._appointment_requires_payment(context, paciente)
+                and PaymentService.requires_payment_before_appointment(tenant)
             )
             if requires_payment and (simulator or PaymentService.is_configured(tenant)):
                 return await self._hold_selected_appointment(

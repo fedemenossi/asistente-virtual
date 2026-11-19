@@ -117,6 +117,8 @@ def test_simulator_holds_first_private_consultation_until_explicit_approval(
             },
             calendar_settings={"default_timezone": "America/Argentina/Buenos_Aires"},
             payment_settings={
+                "enabled": True,
+                "require_before_appointment": True,
                 "first_consultation_amount": "30000",
                 "first_consultation_currency": "ARS",
             },

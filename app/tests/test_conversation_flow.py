@@ -593,13 +593,19 @@ def test_menu_flow_offers_virtual_slots_when_ai_is_disabled(monkeypatch, db_sess
     asyncio.run(run())
 
 
-def test_slot_selection_and_confirmation_do_not_book(monkeypatch, db_session):
+def test_confirmation_stays_pending_when_required_payment_provider_is_not_configured(
+    monkeypatch, db_session
+):
     tenant_id = asyncio.run(
         create_tenant(
             db_session,
             "Tenant Tools Select",
             "whatsapp:+733",
             ai_settings=_tools_ai_settings(),
+            payment_settings={
+                "enabled": True,
+                "require_before_appointment": True,
+            },
         )
     )
     tenant = asyncio.run(get_tenant(db_session, tenant_id))
@@ -1128,7 +1134,9 @@ def test_simulator_api_normalizes_dni_and_keeps_patient_identity_isolated_by_ten
     assert state_b.contexto_json["patient_id"] == patient_b
 
 
-def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(client, db_session, monkeypatch):
+def test_simulator_confirms_first_private_consultation_when_payment_requirement_is_disabled(
+    client, db_session, monkeypatch
+):
     tenant_id = asyncio.run(
         create_tenant(
             db_session,
@@ -1136,6 +1144,12 @@ def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(clie
             "whatsapp:+737",
             ai_settings=_tools_ai_settings(),
             calendar_settings={"default_timezone": "America/Argentina/Buenos_Aires"},
+            payment_settings={
+                "enabled": False,
+                "require_before_appointment": False,
+                "first_consultation_amount": "30000",
+                "first_consultation_currency": "ARS",
+            },
         )
     )
     consultorio_id = asyncio.run(
@@ -1157,7 +1171,8 @@ def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(clie
             nombre="Ana",
             apellido="Gomez",
             dni="30111999",
-            obra_social="OSDE",
+            obra_social="Particular",
+            health_coverage_type="particular",
         )
     )
     asyncio.run(
@@ -1223,7 +1238,7 @@ def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(clie
     send("hola")
     send("1")
     send("2")
-    offered_reply = send("2")
+    offered_reply = send("1")
     assert "turnos virtuales disponibles" in offered_reply
 
     selection_reply = send("1")
@@ -1253,8 +1268,8 @@ def test_simulator_api_confirms_google_slot_once_and_returns_calendar_links(clie
     assert turnos[0].external_calendar_id == "calendar-1"
     assert turnos[0].referencia_externa == "https://meet.google.com/abc-defg-hij"
     assert turnos[0].eligibility_context == {
-            "coverage": {"type": "particular", "entity": "Particular"},
-        "first_consultation": False,
+        "coverage": {"type": "particular", "entity": "Particular"},
+        "first_consultation": True,
         "modality": "virtual",
     }
 

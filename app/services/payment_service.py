@@ -37,6 +37,14 @@ class PaymentService:
         access_token, _ = resolve_mp_credentials(payment_settings)
         return bool(payment_settings.get("enabled") and access_token)
 
+    @staticmethod
+    def requires_payment_before_appointment(tenant: Tenant) -> bool:
+        payment_settings = tenant.payment_settings or {}
+        return bool(
+            payment_settings.get("enabled")
+            and payment_settings.get("require_before_appointment")
+        )
+
     async def create_payment_for_turno(
         self,
         request: Request | None,
