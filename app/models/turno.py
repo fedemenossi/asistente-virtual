@@ -61,10 +61,12 @@ class Turno(Base, TimestampMixin, SoftDeleteMixin):
     external_event_id: Mapped[str | None] = mapped_column(String(200))
     reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
     estado: Mapped[EstadoTurno] = mapped_column(
-        SqlEnum(EstadoTurno, native_enum=False), default=EstadoTurno.PENDIENTE
+        SqlEnum(EstadoTurno, native_enum=False, length=32),
+        default=EstadoTurno.PENDIENTE,
     )
     status: Mapped[AppointmentStatus] = mapped_column(
-        SqlEnum(AppointmentStatus, native_enum=False), default=AppointmentStatus.DRAFT
+        SqlEnum(AppointmentStatus, native_enum=False, length=32),
+        default=AppointmentStatus.DRAFT,
     )
     eligibility_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     rescheduled_from_id: Mapped[int | None] = mapped_column(

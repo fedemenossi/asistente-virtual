@@ -248,6 +248,33 @@ async def _timestamp_column_exists(
     return await _column_exists(conn, db_name, table, "updated_at")
 
 
+async def upgrade_turno_state_columns(conn) -> None:
+    """Keep legacy MySQL enum-backed VARCHAR columns large enough for new states."""
+    if conn.dialect.name not in {"mysql", "mariadb"}:
+        return
+
+    columns = await conn.run_sync(
+        lambda sync_conn: {
+            column["name"]: column
+            for column in inspect(sync_conn).get_columns("turnos")
+        }
+    )
+    for column_name in ("estado", "status"):
+        column = columns.get(column_name)
+        if column is None:
+            continue
+        current_length = getattr(column["type"], "length", None)
+        if current_length is not None and current_length >= 32:
+            continue
+        nullable = "NULL" if column.get("nullable", True) else "NOT NULL"
+        await conn.execute(
+            text(
+                f"ALTER TABLE turnos MODIFY COLUMN {column_name} "
+                f"VARCHAR(32) {nullable}"
+            )
+        )
+
+
 @dataclass(frozen=True)
 class PatientDniMigrationResult:
     backfilled: int
@@ -429,6 +456,8 @@ async def upgrade(db_engine: AsyncEngine, *, dispose: bool = True) -> None:
                     if exists:
                         continue
                     await _add_column(conn, table, column, ddl)
+
+            await upgrade_turno_state_columns(conn)
 
             await upgrade_patient_dni_identity(conn)
             await upgrade_patient_contact_links(conn)

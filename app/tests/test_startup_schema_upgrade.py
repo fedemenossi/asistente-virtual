@@ -3,8 +3,9 @@ from __future__ import annotations
 import asyncio
 import importlib
 import os
+from types import SimpleNamespace
 
-from sqlalchemy import text
+from sqlalchemy import String, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 
@@ -239,3 +240,50 @@ def test_patient_contact_migration_backfills_many_to_many_links_per_tenant_idemp
     assert [row["status"] for row in links] == ["approved", "approved", "approved"]
     assert links[0]["contact_id"] == links[1]["contact_id"]
     assert links[2]["contact_id"] != links[0]["contact_id"]
+
+
+def test_turno_state_migration_widens_legacy_mysql_columns(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path / 'schema.db'}")
+    from app.core.config import get_database_settings
+
+    get_database_settings.cache_clear()
+    from scripts import upgrade_schema
+
+    class FakeInspector:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def get_columns(self, table_name):
+            assert table_name == "turnos"
+            return [
+                {
+                    "name": "estado",
+                    "type": String(self.connection.estado_length),
+                    "nullable": False,
+                },
+                {"name": "status", "type": String(32), "nullable": True},
+            ]
+
+    class FakeConnection:
+        dialect = SimpleNamespace(name="mysql")
+
+        def __init__(self):
+            self.statements = []
+            self.estado_length = 10
+
+        async def run_sync(self, callback):
+            return callback(self)
+
+        async def execute(self, statement):
+            self.statements.append(str(statement))
+            self.estado_length = 32
+
+    monkeypatch.setattr(upgrade_schema, "inspect", FakeInspector)
+    connection = FakeConnection()
+
+    asyncio.run(upgrade_schema.upgrade_turno_state_columns(connection))
+    asyncio.run(upgrade_schema.upgrade_turno_state_columns(connection))
+
+    assert connection.statements == [
+        "ALTER TABLE turnos MODIFY COLUMN estado VARCHAR(32) NOT NULL",
+    ]
