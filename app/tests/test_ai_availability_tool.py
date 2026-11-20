@@ -142,7 +142,7 @@ def test_availability_uses_tenant_search_horizon(monkeypatch, db_session):
                 tenant = await session.get(Tenant, tenant_id)
                 tenant.calendar_settings = {
                     "default_timezone": "America/Argentina/Buenos_Aires",
-                    "availability_search_days": 35,
+                    "availability_search_days": 180,
                 }
                 session.add(
                     Consultorio(
@@ -177,7 +177,7 @@ def test_availability_uses_tenant_search_horizon(monkeypatch, db_session):
 
     assert result["ok"] is True
     assert result["slots"] == []
-    assert captured["window"] == timedelta(days=35)
+    assert captured["window"] == timedelta(days=180)
 
 
 def test_availability_infers_coverage_type_from_tenant_consultorio_rules(

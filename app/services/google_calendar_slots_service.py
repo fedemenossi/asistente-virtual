@@ -34,7 +34,7 @@ DEFAULT_RESERVED_TAG_TEMPLATE = "TURNO [{patient_full_name}]"
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
 DEFAULT_AVAILABILITY_SEARCH_DAYS = 21
 MIN_AVAILABILITY_SEARCH_DAYS = 1
-MAX_AVAILABILITY_SEARCH_DAYS = 90
+MAX_AVAILABILITY_SEARCH_DAYS = 180
 
 
 def get_availability_search_days(calendar_settings: dict[str, Any] | None) -> int:

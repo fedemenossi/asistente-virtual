@@ -3249,7 +3249,7 @@ async def calendar_settings_post(
         add_flash(
             request,
             "error",
-            "El rango para consultar turnos debe estar entre 1 y 90 dias.",
+            "El rango para consultar turnos debe estar entre 1 y 180 dias.",
         )
         return RedirectResponse("/t/settings/calendar", status_code=303)
     tags = [tag.strip() for tag in calendar_tags.split(",") if tag.strip()]

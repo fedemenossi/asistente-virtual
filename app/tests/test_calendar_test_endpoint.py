@@ -465,7 +465,7 @@ def test_calendar_settings_manages_global_catalog_and_preserves_existing_fallbac
         data={
             "csrf_token": csrf,
             "default_timezone": "America/Argentina/Buenos_Aires",
-            "availability_search_days": "35",
+            "availability_search_days": "180",
             "calendar_tags": "[TURNO DISPONIBLE]",
             "google_credentials_json": '{"client_email":"svc@example.com"}',
             "google_calendar_ids": "agenda-uno@example.com\nagenda-dos@example.com",
@@ -483,7 +483,7 @@ def test_calendar_settings_manages_global_catalog_and_preserves_existing_fallbac
 
     settings = asyncio.run(_get_calendar_settings())
     assert settings["google_calendar_id"] == "legacy-calendar-123"
-    assert settings["availability_search_days"] == 35
+    assert settings["availability_search_days"] == 180
     assert settings["google_calendar_ids"] == [
         "agenda-uno@example.com",
         "agenda-dos@example.com",
