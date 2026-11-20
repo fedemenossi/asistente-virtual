@@ -229,6 +229,9 @@ def test_registered_contact_is_greeted_and_asked_who_the_request_is_for_without_
 
             menu_reply = await service.process_message(tenant, f"whatsapp:+{phone}", "1")
 
+            assert menu_reply.startswith("Cual es el motivo de tu consulta?\n")
+            assert "Federico Menossi" not in menu_reply
+            assert "te contactaste con" not in menu_reply
             assert "1) Turno presencial" in menu_reply
             assert "2) Turno virtual" in menu_reply
             assert "3) Solicitar receta u orden medica" in menu_reply
@@ -2270,15 +2273,26 @@ def test_first_message_registered_patient_gets_personalized_welcome(db_session):
 
     async def run():
         async with db_session() as session:
-            service = _service(session)
+            service = ConversationService(
+                session=session,
+                paciente_repo=PacienteRepository(session),
+                conversacion_repo=ConversacionRepository(session),
+            )
             reply = await service.process_message(tenant, "whatsapp:+5491172000001", "hola")
             assert "Hola Maria Gomez" in reply
-            assert "1) Turno presencial" in reply
+            assert "1) Para mi" in reply
 
             repo = ConversacionRepository(session)
             state = await repo.get_state(tenant.id, "5491172000001")
             assert state is not None
-            assert state.estado_actual == ConversationState.MAIN_REASON_MENU.value
+            assert state.estado_actual == ConversationState.ASK_MANAGED_FOR.value
+
+            menu = await service.process_message(
+                tenant, "whatsapp:+5491172000001", "1"
+            )
+            assert menu.startswith("Cual es el motivo de tu consulta?\n")
+            assert "Maria Gomez" not in menu
+            assert "1) Turno presencial" in menu
 
     asyncio.run(run())
 

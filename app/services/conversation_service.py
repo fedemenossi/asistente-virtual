@@ -2669,22 +2669,8 @@ class ConversationService:
         tenant: Tenant,
         patient: Paciente,
     ) -> str:
-        doctor_name = (tenant.fantasy_name or tenant.nombre or "profesional").strip()
-        patient_label = " ".join(
-            part.strip() for part in (patient.nombre or "", patient.apellido or "") if part and part.strip()
-        ).strip()
         menu = await self._main_reason_menu_for_patient(tenant, patient)
-        if patient_label:
-            return (
-                f"Hola {patient_label}, te contactaste con el consultorio del Dr. {doctor_name}. "
-                "Cual es el motivo de tu consulta?\n"
-                f"{menu}"
-            )
-        return (
-            f"Hola, te contactaste con el consultorio del Dr. {doctor_name}. "
-            "Cual es el motivo de tu consulta?\n"
-            f"{menu}"
-        )
+        return f"Cual es el motivo de tu consulta?\n{menu}"
 
     async def _main_reason_menu_for_patient(
         self,
