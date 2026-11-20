@@ -24,6 +24,11 @@
           <label class="text-xs text-slate-500">Timezone por defecto</label>
           <input class="input" type="text" name="default_timezone" value="{{ calendar_settings.default_timezone }}" />
         </div>
+        <div>
+          <label class="text-xs text-slate-500" for="availability_search_days">Dias a consultar para ofrecer turnos</label>
+          <input class="input" id="availability_search_days" type="number" name="availability_search_days" min="1" max="90" value="{{ calendar_settings.availability_search_days }}" required />
+          <p class="mt-1 text-xs text-slate-500">El bot buscara disponibilidad desde el momento actual hasta esta cantidad de dias. Valor predeterminado: 21.</p>
+        </div>
         <div class="md:col-span-2">
           <label class="text-xs text-slate-500">Tags (separados por coma)</label>
           <input class="input" type="text" name="calendar_tags" value="{{ calendar_settings.calendar_tags }}" />

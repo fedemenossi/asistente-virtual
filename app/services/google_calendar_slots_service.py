@@ -32,6 +32,24 @@ WEEKDAY_LABELS = {
 DEFAULT_AVAILABLE_TAG = "[TURNO DISPONIBLE]"
 DEFAULT_RESERVED_TAG_TEMPLATE = "TURNO [{patient_full_name}]"
 DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires"
+DEFAULT_AVAILABILITY_SEARCH_DAYS = 21
+MIN_AVAILABILITY_SEARCH_DAYS = 1
+MAX_AVAILABILITY_SEARCH_DAYS = 90
+
+
+def get_availability_search_days(calendar_settings: dict[str, Any] | None) -> int:
+    try:
+        value = int(
+            (calendar_settings or {}).get(
+                "availability_search_days",
+                DEFAULT_AVAILABILITY_SEARCH_DAYS,
+            )
+        )
+    except (TypeError, ValueError):
+        return DEFAULT_AVAILABILITY_SEARCH_DAYS
+    if MIN_AVAILABILITY_SEARCH_DAYS <= value <= MAX_AVAILABILITY_SEARCH_DAYS:
+        return value
+    return DEFAULT_AVAILABILITY_SEARCH_DAYS
 
 
 @dataclass(frozen=True)

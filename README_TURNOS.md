@@ -64,6 +64,8 @@ Estado actual real
   - detalle de turno (`/t/appointments/{turno_id}`)
 - Bot conversacional:
   - ofrece disponibilidades elegibles de Google Calendar, DrApp y Consultorio Movil
+  - para Google Calendar consulta desde el momento actual hasta el horizonte en dias configurado por Tenant en `Configuracion > Calendario` (21 dias por defecto, entre 1 y 90)
+  - si las fuentes responden correctamente pero no devuelven horarios, informa que no hay turnos libres sin generar una derivacion manual; solo deriva cuando la consulta de agenda falla
   - para el propio Paciente, confirma automaticamente los turnos sin requisito de pago
   - las primeras consultas particulares retienen el horario y esperan el pago antes de confirmar
   - las solicitudes para otra persona y las agendas no automatizables siguen derivandose a la bandeja operativa

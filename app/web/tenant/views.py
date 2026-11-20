@@ -96,11 +96,15 @@ from app.services.consultorio_eligibility_service import (
     get_eligibility_config,
 )
 from app.services.google_calendar_slots_service import (
+    DEFAULT_AVAILABILITY_SEARCH_DAYS,
+    MAX_AVAILABILITY_SEARCH_DAYS,
+    MIN_AVAILABILITY_SEARCH_DAYS,
     WEEKDAY_KEYS,
     WEEKDAY_LABELS,
     build_google_calendar_config_from_form,
     calculate_slots,
     default_google_calendar_config,
+    get_availability_search_days,
     get_google_calendar_config,
     normalize_provider,
 )
@@ -3052,6 +3056,7 @@ def _parse_calendar_settings(tenant: Tenant) -> dict:
         "google_calendar_id": settings.get("google_calendar_id", ""),
         "calendar_tags": ",".join(settings.get("calendar_tags", []) or []),
         "default_timezone": settings.get("default_timezone", "America/Argentina/Buenos_Aires"),
+        "availability_search_days": get_availability_search_days(settings),
         "virtual_meet_enabled": bool(settings.get("virtual_meet_enabled", False)),
         "google_credentials_json": settings.get("google_credentials_json", ""),
         "google_delegated_user": settings.get("google_delegated_user", ""),
@@ -3224,6 +3229,7 @@ async def calendar_settings_post(
     request: Request,
     calendar_tags: str = Form(""),
     default_timezone: str = Form("America/Argentina/Buenos_Aires"),
+    availability_search_days: int = Form(DEFAULT_AVAILABILITY_SEARCH_DAYS),
     virtual_meet_enabled: str | None = Form(None),
     google_credentials_json: str = Form(""),
     google_delegated_user: str = Form(""),
@@ -3235,6 +3241,17 @@ async def calendar_settings_post(
     session: AsyncSession = Depends(get_async_session),
 ) -> RedirectResponse:
     validate_csrf(request, csrf_token)
+    if not (
+        MIN_AVAILABILITY_SEARCH_DAYS
+        <= availability_search_days
+        <= MAX_AVAILABILITY_SEARCH_DAYS
+    ):
+        add_flash(
+            request,
+            "error",
+            "El rango para consultar turnos debe estar entre 1 y 90 dias.",
+        )
+        return RedirectResponse("/t/settings/calendar", status_code=303)
     tags = [tag.strip() for tag in calendar_tags.split(",") if tag.strip()]
     calendar_ids = list(dict.fromkeys(line.strip() for line in google_calendar_ids.splitlines() if line.strip()))
     async with session.begin_nested():
@@ -3246,6 +3263,7 @@ async def calendar_settings_post(
             "google_calendar_id": previous_settings.get("google_calendar_id", ""),
             "calendar_tags": tags,
             "default_timezone": default_timezone.strip() or "UTC",
+            "availability_search_days": availability_search_days,
             "virtual_meet_enabled": bool(virtual_meet_enabled),
             "google_credentials_json": google_credentials_json.strip(),
             "google_delegated_user": google_delegated_user.strip(),

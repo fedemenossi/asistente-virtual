@@ -1693,7 +1693,7 @@ class ConversationService:
             provider=result.get("source"),
             error=result.get("error"),
         )
-        if not result.get("ok") or not slots:
+        if not result.get("ok"):
             appointment["offered_slots"] = []
             appointment["awaiting_slot_selection"] = False
             await self._conversacion_repo.upsert_state(
@@ -1720,7 +1720,21 @@ class ConversationService:
                     media_items=[],
                 )
                 return "No pude consultar la agenda en este momento. Dejo tu solicitud para que el consultorio te contacte."
-            return "No encontre turnos disponibles con esa preferencia. Queres que te muestre otros horarios?"
+            return "No pude consultar la agenda en este momento. Intenta nuevamente mas tarde."
+
+        if not slots:
+            appointment["offered_slots"] = []
+            appointment["awaiting_slot_selection"] = False
+            await self._conversacion_repo.upsert_state(
+                tenant.id,
+                phone,
+                ConversationState.MAIN_REASON_MENU.value,
+                context,
+                conversation_category=self._appointment_category_from_context(context),
+                has_media=has_media,
+                last_patient_message=original_text,
+            )
+            return "En este momento no hay turnos libres disponibles."
 
         offered = []
         for index, slot in enumerate(slots, start=1):

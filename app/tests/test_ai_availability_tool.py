@@ -132,6 +132,54 @@ def test_virtual_availability_uses_consultorio_timezone_from_the_tenant(
     }
 
 
+def test_availability_uses_tenant_search_horizon(monkeypatch, db_session):
+    tenant_id = asyncio.run(create_tenant(db_session, "Tenant Horizon", "whatsapp:+906"))
+    captured = {}
+
+    async def seed():
+        async with db_session() as session:
+            async with session.begin():
+                tenant = await session.get(Tenant, tenant_id)
+                tenant.calendar_settings = {
+                    "default_timezone": "America/Argentina/Buenos_Aires",
+                    "availability_search_days": 35,
+                }
+                session.add(
+                    Consultorio(
+                        tenant_id=tenant_id,
+                        nombre="Agenda configurable",
+                        tipo=TipoConsultorio.VIRTUAL,
+                        proveedor_turnos="google",
+                    )
+                )
+
+    async def fake_slots(self, tenant, consultorio, start, end):
+        captured["window"] = end - start
+        return []
+
+    asyncio.run(seed())
+    monkeypatch.setattr(
+        "app.services.calendar_service.CalendarService.list_available_slots",
+        fake_slots,
+    )
+
+    async def run():
+        async with db_session() as session:
+            return await get_available_appointment_slots(
+                session,
+                tenant_id=tenant_id,
+                consultorio_type="virtual",
+                patient_context={},
+                preferences={},
+            )
+
+    result = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert result["slots"] == []
+    assert captured["window"] == timedelta(days=35)
+
+
 def test_availability_infers_coverage_type_from_tenant_consultorio_rules(
     monkeypatch, db_session
 ):

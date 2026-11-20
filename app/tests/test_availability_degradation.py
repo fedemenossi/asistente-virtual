@@ -52,7 +52,7 @@ class _GoogleService:
         return _GoogleEvents(self._payload)
 
 
-@pytest.mark.parametrize("failed_provider", ["drapp", "google", "both"])
+@pytest.mark.parametrize("failed_provider", ["drapp", "google", "both", "empty"])
 def test_simulator_degrades_availability_and_handoffs_total_failure(
     client,
     db_session,
@@ -152,7 +152,7 @@ def test_simulator_degrades_availability_and_handoffs_total_failure(
         microsecond=0,
     )
     google_payload = {
-        "items": [
+        "items": [] if failed_provider == "empty" else [
             {
                 "id": "google-partial-829",
                 "summary": "[DISPONIBLE] Consulta",
@@ -169,6 +169,8 @@ def test_simulator_degrades_availability_and_handoffs_total_failure(
     def controlled_drapp_availability(tenant, consultorio, limit):
         if failed_provider in {"drapp", "both"}:
             raise TimeoutError("drapp-private-detail")
+        if failed_provider == "empty":
+            return []
         drapp_start = start.replace(hour=13, minute=15)
         return [
             SlotSelection(
@@ -220,6 +222,13 @@ def test_simulator_degrades_availability_and_handoffs_total_failure(
 
     assert "drapp-private-detail" not in offer
     assert "google-private-detail" not in offer
+    if failed_provider == "empty":
+        assert offer == "En este momento no hay turnos libres disponibles."
+
+        login(client, "partial-operator@test.com", "secret-123")
+        inbox = client.get("/t/conversation-states")
+        assert "Falta de disponibilidad (0)" in inbox.text
+        return
     if failed_provider != "both":
         assert ("14:30" if failed_provider == "drapp" else "13:15") in offer
         assert "parte de las agendas" in offer

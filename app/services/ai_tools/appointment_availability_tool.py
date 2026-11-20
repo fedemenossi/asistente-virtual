@@ -24,6 +24,7 @@ from app.services.consultorio_eligibility_service import (
     is_consultorio_eligible,
 )
 from app.services.google_calendar_slots_service import (
+    get_availability_search_days,
     get_google_calendar_config,
     slot_is_in_schedule_ranges,
 )
@@ -261,7 +262,8 @@ async def _get_provider_slots(
         or "America/Argentina/Buenos_Aires"
     )
     tz = _resolve_timezone(tz_name)
-    start, end = _availability_window(tz, preferences)
+    search_days = get_availability_search_days(tenant.calendar_settings)
+    start, end = _availability_window(tz, preferences, search_days=search_days)
     try:
         slots = await CalendarService().list_available_slots(tenant, consultorio, start, end)
     except CabildoConfigError:
@@ -411,7 +413,12 @@ def _normalize_slot(
     }
 
 
-def _availability_window(tz: tzinfo, preferences: dict) -> tuple[datetime, datetime]:
+def _availability_window(
+    tz: tzinfo,
+    preferences: dict,
+    *,
+    search_days: int = 21,
+) -> tuple[datetime, datetime]:
     now = now_ba().astimezone(tz)
     preferred_day = str((preferences or {}).get("preferred_day") or "").strip().lower()
     weekdays = {
@@ -432,7 +439,7 @@ def _availability_window(tz: tzinfo, preferences: dict) -> tuple[datetime, datet
         start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         return start, start + timedelta(days=1)
     start = now.replace(second=0, microsecond=0)
-    return start, start + timedelta(days=21)
+    return start, start + timedelta(days=search_days)
 
 
 def _format_slot_label(start: datetime) -> str:
