@@ -131,6 +131,10 @@
           <input type="hidden" name="action" value="delete_existing" />
           <input type="hidden" name="date_from" value="{{ date_from }}" />
           <input type="hidden" name="date_to" value="{{ date_to }}" />
+          <div class="mb-3 flex flex-wrap items-center gap-3">
+            <button class="btn btn-secondary" type="button" data-existing-slots-select-all-button>Seleccionar todos</button>
+            <span class="text-xs text-slate-500" data-existing-slots-selected-count>0 seleccionados</span>
+          </div>
           <table class="min-w-full text-sm">
             <thead class="bg-slate-50 text-slate-600">
               <tr>
@@ -213,14 +217,44 @@
       const buttons = form.querySelectorAll("button[type='submit']");
       const previewCount = Number("{{ preview_slots|length }}") || 0;
       const selectAll = document.querySelector("[data-existing-slots-select-all]");
+      const selectAllButton = document.querySelector("[data-existing-slots-select-all-button]");
+      const selectedCount = document.querySelector("[data-existing-slots-selected-count]");
       const slotCheckboxes = document.querySelectorAll("[data-existing-slot-checkbox]");
       let timer = null;
 
-      selectAll?.addEventListener("change", () => {
+      const updateSelectionControls = () => {
+        const checkedCount = Array.from(slotCheckboxes).filter((checkbox) => checkbox.checked).length;
+        const allSelected = slotCheckboxes.length > 0 && checkedCount === slotCheckboxes.length;
+        if (selectAll) {
+          selectAll.checked = allSelected;
+          selectAll.indeterminate = checkedCount > 0 && !allSelected;
+        }
+        if (selectAllButton) {
+          selectAllButton.textContent = allSelected ? "Deseleccionar todos" : "Seleccionar todos";
+        }
+        if (selectedCount) {
+          selectedCount.textContent = checkedCount === 1 ? "1 seleccionado" : `${checkedCount} seleccionados`;
+        }
+      };
+
+      const setAllSlotsSelected = (checked) => {
         slotCheckboxes.forEach((checkbox) => {
-          checkbox.checked = selectAll.checked;
+          checkbox.checked = checked;
         });
+        updateSelectionControls();
+      };
+
+      selectAll?.addEventListener("change", () => {
+        setAllSlotsSelected(selectAll.checked);
       });
+      selectAllButton?.addEventListener("click", () => {
+        const allSelected = Array.from(slotCheckboxes).every((checkbox) => checkbox.checked);
+        setAllSlotsSelected(!allSelected);
+      });
+      slotCheckboxes.forEach((checkbox) => {
+        checkbox.addEventListener("change", updateSelectionControls);
+      });
+      updateSelectionControls();
 
       const setProgress = (value, nextTitle, nextDetail) => {
         const bounded = Math.max(0, Math.min(value, 95));

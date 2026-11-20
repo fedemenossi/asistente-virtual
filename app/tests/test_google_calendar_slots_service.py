@@ -546,6 +546,8 @@ def test_calendar_slots_page_lists_and_deletes_selected_google_availability(
     assert list_response.status_code == 200
     assert "Disponibilidades creadas" in list_response.text
     assert 'name="selected_slot_ids" value="generated-slot-1"' in list_response.text
+    assert 'type="button" data-existing-slots-select-all-button' in list_response.text
+    assert "Seleccionar todos" in list_response.text
     assert "Jueves 19/11/2026" in list_response.text
 
     delete_response = client.post(
