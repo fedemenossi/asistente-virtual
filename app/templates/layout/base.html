@@ -11,7 +11,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/dist/tailwind.css" />
+    <link rel="stylesheet" href="/static/dist/tailwind.css?v={{ static_version('dist/tailwind.css') }}" />
   </head>
   <body class="bg-slate-50 text-slate-900">
     <a class="skip-link" href="#main-content">Saltar al contenido</a>
@@ -30,10 +30,10 @@
     {% elif path.startswith('/t/conversation-states') or path.startswith('/admin/chat-simulator') %}
       {% set current_section = "conversaciones" %}
     {% endif %}
-    <div class="app-shell relative min-h-screen">
+    <div class="app-shell relative min-h-screen" data-layout="fixed-sidebar">
       <div data-sidebar-overlay class="fixed inset-0 z-30 hidden bg-slate-900/40 lg:hidden"></div>
       {% include "layout/partials/sidebar.html" %}
-      <div class="app-main lg:pl-[252px]">
+      <div class="app-main">
         {% include "layout/partials/topbar.html" %}
         <main id="main-content" class="pb-12" tabindex="-1">
           <div class="app-content page-wrap">

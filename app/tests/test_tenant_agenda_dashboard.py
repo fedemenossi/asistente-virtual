@@ -64,6 +64,8 @@ def test_dashboard_tenant_only_shows_own_data(client, db_session):
     response = client.get("/t/dashboard")
     assert response.status_code == 200
     assert 'data-design-system="clinical-ui-v2"' in response.text
+    assert 'data-layout="fixed-sidebar"' in response.text
+    assert '/static/dist/tailwind.css?v=' in response.text
     assert "Nubelio Salud" in response.text
     assert "Resumen del consultorio" in response.text
     assert "Agenda de hoy" in response.text
