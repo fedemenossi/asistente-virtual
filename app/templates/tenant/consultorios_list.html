@@ -1,18 +1,16 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/modal_confirm.html" import modal_confirm %}
 {% from "layout/partials/components/action_icons.html" import action_link, icon %}
+{% from "layout/partials/components/empty_state.html" import empty_state %}
+{% from "layout/partials/components/page_header.html" import page_header %}
 
 {% set title = "Consultorios" %}
 {% set breadcrumb = "Tenant / Consultorios" %}
 
 {% block content %}
-  <div class="mb-6 flex items-center justify-between">
-    <div>
-      <p class="text-sm text-slate-600">Administracion</p>
-      <h1 class="text-2xl font-semibold text-slate-900">Consultorios</h1>
-    </div>
+  {% call page_header("Consultorios", "Configurá las agendas y modalidades de atención.", "Administración", "calendar") %}
     <a class="btn btn-primary" href="/t/consultorios/new">Nuevo consultorio</a>
-  </div>
+  {% endcall %}
 
   {% if consultorios %}
     <div class="card overflow-x-auto overflow-y-visible">
@@ -53,13 +51,7 @@
       </table>
     </div>
   {% else %}
-    <div class="card p-10 text-center">
-      <div class="mx-auto mb-3 h-10 w-10 rounded-full bg-slate-100 grid place-items-center">+</div>
-      <p class="text-sm text-slate-600">Aun no tenes consultorios. Crea el primero.</p>
-      <div class="mt-4">
-        <a class="btn btn-primary" href="/t/consultorios/new">Crear consultorio</a>
-      </div>
-    </div>
+    <div class="section-card">{{ empty_state("Sin consultorios", "Aún no tenés consultorios configurados.", "Crear consultorio", "/t/consultorios/new") }}</div>
   {% endif %}
 {% endblock %}
 

@@ -1,0 +1,10 @@
+{% macro empty_state(title, message, action_label="", action_href="") %}
+  <div class="empty-state">
+    <span class="empty-state-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"></path></svg>
+    </span>
+    <h3>{{ title }}</h3>
+    <p>{{ message }}</p>
+    {% if action_label and action_href %}<a class="btn btn-primary mt-4" href="{{ action_href }}">{{ action_label }}</a>{% endif %}
+  </div>
+{% endmacro %}

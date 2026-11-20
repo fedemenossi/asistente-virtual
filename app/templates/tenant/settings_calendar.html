@@ -1,18 +1,11 @@
 {% extends "layout/base.html" %}
+{% from "layout/partials/components/page_header.html" import page_header %}
 
 {% set title = "Settings calendario" %}
 {% set breadcrumb = "Tenant / Settings / Calendario" %}
 
 {% block content %}
-  <div class="mb-6 flex flex-col gap-2">
-    <div class="inline-flex items-center gap-2 rounded-full bg-slate-900/5 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
-      Google Calendar
-    </div>
-    <h1 class="text-2xl font-semibold text-slate-900">Calendario</h1>
-    <p class="text-sm text-slate-600">
-      Conecta tu agenda para ofrecer turnos disponibles de forma automatica.
-    </p>
-  </div>
+  {{ page_header("Calendario", "Conectá tu agenda para ofrecer turnos disponibles de forma automática.", "Google Calendar", "calendar") }}
 
   <form method="post" class="card p-6 space-y-6" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />

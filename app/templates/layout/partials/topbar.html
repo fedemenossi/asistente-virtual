@@ -7,8 +7,7 @@
         </svg>
       </button>
       <div class="min-w-0">
-        <p class="truncate text-xs font-bold uppercase tracking-[0.18em] text-slate-500">{{ breadcrumb or "" }}</p>
-        <h2 class="truncate text-xl font-bold text-slate-950">{{ title or "" }}</h2>
+        <p class="truncate text-xs font-semibold text-slate-500">{{ breadcrumb or title or "" }}</p>
       </div>
     </div>
     <div class="flex items-center gap-2">
@@ -16,6 +15,12 @@
         <form method="get" action="{{ request.url.path }}" class="hidden md:block">
           <input class="input w-72" type="search" name="q" placeholder="Buscar" value="{{ q or '' }}" />
         </form>
+      {% endif %}
+      {% if request.session.get('role') != 'SUPER_ADMIN' %}
+        <a class="topbar-context hidden sm:inline-flex" href="/t/consultorios">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 21V7l8-4 8 4v14"></path><path d="M9 21v-7h6v7"></path><path d="M10 9h4M12 7v4"></path></svg>
+          <span>Mis consultorios</span>
+        </a>
       {% endif %}
       <div data-dropdown class="relative">
         <button data-dropdown-toggle class="action-button relative" type="button" aria-label="Notificaciones">
@@ -51,9 +56,10 @@
         </div>
       </div>
       <div data-dropdown class="relative">
-        <button data-dropdown-toggle class="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50" type="button" aria-label="Menu de usuario">
-          <span class="grid h-7 w-7 place-items-center rounded-lg bg-blue-50 text-blue-700">{{ (request.session.get('user_email') or 'U')[0]|upper }}</span>
+        <button data-dropdown-toggle class="user-menu-button" type="button" aria-label="Menu de usuario">
+          <span class="user-avatar">{{ (request.session.get('user_email') or 'U')[0]|upper }}</span>
           <span class="hidden max-w-48 truncate md:inline">{{ request.session.get('user_email') }}</span>
+          <svg class="hidden h-4 w-4 text-slate-400 md:block" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 10 5 5 5-5"></path></svg>
         </button>
         <div data-dropdown-menu class="absolute right-0 mt-2 hidden w-56 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-card">
           <div class="px-4 py-3">

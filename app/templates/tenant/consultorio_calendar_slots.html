@@ -1,13 +1,12 @@
 {% extends "layout/base.html" %}
+{% from "layout/partials/components/page_header.html" import page_header %}
 
 {% set title = "Generar slots" %}
 {% set breadcrumb = "Tenant / Consultorios / Google Calendar" %}
 
 {% block content %}
-  <div class="mb-6">
-    <p class="text-sm text-slate-600">{{ consultorio.nombre }}</p>
-    <h1 class="text-2xl font-semibold text-slate-900">Generar slots en Google Calendar</h1>
-    <p class="mt-1 text-sm text-slate-600">Crea y administra eventos disponibles en el calendario configurado. Google Calendar es la fuente de estas disponibilidades.</p>
+  {{ page_header("Generar slots en Google Calendar", "Creá y administrá eventos disponibles en el calendario configurado.", consultorio.nombre, "calendar") }}
+  <div class="mb-5">
     <div class="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
       <span class="font-medium text-slate-900">Calendar ID usado:</span>
       <span class="font-mono break-all">{{ google_config.calendar_id or "No configurado" }}</span>
@@ -99,14 +98,14 @@
 
   {% if existing_slots_loaded %}
     <div class="mt-4 card overflow-x-auto">
-      <div class="mb-3 flex flex-wrap items-start justify-between gap-3">
+      <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
         <div>
           <h2 class="text-sm font-semibold text-slate-900">Disponibilidades creadas</h2>
           <p class="mt-1 text-xs text-slate-500">
             Solo se muestran slots disponibles creados por el sistema para este consultorio. Los turnos confirmados y otros eventos de Google Calendar no se pueden seleccionar.
           </p>
         </div>
-        <span class="text-xs text-slate-500">{{ existing_slots|length }} disponibles</span>
+        <span class="status-badge status-badge-success">{{ existing_slots|length }} disponibles</span>
       </div>
 
       {% if deletion_result %}
@@ -126,7 +125,7 @@
       {% endif %}
 
       {% if existing_slots %}
-        <form method="post" data-existing-slots-form>
+        <form method="post" data-existing-slots-form class="p-5 pt-4">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
           <input type="hidden" name="action" value="delete_existing" />
           <input type="hidden" name="date_from" value="{{ date_from }}" />

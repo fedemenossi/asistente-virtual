@@ -1,15 +1,11 @@
 {% extends "layout/base.html" %}
+{% from "layout/partials/components/page_header.html" import page_header %}
 
 {% set title = "Settings" %}
 {% set breadcrumb = "Tenant / Settings" %}
 
 {% block content %}
-  <div class="page-header">
-    <div>
-      <h1 class="page-title">Configuracion</h1>
-      <p class="page-subtitle">Solo campos permitidos.</p>
-    </div>
-  </div>
+  {{ page_header("Configuración", "Datos del profesional, contacto y conexión de WhatsApp.", "Preferencias del tenant", "dashboard") }}
   <form method="post" class="surface space-y-6" autocomplete="off">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
     {% if errors %}

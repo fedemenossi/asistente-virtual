@@ -1,17 +1,13 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
 {% from "layout/partials/components/action_icons.html" import action_link, icon %}
+{% from "layout/partials/components/page_header.html" import page_header %}
 
 {% set title = "Turnos reales" %}
 {% set breadcrumb = "Tenant / Turnos" %}
 
 {% block content %}
-  <div class="page-header">
-    <div>
-      <p class="page-subtitle">Agenda operativa del tenant</p>
-      <h1 class="page-title">Agenda por rango</h1>
-    </div>
-  </div>
+  {{ page_header("Agenda por rango", "Consultá turnos locales y disponibilidad de Google Calendar.", "Agenda operativa", "calendar") }}
 
   <form method="get" class="surface mb-4" style="display: grid; grid-template-columns: 142px 142px minmax(160px, 1fr) 150px minmax(180px, 1fr) 84px; gap: 8px; align-items: end;">
     <label class="space-y-0.5">

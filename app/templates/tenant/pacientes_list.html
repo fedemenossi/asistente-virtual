@@ -2,16 +2,13 @@
 {% from "layout/partials/components/pagination.html" import pagination %}
 {% from "layout/partials/components/modal_confirm.html" import modal_confirm %}
 {% from "layout/partials/components/action_icons.html" import action_link, icon %}
+{% from "layout/partials/components/page_header.html" import page_header %}
 
 {% set title = "Pacientes" %}
 {% set breadcrumb = "Tenant / Pacientes" %}
 
 {% block content %}
-  <div class="page-header">
-    <div>
-      <p class="page-subtitle">Gestion de pacientes</p>
-      <h1 class="page-title">Pacientes</h1>
-    </div>
+  {% call page_header("Pacientes", "Buscá, registrá y mantené actualizada la información de tus pacientes.", "Gestión de pacientes", "patients") %}
     <div class="flex flex-wrap gap-2">
       <a class="btn btn-primary" href="/t/pacientes/new">Nuevo paciente</a>
       <form method="post" action="/t/pacientes/import-csv" enctype="multipart/form-data" data-patient-csv-form>
@@ -22,7 +19,7 @@
         </label>
       </form>
     </div>
-  </div>
+  {% endcall %}
 
   <div class="mb-4 hidden rounded-lg border border-sky-200 bg-sky-50 p-4" data-patient-csv-progress>
     <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

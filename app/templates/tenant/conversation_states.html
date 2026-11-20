@@ -1,6 +1,7 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
 {% from "layout/partials/components/action_icons.html" import action_link, icon %}
+{% from "layout/partials/components/page_header.html" import page_header %}
 
 {% set title = "Conversaciones" %}
 {% if scope_prefix == '/admin' %}
@@ -10,11 +11,7 @@
 {% endif %}
 
 {% block content %}
-  <div class="mb-6">
-    <span class="badge" data-accent="conversaciones">Bandeja operativa</span>
-    <p class="page-subtitle">Seguimiento manual de conversaciones entrantes</p>
-    <h1 class="page-title text-slate-900">Conversaciones</h1>
-  </div>
+  {{ page_header("Conversaciones", "Revisá y resolvé las gestiones que requieren intervención del equipo.", "Bandeja operativa", "dashboard") }}
 
   <div class="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
     <div class="card-sm border border-slate-200 bg-white">

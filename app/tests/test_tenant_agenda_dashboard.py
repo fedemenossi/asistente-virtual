@@ -63,6 +63,11 @@ def test_dashboard_tenant_only_shows_own_data(client, db_session):
     login(client, "tenant1@test.com", "secret-123")
     response = client.get("/t/dashboard")
     assert response.status_code == 200
+    assert 'data-design-system="clinical-ui-v2"' in response.text
+    assert "Nubelio Salud" in response.text
+    assert "Resumen del consultorio" in response.text
+    assert "Agenda de hoy" in response.text
+    assert "Acciones rápidas" in response.text
     assert "Juan Perez" in response.text
     assert "Consultorio Uno" in response.text
     assert "Consultorio Dos" not in response.text

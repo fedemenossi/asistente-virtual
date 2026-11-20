@@ -1,17 +1,13 @@
 {% extends "layout/base.html" %}
 {% from "layout/partials/components/badge.html" import badge %}
 {% from "layout/partials/components/action_icons.html" import action_link %}
+{% from "layout/partials/components/page_header.html" import page_header %}
 
 {% set title = "Pagos" %}
 {% set breadcrumb = "Tenant / Pagos" %}
 
 {% block content %}
-  <div class="page-header">
-    <div>
-      <p class="page-subtitle">Pagos del tenant</p>
-      <h1 class="page-title">Pagos</h1>
-    </div>
-  </div>
+  {{ page_header("Pagos", "Revisá el estado de los cobros asociados a turnos.", "Operación financiera", "dashboard") }}
 
   <section class="surface">
   <form method="get" class="toolbar">
