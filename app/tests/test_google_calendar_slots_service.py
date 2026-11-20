@@ -465,6 +465,106 @@ def test_calendar_slots_preview_displays_weekdays_in_spanish(client, db_session)
     assert ">tuesday<" not in response.text
 
 
+def test_calendar_slots_page_lists_and_deletes_selected_google_availability(
+    client, db_session, monkeypatch
+):
+    tenant_id = asyncio.run(
+        create_tenant(db_session, "Tenant Delete Slots", "whatsapp:+9410")
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Virtual Delete Slots",
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": _base_config()},
+        )
+    )
+    asyncio.run(
+        create_user(
+            db_session,
+            "tenant-delete-slots@test.com",
+            hash_password("secret-123"),
+            UserRole.TENANT_ADMIN.value,
+            tenant_id,
+        )
+    )
+    login(client, "tenant-delete-slots@test.com", "secret-123")
+    start = datetime(2026, 11, 19, 9, 0, tzinfo=timezone(timedelta(hours=-3)))
+    listed_slots = [
+        {
+            "event_id": "generated-slot-1",
+            "summary": "[TURNO DISPONIBLE]",
+            "start_at": start,
+            "end_at": start + timedelta(minutes=30),
+            "timezone": "America/Argentina/Buenos_Aires",
+            "status": "available",
+            "provider": "google",
+            "calendar_id": "calendar-1",
+            "html_link": "https://calendar.google.com/event?eid=generated-slot-1",
+            "generated_by_app": True,
+        }
+    ]
+    delete_calls = []
+
+    async def fake_list(self, tenant, consultorio, range_start, range_end):
+        assert tenant.id == tenant_id
+        assert consultorio.id == consultorio_id
+        assert range_start.date().isoformat() == "2026-11-19"
+        assert range_end.date().isoformat() == "2026-11-20"
+        return list(listed_slots)
+
+    async def fake_delete(self, tenant, consultorio, event_ids):
+        delete_calls.append((tenant.id, consultorio.id, list(event_ids)))
+        listed_slots.clear()
+        return {"requested": 1, "deleted": 1, "skipped": 0, "errors": []}
+
+    monkeypatch.setattr(
+        "app.services.calendar_service.CalendarService.list_managed_available_slots",
+        fake_list,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.services.calendar_service.CalendarService.delete_managed_available_slots",
+        fake_delete,
+        raising=False,
+    )
+
+    page = client.get(f"/t/consultorios/{consultorio_id}/calendar-slots")
+    csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text)
+    assert csrf is not None
+    list_response = client.post(
+        f"/t/consultorios/{consultorio_id}/calendar-slots",
+        data={
+            "csrf_token": csrf.group(1),
+            "date_from": "2026-11-19",
+            "date_to": "2026-11-19",
+            "action": "list_existing",
+        },
+    )
+
+    assert list_response.status_code == 200
+    assert "Disponibilidades creadas" in list_response.text
+    assert 'name="selected_slot_ids" value="generated-slot-1"' in list_response.text
+    assert "Jueves 19/11/2026" in list_response.text
+
+    delete_response = client.post(
+        f"/t/consultorios/{consultorio_id}/calendar-slots",
+        data={
+            "csrf_token": csrf.group(1),
+            "date_from": "2026-11-19",
+            "date_to": "2026-11-19",
+            "action": "delete_existing",
+            "selected_slot_ids": ["generated-slot-1"],
+        },
+    )
+
+    assert delete_response.status_code == 200
+    assert "1 disponibilidad eliminada" in delete_response.text
+    assert delete_calls == [(tenant_id, consultorio_id, ["generated-slot-1"])]
+    assert 'value="generated-slot-1"' not in delete_response.text
+
+
 class _FakeCall:
     def __init__(self, value):
         self.value = value
@@ -513,6 +613,11 @@ class _FakeEvents:
             }
         event.update(body)
         return _FakeCall(event)
+
+    def delete(self, calendarId, eventId, **kwargs):
+        event = next(item for item in self.store if item["id"] == eventId)
+        self.store.remove(event)
+        return _FakeCall({})
 
 
 class _FakeConferenceCalendars:
@@ -644,6 +749,78 @@ def test_google_provider_lists_slots_with_consultorio_tag_instead_of_tenant_tag(
     )
 
     assert [slot.slot_id for slot in slots] == ["evt-consultorio-tag"]
+
+
+def test_google_provider_only_lists_and_deletes_managed_available_slots(
+    db_session, monkeypatch
+):
+    tenant_id = asyncio.run(
+        create_tenant(db_session, "Tenant Safe Delete", "whatsapp:+9411")
+    )
+    consultorio_id = asyncio.run(
+        create_consultorio(
+            db_session,
+            tenant_id,
+            "Agenda Safe Delete",
+            proveedor_turnos="google",
+            configuracion_externa={"google_calendar": _base_config()},
+        )
+    )
+
+    async def load_context():
+        from app.models.consultorio import Consultorio
+        from app.models.tenant import Tenant
+
+        async with db_session() as session:
+            return (
+                await session.get(Tenant, tenant_id),
+                await session.get(Consultorio, consultorio_id),
+            )
+
+    tenant, consultorio = asyncio.run(load_context())
+    start = datetime(2026, 11, 19, 9, 0, tzinfo=timezone(timedelta(hours=-3)))
+    managed = _event("managed", start, start + timedelta(minutes=30))
+    managed["extendedProperties"]["private"].update(
+        {"tenant_id": str(tenant_id), "consultorio_id": str(consultorio_id)}
+    )
+    reserved = _event(
+        "reserved",
+        start + timedelta(hours=1),
+        start + timedelta(hours=1, minutes=30),
+        status="reserved",
+    )
+    reserved["extendedProperties"]["private"].update(
+        {"tenant_id": str(tenant_id), "consultorio_id": str(consultorio_id)}
+    )
+    foreign = _event(
+        "foreign", start + timedelta(hours=2), start + timedelta(hours=2, minutes=30)
+    )
+    foreign["extendedProperties"]["private"].update(
+        {"tenant_id": str(tenant_id + 1), "consultorio_id": str(consultorio_id)}
+    )
+    events = [managed, reserved, foreign]
+    provider = GoogleCalendarProvider("calendar-1", "{}")
+    monkeypatch.setattr(provider, "_build_service", lambda: _FakeService(events))
+
+    listed = asyncio.run(
+        provider.list_managed_available_slots(
+            tenant,
+            consultorio,
+            start - timedelta(hours=1),
+            start + timedelta(hours=4),
+        )
+    )
+    result = asyncio.run(
+        provider.delete_managed_available_slots(
+            tenant,
+            consultorio,
+            ["managed", "reserved", "foreign"],
+        )
+    )
+
+    assert [slot["event_id"] for slot in listed] == ["managed"]
+    assert result == {"requested": 3, "deleted": 1, "skipped": 2, "errors": []}
+    assert [event["id"] for event in events] == ["reserved", "foreign"]
 
 
 def test_google_provider_deduplicates_and_reserves_slot(db_session, monkeypatch):

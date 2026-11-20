@@ -1229,6 +1229,9 @@ async def consultorio_calendar_slots_get(
             "preview_slots": [],
             "weekday_labels": WEEKDAY_LABELS,
             "result": None,
+            "deletion_result": None,
+            "existing_slots": [],
+            "existing_slots_loaded": False,
             "warnings": [],
             "errors": {},
         },
@@ -1242,6 +1245,7 @@ async def consultorio_calendar_slots_post(
     date_to: str = Form(...),
     action: str = Form("preview"),
     exclude_holidays: str | None = Form(None),
+    selected_slot_ids: list[str] = Form(default=[]),
     csrf_token: str = Form(""),
     user: CurrentUser = Depends(require_permission("consultorio:write")),
     session: AsyncSession = Depends(get_async_session),
@@ -1255,8 +1259,13 @@ async def consultorio_calendar_slots_post(
         raise HTTPException(status_code=404)
     errors: dict[str, str] = {}
     result = None
+    deletion_result = None
     preview_slots = []
+    existing_slots = []
+    existing_slots_loaded = action in {"list_existing", "delete_existing"}
     warnings: list[str] = []
+    range_start = None
+    range_end = None
     logger.info(
         "calendar_slots_post_start tenant_id=%s consultorio_id=%s user_id=%s action=%s date_from=%s date_to=%s exclude_holidays=%s provider=%s",
         user.tenant_id,
@@ -1283,6 +1292,15 @@ async def consultorio_calendar_slots_post(
             end_day,
             exclude_argentina_holidays=bool(exclude_holidays),
             holiday_service=holiday_service,
+        )
+        slot_timezone = ZoneInfo(
+            google_config.get("timezone") or "America/Argentina/Buenos_Aires"
+        )
+        range_start = datetime.combine(
+            start_day, datetime.min.time(), tzinfo=slot_timezone
+        )
+        range_end = datetime.combine(
+            end_day + timedelta(days=1), datetime.min.time(), tzinfo=slot_timezone
         )
         logger.info(
             "calendar_slots_calculated tenant_id=%s consultorio_id=%s action=%s calendar_id=%s timezone=%s slots=%s warnings=%s",
@@ -1341,6 +1359,78 @@ async def consultorio_calendar_slots_post(
                 consultorio.id,
                 type(exc).__name__,
             )
+    if not errors and action == "delete_existing":
+        if not selected_slot_ids:
+            errors["delete"] = "Selecciona al menos una disponibilidad para eliminar."
+        else:
+            try:
+                deletion_result = await CalendarService().delete_managed_available_slots(
+                    tenant,
+                    consultorio,
+                    selected_slot_ids,
+                )
+                await audit_log(
+                    session,
+                    request,
+                    user,
+                    action="google_calendar_slots_deleted",
+                    entity="consultorio",
+                    entity_id=consultorio.id,
+                    tenant_id=tenant.id,
+                    metadata={
+                        "calendar_id": get_google_calendar_config(consultorio).get(
+                            "calendar_id"
+                        ),
+                        "date_from": date_from,
+                        "date_to": date_to,
+                        "requested": deletion_result.get("requested", 0),
+                        "deleted": deletion_result.get("deleted", 0),
+                        "skipped": deletion_result.get("skipped", 0),
+                        "errors": len(deletion_result.get("errors") or []),
+                    },
+                )
+            except Exception as exc:
+                errors["delete"] = (
+                    "No se pudieron eliminar las disponibilidades seleccionadas."
+                )
+                logger.exception(
+                    "calendar_slots_delete_failed tenant_id=%s consultorio_id=%s error=%s",
+                    tenant.id,
+                    consultorio.id,
+                    type(exc).__name__,
+                )
+    if (
+        existing_slots_loaded
+        and range_start
+        and range_end
+        and "date_range" not in errors
+    ):
+        try:
+            existing_slots = await CalendarService().list_managed_available_slots(
+                tenant,
+                consultorio,
+                range_start,
+                range_end,
+            )
+            slot_timezone = ZoneInfo(
+                get_google_calendar_config(consultorio).get("timezone")
+                or "America/Argentina/Buenos_Aires"
+            )
+            for slot in existing_slots:
+                local_start = slot["start_at"].astimezone(slot_timezone)
+                slot["weekday_label"] = WEEKDAY_LABELS[
+                    WEEKDAY_KEYS[local_start.weekday()]
+                ]
+        except Exception as exc:
+            errors["existing_slots"] = (
+                "No se pudieron consultar las disponibilidades de Google Calendar."
+            )
+            logger.exception(
+                "calendar_slots_list_existing_failed tenant_id=%s consultorio_id=%s error=%s",
+                tenant.id,
+                consultorio.id,
+                type(exc).__name__,
+            )
     return _template(
         request,
         "tenant/consultorio_calendar_slots.html",
@@ -1353,6 +1443,9 @@ async def consultorio_calendar_slots_post(
             "preview_slots": preview_slots,
             "weekday_labels": WEEKDAY_LABELS,
             "result": result,
+            "deletion_result": deletion_result,
+            "existing_slots": existing_slots,
+            "existing_slots_loaded": existing_slots_loaded,
             "warnings": warnings,
             "errors": errors,
         },

@@ -181,6 +181,39 @@ class CalendarService:
             return await provider.list_calendar_events(tenant, consultorio, start, end)
         return []
 
+    async def list_managed_available_slots(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        start,
+        end,
+    ) -> list[dict]:
+        provider = self._get_provider(tenant, consultorio)
+        if not isinstance(provider, GoogleCalendarProvider):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El consultorio no usa Google Calendar",
+            )
+        return await provider.list_managed_available_slots(
+            tenant, consultorio, start, end
+        )
+
+    async def delete_managed_available_slots(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        event_ids: list[str],
+    ) -> dict:
+        provider = self._get_provider(tenant, consultorio)
+        if not isinstance(provider, GoogleCalendarProvider):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El consultorio no usa Google Calendar",
+            )
+        return await provider.delete_managed_available_slots(
+            tenant, consultorio, event_ids
+        )
+
     async def reserve_slot(
         self,
         tenant: Tenant,

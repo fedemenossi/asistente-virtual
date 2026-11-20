@@ -86,6 +86,22 @@ class GoogleCalendarProvider(CalendarProvider):
             or "slot=available" in description
         )
 
+    @staticmethod
+    def _is_managed_available_slot(
+        event: dict,
+        tenant: Tenant,
+        consultorio: Consultorio,
+    ) -> bool:
+        private_props = ((event.get("extendedProperties") or {}).get("private") or {})
+        shared_props = ((event.get("extendedProperties") or {}).get("shared") or {})
+        properties = {**shared_props, **private_props}
+        return (
+            str(properties.get("generated_by_app") or "").lower() == "true"
+            and str(properties.get("slot_status") or "").lower() == "available"
+            and str(properties.get("tenant_id") or "") == str(tenant.id)
+            and str(properties.get("consultorio_id") or "") == str(consultorio.id)
+        )
+
     async def list_available_slots(
         self,
         tenant: Tenant,
@@ -184,9 +200,75 @@ class GoogleCalendarProvider(CalendarProvider):
                     "calendar_id": self._calendar_id,
                     "html_link": event.get("htmlLink"),
                     "generated_by_app": str(private_props.get("generated_by_app") or shared_props.get("generated_by_app") or "").lower() == "true",
+                    "managed_available_slot": self._is_managed_available_slot(
+                        event, tenant, consultorio
+                    ),
                 }
             )
         return rows
+
+    async def list_managed_available_slots(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        start,
+        end,
+    ) -> list[dict[str, Any]]:
+        events = await self.list_calendar_events(tenant, consultorio, start, end)
+        return [event for event in events if event.get("managed_available_slot")]
+
+    async def delete_managed_available_slots(
+        self,
+        tenant: Tenant,
+        consultorio: Consultorio,
+        event_ids: list[str],
+    ) -> dict[str, Any]:
+        requested_ids = list(
+            dict.fromkeys(
+                str(value).strip() for value in event_ids if str(value).strip()
+            )
+        )
+        result: dict[str, Any] = {
+            "requested": len(requested_ids),
+            "deleted": 0,
+            "skipped": 0,
+            "errors": [],
+        }
+        if not requested_ids:
+            return result
+
+        service = self._build_service()
+        for event_id in requested_ids:
+            try:
+                event = (
+                    service.events()
+                    .get(calendarId=self._calendar_id, eventId=event_id)
+                    .execute()
+                )
+                if not self._is_managed_available_slot(event, tenant, consultorio):
+                    result["skipped"] += 1
+                    continue
+                (
+                    service.events()
+                    .delete(
+                        calendarId=self._calendar_id,
+                        eventId=event_id,
+                        sendUpdates="all",
+                    )
+                    .execute()
+                )
+                result["deleted"] += 1
+            except Exception as exc:
+                result["errors"].append(_safe_google_error(exc))
+                logger.exception(
+                    "google_calendar_delete_available_slot_failed tenant_id=%s consultorio_id=%s calendar_id=%s event_id=%s error=%s",
+                    tenant.id,
+                    consultorio.id,
+                    _mask_calendar_id(self._calendar_id),
+                    event_id,
+                    type(exc).__name__,
+                )
+        return result
 
     def list_calendars(self, candidate_calendar_id: str | None = None) -> list[dict[str, str]]:
         service = self._build_service()

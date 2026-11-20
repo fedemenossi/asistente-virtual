@@ -37,7 +37,7 @@ Agenda del Consultorio cuya Fuente de agenda permite al sistema consultar y rese
 _Evitar_: agenda consultable, agenda visible, integración de solo lectura
 
 **Generación automática de disponibilidades**:
-Creación masiva de Disponibilidades en Google Calendar, iniciada por el Operador desde la interfaz y calculada a partir de las Franjas de atención configuradas. Abastece las agendas basadas en Google Calendar sin reemplazar las Disponibilidades propias de DrApp.
+Creación masiva de Disponibilidades en Google Calendar, iniciada por el Operador desde la interfaz y calculada a partir de las Franjas de atención configuradas. La misma interfaz permite listar por rango y eliminar selectivamente las Disponibilidades todavía libres que fueron generadas por el sistema para ese Tenant y Consultorio; nunca elimina Turnos confirmados ni eventos ajenos. Abastece las agendas basadas en Google Calendar sin reemplazar las Disponibilidades propias de DrApp.
 _Evitar_: reserva automática, turno confirmado, carga manual de turnos
 
 **Paciente**:
